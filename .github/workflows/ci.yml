@@ -95,17 +95,23 @@ jobs:
           # adds the first external import.
           cache: false
 
-      - name: Install lcov (Ada coverage tracefile generator)
+      - name: Install Ada-side system packages (lcov, bdw-gc, pkg-config)
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y lcov
+          sudo apt-get install -y lcov libgc-dev pkg-config
           # tools/coverage_ada.sh assumes lcov 2.x ergonomics (specifically
           # the doubled `--ignore-errors inconsistent,empty,negative,gcov`
           # form). ubuntu-latest currently provides lcov 2.x; print the
           # version into the log so a future Ubuntu LTS regression is
           # immediately visible from the CI output.
           lcov --version
+          # bdw-gc is the v1 GC per ADR-0003; resolved via pkg-config per
+          # ADR-0005. `make bootstrap` refuses to proceed if bdw-gc.pc is
+          # not discoverable, so install it here before any make-target
+          # runs. Print the version so a future apt-package regression is
+          # visible from the CI log.
+          pkg-config --modversion bdw-gc
 
       - name: Install golangci-lint
         run: |

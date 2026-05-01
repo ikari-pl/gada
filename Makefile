@@ -49,6 +49,30 @@ PATH := $(HOME)/src/gnatstudio/.tools/bin:$(HOME)/.local/share/alire/bin:$(HOME)
 export PATH
 
 bootstrap:
+	@echo "=== bootstrap: bdw-gc system library (Phase 2+) ==="
+	@# Per docs/adr/0005-libgc-binding-via-pkgconfig.md, the runtime
+	@# resolves Boehm-Demers-Weiser (libgc) via `pkg-config bdw-gc`.
+	@# Surface a missing dep here as a first-class error with the
+	@# actionable per-platform install hint, rather than letting it
+	@# leak through to a cryptic linker failure during the Ada build.
+	@if ! command -v pkg-config >/dev/null 2>&1; then \
+	    echo "Makefile: 'pkg-config' not on PATH." >&2 ; \
+	    echo "  Install pkg-config: brew install pkg-config / sudo apt install pkg-config / etc." >&2 ; \
+	    exit 1 ; \
+	fi
+	@if ! pkg-config --exists bdw-gc; then \
+	    echo "Makefile: bdw-gc.pc not discoverable by pkg-config." >&2 ; \
+	    echo "  GADA's runtime depends on Boehm-Demers-Weiser (ADR-0003 + ADR-0005)." >&2 ; \
+	    echo "  Install the libgc system package:" >&2 ; \
+	    echo "    macOS:           brew install bdw-gc" >&2 ; \
+	    echo "    Debian/Ubuntu:   sudo apt install libgc-dev" >&2 ; \
+	    echo "    Fedora:          sudo dnf install gc-devel" >&2 ; \
+	    echo "    FreeBSD:         sudo pkg install boehm-gc" >&2 ; \
+	    echo "    Alpine:          sudo apk add gc-dev" >&2 ; \
+	    exit 1 ; \
+	fi
+	@echo "bootstrap: bdw-gc OK (`pkg-config --modversion bdw-gc`)"
+	@echo
 	@echo "=== bootstrap: Go module deps (compiler/) ==="
 	@if command -v go >/dev/null 2>&1; then \
 	    cd $(ROOT)/compiler && go mod download ; \

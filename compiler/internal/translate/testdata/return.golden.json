@@ -1,0 +1,87 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "return.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "add",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "a",
+              "type": {
+                "kind": "IntType"
+              }
+            },
+            {
+              "kind": "Param",
+              "name": "b",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "BinOp",
+                  "op": "+",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "a"
+                  },
+                  "y": {
+                    "kind": "Ident",
+                    "name": "b"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "pi",
+          "params": null,
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "Float64Type"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "Lit",
+                  "litKind": "float64",
+                  "value": "3.14"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

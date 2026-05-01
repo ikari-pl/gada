@@ -1,0 +1,61 @@
+--  GADA core runtime library project.
+--
+--  Owns the top-level umbrella package `Gada` and the `Gada.Core` child
+--  package. Later phases add `Gada.Core.IO`, `Gada.Async`, etc., as either
+--  child units of this library or sibling library projects (see AGENTS.md
+--  §"The runtime is layered").
+
+library project Gada_Core is
+
+   --  Build mode scenario variable.
+   --
+   --  "normal"   — default, vanilla compile.
+   --  "coverage" — adds -fprofile-arcs -ftest-coverage to the compile and
+   --               -lgcov to the link. Set by tools/coverage_ada.sh when
+   --               producing the lcov tracefile. Coverage builds are
+   --               additionally placed in a `cov/` sub-object-dir
+   --               (`gprbuild --subdirs=cov`) so they coexist with normal
+   --               builds without forcing an `-f` full rebuild.
+   --
+   --  Importing projects (e.g. tests/aunit_harness.gpr) re-declare this
+   --  variable with the same name and forward it; that way `gprbuild
+   --  -XBuild_Mode=coverage` propagates uniformly across the closure of
+   --  GADA-owned projects WITHOUT touching Alire-supplied dependency
+   --  projects (AUnit, etc.) whose own caches must stay pristine.
+   type Build_Mode_Type is ("normal", "coverage");
+   Build_Mode : Build_Mode_Type := external ("Build_Mode", "normal");
+
+   for Library_Name use "gada_core";
+   for Library_Kind use "static";
+
+   for Source_Dirs use ("src");
+   for Object_Dir  use "obj";
+   for Library_Dir use "lib";
+
+   for Languages use ("Ada");
+
+   package Compiler is
+      Common_Switches := ("-gnat2022",   --  Ada 2022 by default; we want the latest standard.
+                          "-gnatwa",     --  All optional warnings on.
+                          "-gnatyy",     --  Default style checks (Gada style guide refines later).
+                          "-O0",
+                          "-g");
+      case Build_Mode is
+         when "normal" =>
+            for Default_Switches ("Ada") use Common_Switches;
+         when "coverage" =>
+            for Default_Switches ("Ada") use
+              Common_Switches & ("-fprofile-arcs", "-ftest-coverage");
+      end case;
+   end Compiler;
+
+   package Linker is
+      case Build_Mode is
+         when "normal" =>
+            null;
+         when "coverage" =>
+            for Default_Switches ("Ada") use ("-lgcov");
+      end case;
+   end Linker;
+
+end Gada_Core;

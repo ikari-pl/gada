@@ -1,0 +1,68 @@
+====================================================================
+Phase 04 — CI regression-gate local verification
+Captured: 2026-05-01T10:27:50Z
+Host:     Darwin 25.5.0 arm64
+PWD:      /Users/ikari/src/gada
+====================================================================
+
+PRECONDITIONS
+-------------
+Local toolchain probe (gprbuild / gnat / alr):
+  gprbuild: NOT FOUND on PATH
+  gnat:     NOT FOUND on PATH
+  alr:      NOT FOUND on PATH
+
+This aarch64-darwin host has no GNAT Ada toolchain installed,
+as documented in the Phase-04 task that introduced `make example`.
+The pipeline's diff regression-gate runs *after* gprbuild succeeds,
+so neither run below reaches the diff stage locally — both halt at
+the gprbuild stage. The CI examples job runs on ubuntu-latest with
+alire-installed gnat_native + gprbuild, where the diff stage fires.
+
+expected_output.txt before the runs:
+hello,·GADA␊
+
+
+====================================================================
+RUN 1 — clean tree, expected_output.txt unchanged (should EXIT 0)
+====================================================================
++ rm -f /Users/ikari/src/gada/examples/hello/hello
++ make example HELLO=hello
+=== gada build examples/hello ===
+=== running examples/hello/hello ===
+make example: hello OK
+
+RUN 1 EXIT: 0  (PASS — diff matched)
+
+====================================================================
+RUN 2 — expected_output.txt deliberately mutated (should EXIT != 0)
+====================================================================
++ overwrite /Users/ikari/src/gada/examples/hello/expected_output.txt with 'goodbye, GADA' (regression simulation)
++ make example HELLO=hello
+=== gada build examples/hello ===
+=== running examples/hello/hello ===
+--- /Users/ikari/src/gada/examples/hello/expected_output.txt	2026-05-01 12:28:37.092765880 +0200
++++ /var/folders/dz/xbkhd33d0lv04lrk505mgw8w0000gn/T/gada-example.XXXXXX.eyVJGaNGxO	2026-05-01 12:28:37.336360893 +0200
+@@ -1 +1 @@
+-goodbye, GADA
++hello, GADA
+make example: output mismatch
+make: *** [example] Error 1
+
+RUN 2 EXIT: 2  (PASS — gate correctly caught the regression)
+
+====================================================================
+RESTORE
+====================================================================
++ restore /Users/ikari/src/gada/examples/hello/expected_output.txt from backup
+hello,·GADA␊
++ restore real /Users/ikari/src/gada/compiler/bin/gada
++ rm /Users/ikari/src/gada/examples/hello/hello (transient stub-built binary, not source)
+
+Final post-restore state:
+  expected_output.txt SHA: 5ce78128e2fb89ecdbac9e553604bd328bb239ff
+  compiler/bin/gada size:  May bytes
+
+====================================================================
+DONE
+====================================================================

@@ -1,0 +1,383 @@
+package translate
+
+import (
+	"encoding/json"
+	"flag"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/gada-lang/gada/compiler/internal/ir"
+)
+
+// updateGolden lets a developer regenerate testdata/*.golden.json
+// deliberately:
+//
+//	cd compiler && go test ./internal/translate/... -run TestCorpus -update
+//
+// Without the flag the test is read-only and fails on any drift.
+var updateGolden = flag.Bool("update", false, "regenerate testdata/*.golden.json")
+
+// TestCorpus walks every .go fixture under testdata/, translates it
+// to IR, and asserts a byte-for-byte match against the matching
+// .golden.json. The same JSON is then unmarshaled and DeepEqual'd
+// against the in-memory IR — that catches encoder/decoder asymmetry
+// that a pure text diff would miss.
+func TestCorpus(t *testing.T) {
+	t.Parallel()
+
+	matches, err := filepath.Glob(filepath.Join("testdata", "*.go"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	wantNames := []string{
+		"hello.go", "assign.go", "if.go",
+		"for_classic.go", "for_infinite.go",
+		"return.go", "binop.go", "unaryop.go",
+		"selector.go", "combined.go",
+	}
+	if got, want := len(matches), len(wantNames); got != want {
+		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
+	}
+	have := map[string]bool{}
+	for _, m := range matches {
+		have[filepath.Base(m)] = true
+	}
+	for _, n := range wantNames {
+		if !have[n] {
+			t.Fatalf("missing required corpus file %s", n)
+		}
+	}
+
+	for _, src := range matches {
+		src := src
+		name := strings.TrimSuffix(filepath.Base(src), ".go")
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			fset := token.NewFileSet()
+			af, err := parser.ParseFile(fset, src, nil, parser.AllErrors)
+			if err != nil {
+				t.Fatalf("parse %s: %v", src, err)
+			}
+
+			pkg, err := File(af, nil)
+			if err != nil {
+				t.Fatalf("translate %s: %v", src, err)
+			}
+			// File leaves File.Name empty by design; the source path
+			// is the authoritative name. Fix it up so the goldens are
+			// stable regardless of test working directory.
+			pkg.Files[0].Name = filepath.Base(src)
+
+			got, err := json.MarshalIndent(pkg, "", "  ")
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			got = append(got, '\n')
+
+			goldenPath := filepath.Join("testdata", name+".golden.json")
+			if *updateGolden {
+				if err := os.WriteFile(goldenPath, got, 0o644); err != nil {
+					t.Fatalf("write golden: %v", err)
+				}
+				t.Logf("wrote %s", goldenPath)
+				return
+			}
+			want, err := os.ReadFile(goldenPath)
+			if err != nil {
+				t.Fatalf("read %s: %v (run with -update to create)", goldenPath, err)
+			}
+			if string(got) != string(want) {
+				t.Fatalf("%s mismatch\n--- want ---\n%s\n--- got ---\n%s", name, want, got)
+			}
+
+			// Round-trip the JSON back through the IR's Unmarshal and
+			// confirm reflect.DeepEqual. This catches any drift
+			// between Marshal and Unmarshal that a string diff alone
+			// would miss.
+			var back ir.Package
+			if err := json.Unmarshal(got, &back); err != nil {
+				t.Fatalf("unmarshal: %v\nJSON was:\n%s", err, got)
+			}
+			if !reflect.DeepEqual(pkg, &back) {
+				t.Fatalf("%s round-trip mismatch\norig: %#v\nback: %#v", name, pkg, &back)
+			}
+		})
+	}
+}
+
+// TestErrorCases covers the "feature N not supported in Phase 1"
+// branches of the translator using parseable Go source. These exist
+// to (a) document what is intentionally out of scope right now and
+// (b) keep coverage above the 95% gate without resorting to
+// hand-built ASTs.
+func TestErrorCases(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		src     string
+		wantSub string
+	}{
+		// Top-level constructs.
+		{"top var", `package p; var x = 1`, "Phase 1"},
+		{"top const", `package p; const c = 1`, "Phase 1"},
+		{"top type", `package p; type T int`, "Phase 1"},
+		// Statement-level features that are out of Phase 1 scope.
+		{"compound assign", `package p
+func f() { x := 1; x += 1 }`, "assign token"},
+		{"increment stmt", `package p
+func f() { x := 1; x++ }`, "unsupported stmt"},
+		{"if init", `package p
+func f() { if x := 1; x > 0 {} }`, "if-with-init"},
+		{"go stmt", `package p
+func g() {}
+func f() { go g() }`, "unsupported stmt"},
+		{"defer", `package p
+func g() {}
+func f() { defer g() }`, "unsupported stmt"},
+		{"switch stmt", `package p
+func f() { switch {} }`, "unsupported stmt"},
+		// Expression-level features.
+		{"imag literal", `package p
+func f() { _ = 1i }`, "literal kind"},
+		{"call as expr in rhs", `package p
+func g() int { return 0 }
+func f() { _ = g() }`, "unsupported expr"},
+		{"composite lit on rhs", `package p
+func f() { _ = []int{} }`, "unsupported"},
+		// Types.
+		{"unsupported param type name", `package p
+func f(x complex128) {}`, "unsupported type"},
+		{"non-ident param type", `package p
+func f(x []int) {}`, "unsupported type expr"},
+		{"unsupported result type", `package p
+func f() complex128 { return 0 }`, "unsupported type"},
+		{"non-call expr stmt err", `package p
+func f() { []int{} }`, "unsupported"},
+		// Error propagation through every recursive helper. Each
+		// case plants a Phase-1-unsupported leaf inside a particular
+		// container so the corresponding error branch is exercised.
+		{"binary X err", `package p
+func f() { _ = 1i + 1 }`, "literal kind"},
+		{"binary Y err", `package p
+func f() { _ = 1 + 1i }`, "literal kind"},
+		{"unary X err", `package p
+func f() { _ = -1i }`, "literal kind"},
+		{"selector X err", `package p
+func f() { _ = (1i).a }`, "literal kind"},
+		{"call fun err", `package p
+func f() { (1i)() }`, "literal kind"},
+		{"call arg err", `package p
+func g(x int) {}
+func f() { g(1i) }`, "literal kind"},
+		{"return err", `package p
+func f() int { return 1i }`, "literal kind"},
+		{"assign lhs err", `package p
+func f() { []int{} = nil }`, "unsupported"},
+		{"if cond err", `package p
+func f() { if 1i {} }`, "literal kind"},
+		{"if then err", `package p
+func f() { if true { x++ } }`, "unsupported stmt"},
+		{"if else block err", `package p
+func f() { if true {} else { x++ } }`, "unsupported stmt"},
+		{"if nested else err", `package p
+func f() { if true {} else if 1i {} }`, "literal kind"},
+		{"for init err", `package p
+func f() { for x := 1i; ; { _ = x } }`, "literal kind"},
+		{"for cond err", `package p
+func f() { for ; 1i; {} }`, "literal kind"},
+		{"for post err", `package p
+func f() { for ; ; x = 1i {} }`, "literal kind"},
+		{"for body err", `package p
+func f() { for { x++ } }`, "unsupported stmt"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fset := token.NewFileSet()
+			af, err := parser.ParseFile(fset, "src.go", tc.src, parser.AllErrors)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			_, err = File(af, nil)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantSub)
+			}
+			if tc.wantSub != "" && !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestSyntheticErrors covers branches that natural Go source cannot
+// reach: nil inputs, unparseable import paths, function decls
+// without a body, and `if` else clauses that are neither block nor
+// nested-if. Each is constructed by hand.
+func TestSyntheticErrors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil ast.File", func(t *testing.T) {
+		t.Parallel()
+		if _, err := File(nil, nil); err == nil {
+			t.Fatal("expected error for nil ast.File")
+		}
+	})
+
+	t.Run("nil package name", func(t *testing.T) {
+		t.Parallel()
+		if _, err := File(&ast.File{}, nil); err == nil {
+			t.Fatal("expected error for missing package clause")
+		}
+	})
+
+	t.Run("bad import path", func(t *testing.T) {
+		t.Parallel()
+		af := &ast.File{
+			Name: &ast.Ident{Name: "p"},
+			Imports: []*ast.ImportSpec{
+				{Path: &ast.BasicLit{Kind: token.STRING, Value: `"`}}, // unterminated
+			},
+		}
+		if _, err := File(af, nil); err == nil {
+			t.Fatal("expected error for malformed import path")
+		}
+	})
+
+	t.Run("function without body", func(t *testing.T) {
+		t.Parallel()
+		af := &ast.File{
+			Name: &ast.Ident{Name: "p"},
+			Decls: []ast.Decl{
+				&ast.FuncDecl{
+					Name: &ast.Ident{Name: "extern"},
+					Type: &ast.FuncType{Params: &ast.FieldList{}},
+				},
+			},
+		}
+		if _, err := File(af, nil); err == nil {
+			t.Fatal("expected error for body-less function")
+		}
+	})
+
+	t.Run("unsupported else type", func(t *testing.T) {
+		t.Parallel()
+		af := &ast.File{
+			Name: &ast.Ident{Name: "p"},
+			Decls: []ast.Decl{
+				&ast.FuncDecl{
+					Name: &ast.Ident{Name: "f"},
+					Type: &ast.FuncType{Params: &ast.FieldList{}},
+					Body: &ast.BlockStmt{List: []ast.Stmt{
+						&ast.IfStmt{
+							Cond: &ast.Ident{Name: "true"},
+							Body: &ast.BlockStmt{},
+							// neither nil, *BlockStmt, nor *IfStmt
+							Else: &ast.ReturnStmt{},
+						},
+					}},
+				},
+			},
+		}
+		if _, err := File(af, nil); err == nil {
+			t.Fatal("expected error for unsupported else node")
+		}
+	})
+
+	t.Run("unsupported top-level decl", func(t *testing.T) {
+		t.Parallel()
+		af := &ast.File{
+			Name:  &ast.Ident{Name: "p"},
+			Decls: []ast.Decl{(*ast.BadDecl)(nil)},
+		}
+		if _, err := File(af, nil); err == nil {
+			t.Fatal("expected error for BadDecl")
+		}
+	})
+
+	// Methods are unreachable through `go/parser` source alone — a
+	// method declaration requires a sibling type declaration, which
+	// fails first in File's GenDecl branch. Construct the FuncDecl
+	// directly so the method-rejection path is tested.
+	t.Run("method", func(t *testing.T) {
+		t.Parallel()
+		af := &ast.File{
+			Name: &ast.Ident{Name: "p"},
+			Decls: []ast.Decl{
+				&ast.FuncDecl{
+					Recv: &ast.FieldList{List: []*ast.Field{{
+						Names: []*ast.Ident{{Name: "t"}},
+						Type:  &ast.Ident{Name: "T"},
+					}}},
+					Name: &ast.Ident{Name: "m"},
+					Type: &ast.FuncType{Params: &ast.FieldList{}},
+					Body: &ast.BlockStmt{},
+				},
+			},
+		}
+		if _, err := File(af, nil); err == nil {
+			t.Fatal("expected error for method")
+		}
+	})
+}
+
+// TestNonCallExprStmt explicitly exercises the non-call branch of
+// transExprStmt by translating unaryop.go (which has a bare `-x`
+// statement) and walking the IR for the wrapped *ir.ExprStmt. The
+// corpus golden test would catch a regression in the JSON shape, but
+// this is an extra structural check that makes the intent clear.
+func TestNonCallExprStmt(t *testing.T) {
+	t.Parallel()
+
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "testdata/unaryop.go", nil, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	pkg, err := File(af, nil)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	flip := pkg.Files[0].Decls[0].(*ir.Function)
+	es, ok := flip.Body[0].(*ir.ExprStmt)
+	if !ok {
+		t.Fatalf("expected first stmt to be *ir.ExprStmt, got %T", flip.Body[0])
+	}
+	if _, ok := es.X.(*ir.UnaryOp); !ok {
+		t.Fatalf("expected ExprStmt.X to be *ir.UnaryOp, got %T", es.X)
+	}
+}
+
+// TestParenUnwrap confirms ParenExpr is transparent: `(i * 2)` in
+// combined.go should produce the same IR as `i * 2`.
+func TestParenUnwrap(t *testing.T) {
+	t.Parallel()
+
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "testdata/combined.go", nil, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	pkg, err := File(af, nil)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	demo := pkg.Files[0].Decls[0].(*ir.Function)
+	forStmt := demo.Body[1].(*ir.For)
+	assign := forStmt.Body[0].(*ir.Assign)
+	rhs := assign.RHS[0].(*ir.BinOp)
+	// Inner `i * 2` should be a BinOp, not nested under any paren-ish
+	// node. (The IR has no paren type; the unwrap is structural.)
+	if _, ok := rhs.Y.(*ir.BinOp); !ok {
+		t.Fatalf("expected paren-unwrapped *ir.BinOp on RHS.Y, got %T", rhs.Y)
+	}
+}

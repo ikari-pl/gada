@@ -1,0 +1,33 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "for_infinite.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "loop",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "For",
+              "init": null,
+              "cond": null,
+              "post": null,
+              "body": [
+                {
+                  "kind": "Return",
+                  "results": null
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

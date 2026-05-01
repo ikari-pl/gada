@@ -1,0 +1,101 @@
+# GADA Go-side lint configuration.
+#
+# Consumed by tools/lint_go.sh -> golangci-lint, which is invoked from
+# compiler/Makefile's `lint` target and from the top-level `make lint`.
+#
+# Schema is golangci-lint v2 (the v1 -> v2 cutover moved formatting checks
+# out of `linters` into a dedicated `formatters` section, and made
+# `version: "2"` mandatory at the top of the file). The spec for this phase
+# lists `gofmt` and `goimports` alongside the analyzer linters; they live
+# under `formatters` here to satisfy v2's schema while preserving intent.
+#
+# Linter set (Phase 02 — Linting):
+#   - errcheck    : every returned error is handled or _-discarded
+#   - govet       : vet's standard analyzer suite (printf, copylocks, etc.)
+#   - staticcheck : SA/ST/QF rules (rolls up gosimple, stylecheck, unused)
+#   - gosec       : security/static-analysis rules
+#   - unparam     : flags function parameters that are never read
+#   - revive      : configurable replacement for golint
+#   - gofmt       : canonical formatting (formatters section)
+#   - goimports   : canonical import order + missing/unused imports
+#
+# Excluded from Phase 02 by design (may be added later):
+#   - gocyclo / cyclop : noisy on the hand-written transpiler emitter
+#   - dupl             : flags shared transpilation patterns that are
+#                        intentionally similar
+#
+# Bumping `run.timeout` past 3m? Add a comment explaining why and
+# update tools/lint_go.sh.
+
+version: "2"
+
+run:
+  timeout: 3m
+
+linters:
+  # `default: none` ensures the enable list below is the *exact* active
+  # set — adding a linter to v2's defaults later won't silently turn it on
+  # in this repo. Every active linter must be listed explicitly.
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosec
+    - unparam
+    - revive
+
+  # Exclusions are scoped narrowly so they catch genuine intent rather
+  # than provide a blanket escape hatch. Each block has a one-line
+  # rationale; unjustified additions should be challenged in review.
+  exclusions:
+    rules:
+      # gosec on the build driver and its test. `gada build` is a
+      # compiler driver: its job is to read paths the user supplied,
+      # write Ada sources to a tempdir, mark the produced binary
+      # executable, and shell out to gprbuild / otool /
+      # install_name_tool with paths it just computed. The G203/G204/
+      # G301/G302/G304/G306/G703 family flag exactly that behaviour.
+      # The test file inherits the same suppressions because it
+      # exercises the same surface — temp paths, fabricated executables
+      # with the exec bit set, and project-file scraping. We accept
+      # the warnings file-locally rather than per-call to keep the
+      # surface searchable: every fresh build.go change inherits the
+      # suppression and a reviewer comparing it against this file sees
+      # the rationale.
+      - path: compiler/cmd/gada/build(_test)?\.go
+        linters: [gosec]
+      # Golden-file test infrastructure (translate / emit / ir tests).
+      # Writes testdata/*.golden.{json,adb} with 0o644 so files stay
+      # world-readable in-git after `-update`. Reads them by paths
+      # computed from fixture names, which gosec flags as G304 — the
+      # paths are constants joined with checked-in fixture base names,
+      # not user input. Coverage spans every *_test.go that consumes
+      # the golden corpus.
+      - path: compiler/internal/(translate|emit|ir)/.*_test\.go
+        text: "G30[46]"
+        linters: [gosec]
+      # revive's `exported` rule on the IR's interface-implementation
+      # methods (NodeKind, MarshalJSON, UnmarshalJSON). Each of these
+      # methods is part of a sealed-interface family whose pattern is
+      # documented in the ir package's package-level docstring; per-
+      # method comments would duplicate that text and rot independently.
+      # This exclusion does NOT cover top-level types/functions or
+      # any non-IR exported names — those still need doc comments.
+      - path: compiler/internal/ir/ir\.go
+        text: "exported method (Function|Assign|If|For|Return|Call|ExprStmt|Ident|Lit|BinOp|UnaryOp|Selector|IntType|StringType|BoolType|Float64Type|Package|File|Param)\\.(NodeKind|MarshalJSON|UnmarshalJSON)"
+        linters: [revive]
+      # revive's `exported` rule on the LitKind enum constants. The
+      # block-doc above the const () already explains every value.
+      - path: compiler/internal/ir/ir\.go
+        text: "exported const Lit(Int|String|Bool|Float)"
+        linters: [revive]
+
+formatters:
+  # gofmt + goimports were `linters` in golangci-lint v1; in v2 they are
+  # `formatters` (run via `golangci-lint fmt`, but also reported as
+  # diagnostics by `golangci-lint run`). Keeping both ensures a misformatted
+  # file or a missing/extra import fails CI with a `file:line: ...` line.
+  enable:
+    - gofmt
+    - goimports

@@ -1,0 +1,74 @@
+{
+  "kind": "Package",
+  "name": "main",
+  "files": [
+    {
+      "kind": "File",
+      "name": "selector.go",
+      "imports": [
+        "fmt"
+      ],
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "say",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Lit",
+                  "litKind": "string",
+                  "value": "\"hi\""
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "greet",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "prefix",
+              "type": {
+                "kind": "StringType"
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "StringType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "Ident",
+                  "name": "prefix"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

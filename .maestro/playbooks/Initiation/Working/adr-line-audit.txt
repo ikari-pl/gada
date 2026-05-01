@@ -1,0 +1,45 @@
+ADR line-count audit — 2026-05-01
+Phase 03 / Initial v1.0 ADRs roadmap item
+Verify clause: each ≥ 50 lines, status: accepted, ## Consequences present.
+
+=== wc -l docs/adr/000{1,2,3,4}-*.md ===
+     155 docs/adr/0001-go-frontend-via-go-ast.md
+     185 docs/adr/0002-runtime-layered.md
+     203 docs/adr/0003-gc-boehm-for-v1.md
+     228 docs/adr/0004-scheduler-libco-for-v1.md
+     771 total
+
+=== grep -E '^status:' docs/adr/000{1,2,3,4}-*.md ===
+docs/adr/0001-go-frontend-via-go-ast.md:status: accepted
+docs/adr/0002-runtime-layered.md:status: accepted
+docs/adr/0003-gc-boehm-for-v1.md:status: accepted
+docs/adr/0004-scheduler-libco-for-v1.md:status: accepted
+
+=== grep -nE '^## Consequences' docs/adr/000{1,2,3,4}-*.md ===
+docs/adr/0001-go-frontend-via-go-ast.md:80:## Consequences
+docs/adr/0002-runtime-layered.md:103:## Consequences
+docs/adr/0003-gc-boehm-for-v1.md:106:## Consequences
+docs/adr/0004-scheduler-libco-for-v1.md:118:## Consequences
+
+=== sibling-ADR wiki-link counts (grep -cE '\[\[ADR-000[1-4]\]\]|\[\[000[1-4]-') ===
+docs/adr/0001-go-frontend-via-go-ast.md:2
+docs/adr/0002-runtime-layered.md:7
+docs/adr/0003-gc-boehm-for-v1.md:7
+docs/adr/0004-scheduler-libco-for-v1.md:8
+
+=== roadmap wiki-link refs ===
+docs/adr/0001-go-frontend-via-go-ast.md:11:  - "[[roadmap/01-minimal-transpiler]]"
+docs/adr/0001-go-frontend-via-go-ast.md:154:- [[roadmap/01-minimal-transpiler]] — the phase that consumes this
+docs/adr/0002-runtime-layered.md:13:  - "[[roadmap/00-foundation]]"
+docs/adr/0003-gc-boehm-for-v1.md:12:  - "[[roadmap/00-foundation]]"
+docs/adr/0003-gc-boehm-for-v1.md:200:- [[roadmap/00-foundation]] — the foundation phase that
+docs/adr/0004-scheduler-libco-for-v1.md:12:  - "[[roadmap/00-foundation]]"
+docs/adr/0004-scheduler-libco-for-v1.md:225:- [[roadmap/00-foundation]] — the foundation phase that
+
+=== Verdict ===
+All four ADRs satisfy the verify clause:
+  - ≥ 50 lines: PASS (min 155)
+  - status: accepted: PASS (4/4)
+  - ## Consequences section present: PASS (4/4)
+  - sibling-ADR cross-links via [[ADR-NNNN]]/[[NNNN-...]]: PASS (≥ 2 per file)
+  - roadmap wiki-links: PASS (each ADR points at the relevant phase file)

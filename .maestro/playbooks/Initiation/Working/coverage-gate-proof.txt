@@ -1,0 +1,103 @@
+Coverage gate verification proof
+================================
+
+Captured: 2026-05-01, host darwin/arm64, Python 3.14.4, go1.26.2, lcov 2.4
+Script:   tools/coverage_gate.sh
+Config:   tools/coverage_thresholds.toml
+Verify contract:
+    Phase-02-Build-Coverage-CI.md "Coverage gate" item:
+      "Verify by injecting a synthetic untested function into
+       compiler/internal/ping/ping.go, confirming `make coverage-gate`
+       exits 1 with the path and percentage in the message; then revert
+       the change and confirm it exits 0."
+
+------------------------------------------------------------------------
+Run 1 — synthetic untested function injected into ping.go (expect FAIL)
+------------------------------------------------------------------------
+Injected:
+    func SyntheticUntested(x int) int {
+        if x < 0   { return -x }
+        if x == 0  { return 1 }
+        return x * 2
+    }
+ping.go: 1 covered statement (existing Ping) + 5 new uncovered statements.
+
+Command sequence:
+    make coverage      # regenerates coverage/compiler.coverage.out
+    ./tools/coverage_gate.sh
+
+Output:
+=== coverage gate: 4 thresholds, 4 files ===
+  file: 100.00%  (  11/11  )  compiler/cmd/gada/main.go
+  file:  16.67%  (   1/6   )  compiler/internal/ping/ping.go
+  file: 100.00%  (   1/1   )  compiler/internal/version/version.go
+  file: 100.00%  (   3/3   )  runtime/src/gada-core-io.adb
+
+  PASS: 'runtime/'                                 100.00%  (>= 100.00%, 3/3 lines, 1 files)
+  SKIP: 'compiler/internal/emit/' matched 0 lines (artefact missing or no source under prefix)
+  SKIP: 'compiler/internal/translate/' matched 0 lines (artefact missing or no source under prefix)
+  FAIL: 'compiler/'                                 72.22%  (>= 90.00%, 13/18 lines, 3 files)
+
+=== coverage gate: FAILED ===
+FAIL: compiler/ 72.22% < 90.00%
+
+Exit code: 1   (matches contract — non-zero exit, FAIL line includes both
+                the offending path 'compiler/' and the actual/threshold pcts)
+
+------------------------------------------------------------------------
+Run 2 — change reverted (expect PASS, exit 0)
+------------------------------------------------------------------------
+Command sequence:
+    # SyntheticUntested removed from ping.go (file restored to its
+    # pre-Phase-02-coverage-gate-task state, identical to git HEAD)
+    make coverage
+    ./tools/coverage_gate.sh
+
+Output:
+=== coverage gate: 4 thresholds, 4 files ===
+  file: 100.00%  (  11/11  )  compiler/cmd/gada/main.go
+  file: 100.00%  (   1/1   )  compiler/internal/ping/ping.go
+  file: 100.00%  (   1/1   )  compiler/internal/version/version.go
+  file: 100.00%  (   3/3   )  runtime/src/gada-core-io.adb
+
+  PASS: 'runtime/'                                 100.00%  (>= 100.00%, 3/3 lines, 1 files)
+  SKIP: 'compiler/internal/emit/' matched 0 lines (artefact missing or no source under prefix)
+  SKIP: 'compiler/internal/translate/' matched 0 lines (artefact missing or no source under prefix)
+  PASS: 'compiler/'                                100.00%  (>= 90.00%, 13/13 lines, 3 files)
+
+=== coverage gate: PASSED ===
+
+Exit code: 0   (matches contract — clean tree passes the gate)
+
+------------------------------------------------------------------------
+Notes worth preserving for future agents
+------------------------------------------------------------------------
+1. compiler/ baseline currently sits at 100.00% because this same task
+   added unit tests for cmd/gada/main and internal/version/Describe to
+   bring the bootstrap files above the 90% gate. (See main_test.go and
+   version_test.go.) Phase 0 left those at 0%/0% because the prior agent
+   deferred their tests to Phase 1; the gate's "revert and exit 0"
+   verify clause forced the rest of the iceberg to land here.
+
+2. main.go is now testable via an `osExit = os.Exit` indirection;
+   TestMain_DispatchesViaOsExit swaps it on t.Cleanup so the test
+   process is not actually torn down. This is the standard Go idiom
+   for keeping main() thin while still covering its single dispatch
+   line — without it main()'s 1 statement was uncovered and dragged
+   compiler/ to 87.5% (8/9 lines), one statement under threshold.
+
+3. The SKIP lines for compiler/internal/emit/ and
+   compiler/internal/translate/ are EXPECTED at the foundation phase:
+   those packages don't exist yet (they land in Phase 1). The gate
+   correctly treats "no files matched the prefix" as a skip rather
+   than a fail, since enforcing 95% on a 0-statement set is undefined.
+   Once Phase 1 lands the first files under either path, the same
+   thresholds will start enforcing automatically — no script change
+   needed.
+
+4. Threshold matching is overlapping by design: a file under
+   compiler/internal/emit/ counts toward BOTH the emit/ threshold
+   AND the parent compiler/ threshold. This is documented in
+   tools/coverage_thresholds.toml and tools/coverage_gate.sh and
+   is the reason the gate catches a deep regression even when the
+   broad average looks acceptable.

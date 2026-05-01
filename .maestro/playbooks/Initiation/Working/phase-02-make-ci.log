@@ -1,0 +1,156 @@
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/compiler lint
+/Users/ikari/src/gada/tools/lint_go.sh
+0 issues.
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/runtime lint
+/Users/ikari/src/gada/tools/lint_ada.sh
+tools/lint_ada.sh: gnatcheck not found — skipping Ada lint pass.
+
+Reason: gnatcheck ships with GNAT Pro / GNATstudio Pro, not with the FSF
+GNAT distribution that Alire installs on macOS / non-Pro Linux hosts.
+
+To enable on this host:
+  Ubuntu : sudo apt-get install gnat-gps   (or use AdaCore's installer)
+  macOS  : install GNATstudio Pro from AdaCore
+  CI     : install in the Linux runner before invoking `make ci`.
+
+Exiting 0 (soft-skip) so `make ci` does not break on hosts without the
+proprietary tool. The CI workflow's Ubuntu job is the authoritative
+gnatcheck enforcement point for this project.
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/compiler test
+go test -race -count=1 ./...
+ok  	github.com/gada-lang/gada/compiler/cmd/gada	1.385s
+ok  	github.com/gada-lang/gada/compiler/internal/ping	1.554s
+ok  	github.com/gada-lang/gada/compiler/internal/version	1.204s
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/runtime test
+/Users/ikari/src/gada/runtime/tests/run_tests.sh
+Setup
+   [mkdir]        object directory for project Gada_Core
+   [mkdir]        library directory for project Gada_Core
+   [mkdir]        object directory for project Aunit_Harness
+Compile
+   [Ada]          test_runner.adb
+test_runner.adb:24:25: warning: use of an anonymous access type allocator [-gnatw_a]
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada.ads
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada-core-io.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada-core.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          io_suite.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+Build Libraries
+   [gprlib]       gada_core.lexch
+   [archive]      libgada_core.a
+   [index]        libgada_core.a
+Bind
+   [gprbind]      test_runner.bexch
+   [Ada]          test_runner.ali
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+Link
+   [link]         test_runner.adb
+
+OK Gada.Core.IO suite : Gada.Core.IO.Println emits 'hello, GADA' + LF
+
+Total Tests Run:   1
+Successful Tests:  1
+Failed Assertions: 0
+Unexpected Errors: 0
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/compiler coverage
+/Users/ikari/src/gada/tools/coverage_go.sh
+ok  	github.com/gada-lang/gada/compiler/cmd/gada	1.213s	coverage: 92.3% of statements in ./...
+ok  	github.com/gada-lang/gada/compiler/internal/ping	1.392s	coverage: 7.7% of statements in ./...
+ok  	github.com/gada-lang/gada/compiler/internal/version	1.565s	coverage: 7.7% of statements in ./...
+
+=== go tool cover -func ===
+github.com/gada-lang/gada/compiler/cmd/gada/main.go:21:			main		100.0%
+github.com/gada-lang/gada/compiler/cmd/gada/main.go:33:			run		100.0%
+github.com/gada-lang/gada/compiler/internal/ping/ping.go:13:		Ping		100.0%
+github.com/gada-lang/gada/compiler/internal/version/version.go:22:	Describe	100.0%
+total:									(statements)	100.0%
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/runtime coverage
+/Users/ikari/src/gada/tools/coverage_ada.sh
+=== building test harness with Build_Mode=coverage --subdirs=cov ===
+Setup
+   [mkdir]        object directory for project Gada_Core
+   [mkdir]        object directory for project Aunit_Harness
+   [mkdir]        library directory for project Gada_Core
+gada_core.gpr:8:17: warning: Linker switches not taken into account in library projects
+Compile
+   [Ada]          test_runner.adb
+test_runner.adb:24:25: warning: use of an anonymous access type allocator [-gnatw_a]
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada.ads
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada-core-io.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada-core.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          io_suite.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+Build Libraries
+   [gprlib]       gada_core.lexch
+   [archive]      libgada_core.a
+   [index]        libgada_core.a
+Bind
+   [gprbind]      test_runner.bexch
+   [Ada]          test_runner.ali
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+Link
+   [link]         test_runner.adb
+
+=== running instrumented test harness ===
+
+OK Gada.Core.IO suite : Gada.Core.IO.Println emits 'hello, GADA' + LF
+
+Total Tests Run:   1
+Successful Tests:  1
+Failed Assertions: 0
+Unexpected Errors: 0
+
+=== capturing coverage with gcov: /Users/ikari/.local/share/alire/toolchains/gnat_native_15.1.2_60748c54/bin/gcov ===
+Message summary:
+  no messages were reported
+
+=== filtering to runtime/src/* ===
+Message summary:
+  no messages were reported
+
+=== lcov --summary /Users/ikari/src/gada/runtime/coverage.lcov ===
+Reading tracefile /Users/ikari/src/gada/runtime/coverage.lcov.
+Summary coverage rate:
+  source files: 1
+  lines.......: 100.0% (3 of 3 lines)
+  functions...: 100.0% (1 of 1 function)
+Message summary:
+  no messages were reported
+
+=== coverage/summary.txt ===
+GADA unified coverage summary
+Generated: 2026-05-01T06:57:23Z
+Repo root: /Users/ikari/src/gada
+
+=== Go compiler module (compiler/) ===
+Profile: coverage/compiler.coverage.out
+total:									(statements)	100.0%
+
+=== Ada runtime crate (runtime/) ===
+Tracefile: coverage/runtime.coverage.lcov
+Summary coverage rate:
+  source files: 1
+  lines.......: 100.0% (3 of 3 lines)
+  functions...: 100.0% (1 of 1 function)
+=== coverage gate: 4 thresholds, 4 files ===
+  file: 100.00%  (  11/11  )  compiler/cmd/gada/main.go
+  file: 100.00%  (   1/1   )  compiler/internal/ping/ping.go
+  file: 100.00%  (   1/1   )  compiler/internal/version/version.go
+  file: 100.00%  (   3/3   )  runtime/src/gada-core-io.adb
+
+  PASS: 'runtime/'                                 100.00%  (>= 100.00%, 3/3 lines, 1 files)
+  SKIP: 'compiler/internal/emit/' matched 0 lines (artefact missing or no source under prefix)
+  SKIP: 'compiler/internal/translate/' matched 0 lines (artefact missing or no source under prefix)
+  PASS: 'compiler/'                                100.00%  (>= 90.00%, 13/13 lines, 3 files)
+
+=== coverage gate: PASSED ===
+/Users/ikari/src/gada/tools/check_roadmap_consistency.sh
+OK: roadmap status consistent across index and 12 phase file(s).

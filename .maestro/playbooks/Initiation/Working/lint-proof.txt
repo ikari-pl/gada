@@ -1,0 +1,88 @@
+==========================================================================
+lint-proof.txt — captures the verify cycle for the Phase 02 Linting task
+Generated: 2026-05-01T06:48:27Z
+Host: Darwin 25.5.0 arm64  /  golangci-lint golangci-lint has version 2.11.4 built with go1.26.1 from 8f3b0c7 on 2026-03-22T17:29:46Z
+==========================================================================
+
+------------------------------------------------------------------
+STEP 1 — clean tree, expect exit 0
+------------------------------------------------------------------
+$ make lint
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/compiler lint
+/Users/ikari/src/gada/tools/lint_go.sh
+0 issues.
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/runtime lint
+/Users/ikari/src/gada/tools/lint_ada.sh
+tools/lint_ada.sh: gnatcheck not found — skipping Ada lint pass.
+
+Reason: gnatcheck ships with GNAT Pro / GNATstudio Pro, not with the FSF
+GNAT distribution that Alire installs on macOS / non-Pro Linux hosts.
+
+To enable on this host:
+  Ubuntu : sudo apt-get install gnat-gps   (or use AdaCore's installer)
+  macOS  : install GNATstudio Pro from AdaCore
+  CI     : install in the Linux runner before invoking `make ci`.
+
+Exiting 0 (soft-skip) so `make ci` does not break on hosts without the
+proprietary tool. The CI workflow's Ubuntu job is the authoritative
+gnatcheck enforcement point for this project.
+exit=0
+
+------------------------------------------------------------------
+STEP 2 — inject 'unused := 42' into compiler/internal/ping/ping.go
+         expect exit != 0 with file:line in the report
+------------------------------------------------------------------
+$ make lint
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/compiler lint
+/Users/ikari/src/gada/tools/lint_go.sh
+compiler/internal/ping/ping.go:1: : # github.com/gada-lang/gada/compiler/internal/ping [github.com/gada-lang/gada/compiler/internal/ping.test]
+internal/ping/ping.go:14:2: declared and not used: unused (typecheck)
+// Package ping is a trivial liveness sentinel used to validate the
+1 issues:
+* typecheck: 1
+make[1]: *** [lint] Error 1
+make: *** [lint] Error 2
+exit=2
+
+------------------------------------------------------------------
+STEP 3 — revert the injection, expect exit 0 again
+------------------------------------------------------------------
+$ make lint
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/compiler lint
+/Users/ikari/src/gada/tools/lint_go.sh
+0 issues.
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/runtime lint
+/Users/ikari/src/gada/tools/lint_ada.sh
+tools/lint_ada.sh: gnatcheck not found — skipping Ada lint pass.
+
+Reason: gnatcheck ships with GNAT Pro / GNATstudio Pro, not with the FSF
+GNAT distribution that Alire installs on macOS / non-Pro Linux hosts.
+
+To enable on this host:
+  Ubuntu : sudo apt-get install gnat-gps   (or use AdaCore's installer)
+  macOS  : install GNATstudio Pro from AdaCore
+  CI     : install in the Linux runner before invoking `make ci`.
+
+Exiting 0 (soft-skip) so `make ci` does not break on hosts without the
+proprietary tool. The CI workflow's Ubuntu job is the authoritative
+gnatcheck enforcement point for this project.
+exit=0
+
+------------------------------------------------------------------
+STEP 4 — confirm ping.go restored byte-for-byte
+------------------------------------------------------------------
+// Package ping is a trivial liveness sentinel used to validate the
+// Go test toolchain (Phase 0). It deliberately has no behaviour beyond
+// returning a constant string so its test can do nothing but exercise
+// `go test -race` against the compiler module.
+//
+// Once Phase 1 starts emitting real internal packages this file may
+// be deleted; the only contract here is the Phase 0 verify command
+// in roadmap/00-foundation.md.
+package ping
+
+// Ping returns the constant "pong". It exists solely so the test
+// toolchain has at least one exported symbol to call.
+func Ping() string {
+	return "pong"
+}

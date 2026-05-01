@@ -1,0 +1,117 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "unaryop.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "flip",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "x",
+              "type": {
+                "kind": "IntType"
+              }
+            },
+            {
+              "kind": "Param",
+              "name": "ok",
+              "type": {
+                "kind": "BoolType"
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "ExprStmt",
+              "x": {
+                "kind": "UnaryOp",
+                "op": "-",
+                "x": {
+                  "kind": "Ident",
+                  "name": "x"
+                }
+              }
+            },
+            {
+              "kind": "If",
+              "cond": {
+                "kind": "UnaryOp",
+                "op": "!",
+                "x": {
+                  "kind": "Ident",
+                  "name": "ok"
+                }
+              },
+              "then": [
+                {
+                  "kind": "Return",
+                  "results": [
+                    {
+                      "kind": "UnaryOp",
+                      "op": "-",
+                      "x": {
+                        "kind": "Ident",
+                        "name": "x"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "else": null
+            },
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "Ident",
+                  "name": "x"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "always",
+          "params": null,
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "BoolType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "Lit",
+                  "litKind": "bool",
+                  "value": "true"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

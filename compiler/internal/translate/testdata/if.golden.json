@@ -1,0 +1,111 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "if.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "choose",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "x",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "If",
+              "cond": {
+                "kind": "BinOp",
+                "op": "\u003c",
+                "x": {
+                  "kind": "Ident",
+                  "name": "x"
+                },
+                "y": {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "0"
+                }
+              },
+              "then": [
+                {
+                  "kind": "Return",
+                  "results": [
+                    {
+                      "kind": "UnaryOp",
+                      "op": "-",
+                      "x": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "1"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "else": [
+                {
+                  "kind": "If",
+                  "cond": {
+                    "kind": "BinOp",
+                    "op": "==",
+                    "x": {
+                      "kind": "Ident",
+                      "name": "x"
+                    },
+                    "y": {
+                      "kind": "Lit",
+                      "litKind": "int",
+                      "value": "0"
+                    }
+                  },
+                  "then": [
+                    {
+                      "kind": "Return",
+                      "results": [
+                        {
+                          "kind": "Lit",
+                          "litKind": "int",
+                          "value": "0"
+                        }
+                      ]
+                    }
+                  ],
+                  "else": [
+                    {
+                      "kind": "Return",
+                      "results": [
+                        {
+                          "kind": "Lit",
+                          "litKind": "int",
+                          "value": "1"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

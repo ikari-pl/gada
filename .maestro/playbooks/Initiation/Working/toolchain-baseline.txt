@@ -1,0 +1,86 @@
+# GADA toolchain baseline — Phase 01, captured 2026-05-01 (revised)
+#
+# Each line: <tool> | <status> | <version-or-reason>
+# AVAILABLE     means the command exists on PATH and reported a version.
+# AVAILABLE*    means the binary exists on this host but is NOT on $PATH;
+#               an explicit absolute path or PATH-prefix is needed to use it.
+# MISSING       means the binary cannot be found anywhere this agent looked.
+#
+# Captured on: darwin/arm64 (macOS, Darwin 25.5.0)
+# Captured by: gada agent, Phase-01-Foundation-Bootstrap, task 1.
+#
+# Local resources:
+#   ~/src/gnatstudio          — GNAT Studio source tree (AdaCore IDE).
+#                               NOT itself a compiler install, but its
+#                               .tools/bin/ directory contains shims that
+#                               point at a working Alire-managed GNAT 15.x
+#                               toolchain (see below).
+#
+#   ~/src/gnatstudio/.tools/bin
+#                             — Wrapper directory exposing `alr`, `gprbuild`,
+#                               `gnat`, `gnatbind`, `gnatlink`, `gnatmake`
+#                               as symlinks into the Alire toolchain.
+#                               (gnatls and gcov are NOT shimmed here, but
+#                               are available at the Alire path below.)
+#
+#   ~/.local/share/alire/toolchains/gnat_native_15.1.2_60748c54/bin
+#                             — Full GNAT 15.0.1 (prerelease, 20250418)
+#                               toolchain installed by Alire. Contains
+#                               gnat, gnatls, gnatmake, gnatbind,
+#                               gnatlink, gnatchop, gnatkr, gnatname,
+#                               gnatprep, gcc, g++, gcov, gcov-dump,
+#                               gcov-tool. Pair with the gprbuild at
+#                               ~/.local/share/alire/toolchains/gprbuild_25.0.1_c2b4ada4/bin
+#                               for a complete Ada build environment.
+#
+# To activate the toolchain in the current shell:
+#   export PATH="$HOME/.local/share/alire/toolchains/gnat_native_15.1.2_60748c54/bin:\
+#               $HOME/.local/share/alire/toolchains/gprbuild_25.0.1_c2b4ada4/bin:\
+#               $HOME/src/gnatstudio/.tools/bin:$PATH"
+# CI must do the equivalent (or install GNAT itself) before running
+# `make ci`.
+
+go              | AVAILABLE  | go version go1.26.2 darwin/arm64
+alr             | AVAILABLE* | alr 2.1.0  (at ~/src/gnatstudio/.tools/bin/alr — Alire 2.1.0)
+gprbuild        | AVAILABLE* | GPRBUILD 25.0.0 (2025-05-16) aarch64-apple-darwin23.6.0
+                              (at ~/src/gnatstudio/.tools/bin/gprbuild → Alire's
+                               gprbuild_25.0.1_c2b4ada4 toolchain)
+gnatls          | AVAILABLE* | GNATLS 15.0.1 20250418 (prerelease)
+                              (at ~/.local/share/alire/toolchains/gnat_native_15.1.2_60748c54/bin/gnatls;
+                               not shimmed in ~/src/gnatstudio/.tools/bin)
+gnat            | AVAILABLE* | GNAT 15.0.1 20250418 (prerelease)
+                              (at ~/src/gnatstudio/.tools/bin/gnat → Alire toolchain)
+gcov            | AVAILABLE  | Apple LLVM gcov 21.0.0 (PATH default; clang shim, not GNU)
+gcov (GNU/GNAT) | AVAILABLE* | gcov (GCC) 15.0.1 20250418 (prerelease), JSON format v2
+                              (at ~/.local/share/alire/toolchains/gnat_native_15.1.2_60748c54/bin/gcov;
+                               this is the gcov that pairs with our GNAT for Ada coverage)
+lcov            | MISSING    | command not found (install via `brew install lcov` for HTML reports)
+golangci-lint   | MISSING    | command not found (install via `brew install golangci-lint`)
+
+# Implications for Phase 01 tasks
+#
+# Revision note: the original baseline reported the entire Ada side as
+# MISSING because none of the binaries were on $PATH. Searching
+# ~/src/gnatstudio (per the playbook hint) revealed an Alire-managed
+# GNAT 15.x toolchain whose binaries simply need PATH activation. With
+# that activation, every Phase 01 verify command can run on this host.
+#
+# - Task "Bootstrap the Go compiler module": fully verifiable locally
+#   (`go build`, `go vet`, `go test -race` all available). [DONE]
+# - Task "Add a single Go test": fully verifiable locally.
+# - Task "Bootstrap the Ada runtime crate": fully verifiable locally
+#   once PATH is set as documented above. The `alr build` /
+#   `gprbuild -P gada_core.gpr` verify command will execute against
+#   the Alire-installed GNAT 15.0.1 toolchain.
+# - Task "Add Gada.Core.IO.Println + AUnit smoke test": same — needs
+#   `aunit` as an Alire dependency, and the project must be built via
+#   `alr exec -- gprbuild -P tests/aunit_harness.gpr` so Alire resolves
+#   AUnit sources for the harness.
+# - Task "Coverage tooling — Ada (gcov + lcov)": gcov-from-GCC is
+#   available (the Ada-paired one); `lcov` itself is still MISSING and
+#   must be installed (or the script can fall back to `gcov` text
+#   output until lcov is installed).
+# - Task "Linting — golangci-lint": MISSING; install before that
+#   roadmap item is taken on.
+# - Roadmap consistency check (`tools/check_roadmap_consistency.sh`):
+#   exits 0 cleanly today.

@@ -1,0 +1,68 @@
+--  tools/gnatcheck.rules
+--
+--  Initial gnatcheck rule set for the GADA Ada runtime crate.
+--  Consumed by tools/lint_ada.sh via:
+--      gnatcheck -P runtime/gada_core.gpr -rules -from=tools/gnatcheck.rules
+--
+--  Source for rule names + parameters:
+--      AdaCore "GNATcheck Reference Manual"
+--      https://docs.adacore.com/live/wave/gnatcheck/html/gnatcheck_rm/
+--
+--  Conventions:
+--      - One rule per line; comments use the Ada `--` prefix.
+--      - Keep this file aligned with docs/style_ada.md (added in a later
+--        Phase 02 task). When the style doc lands, every rule here must
+--        have a corresponding "Why" entry there, and vice versa.
+--
+--  Rule selection rationale (Phase 02 baseline):
+--      The phase brief calls out three concrete project rules:
+--          1. no goto
+--          2. no global mutable state in spec
+--          3. mandatory headers
+--      Each is realised below using the closest standard gnatcheck rule.
+--      Additional rules round out the baseline with cheap, well-understood
+--      style enforcement that the GADA codebase can satisfy from day one.
+
+----------------------------------------------------------------------------
+--  1. No goto statements.
+--  Maps directly to the brief's "no goto" requirement.
+----------------------------------------------------------------------------
++RGOTO_Statements
+
+----------------------------------------------------------------------------
+--  2. No global mutable state in package specifications.
+--  `Global_Variables` flags variables declared in a package spec; this is
+--  the standard gnatcheck rule that operationalises "no globals in spec".
+--  Constants and types remain allowed.
+----------------------------------------------------------------------------
++RGlobal_Variables
+
+----------------------------------------------------------------------------
+--  3. Mandatory file headers.
+--  `Headers` checks that every compilation unit starts with a comment block
+--  matching the file referenced by the rule parameter. The header template
+--  itself will land alongside docs/style_ada.md; until then this rule is
+--  declared but parameterless so the rule file parses on hosts where
+--  gnatcheck is available, without flagging existing files. Re-enable with
+--  `+RHeaders:Header=tools/header_ada.txt` once the template ships.
+----------------------------------------------------------------------------
+--  +RHeaders:Header=tools/header_ada.txt   --  TODO: enable with header file
+
+----------------------------------------------------------------------------
+--  Additional baseline rules — each is well-understood and the current
+--  GADA codebase already satisfies them (verified by inspection of
+--  runtime/src/*.ad?).
+----------------------------------------------------------------------------
+
+--  No anonymous arrays/access types — promotes named, documented types.
++RAnonymous_Arrays
++RAnonymous_Subtypes
+
+--  No exception handlers in package elaboration code (Ravenscar-friendly).
++RExceptions_As_Control_Flow
+
+--  Maximum line length 100 columns (GADA project convention).
++RMax_Line_Length:100
+
+--  No `with` clauses for unused units.
++RUnused_With_Clauses

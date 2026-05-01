@@ -1,0 +1,29 @@
+--  Auto-generated GADA project file. Do not edit by hand.
+--
+--  This file is rendered from compiler/internal/emit/template.gpr.tmpl by
+--  the `gada build` driver. It points at the GADA core runtime project so
+--  emitted Ada sources can resolve `Gada.Core.IO.Println` and friends.
+--
+--  Substituted fields:
+--    {{.ProjectName}}     Ada project name (also the .gpr base name)
+--    {{.RuntimeProject}}  Path (without extension) to gada_core.gpr
+--    {{.SourceDir}}       Directory holding emitted .adb / .ads files
+--    {{.ObjectDir}}       gprbuild's object directory
+--    {{.ExecDir}}         Where the produced binary is placed
+--    {{.MainFile}}        Main subprogram's source file (e.g. "main.adb")
+
+with "{{.RuntimeProject}}";
+
+project {{.ProjectName}} is
+
+   for Source_Dirs use ("{{.SourceDir}}");
+   for Object_Dir  use "{{.ObjectDir}}";
+   for Exec_Dir    use "{{.ExecDir}}";
+
+   for Main use ("{{.MainFile}}");
+
+   package Compiler is
+      for Default_Switches ("Ada") use ("-gnat2022", "-O0", "-g");
+   end Compiler;
+
+end {{.ProjectName}};

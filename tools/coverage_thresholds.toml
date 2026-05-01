@@ -1,0 +1,34 @@
+# tools/coverage_thresholds.toml
+#
+# Per-path minimum line-coverage thresholds enforced by tools/coverage_gate.sh.
+# The gate aggregates coverage across every file whose repo-relative path
+# starts with the threshold's `path` prefix, and fails when the aggregate
+# slips below `minimum_lines_pct`.
+#
+# Matching is overlapping by design: a file under
+# `compiler/internal/emit/` counts toward BOTH the emit/ threshold AND
+# the parent compiler/ threshold. This catches the case where a deep
+# package regresses while the broad average still looks acceptable.
+#
+# Numbers come from AGENTS.md "Design principles -> Every behavior is
+# unit-tested before it ships":
+#   - 100% executable lines for runtime/ packages
+#   - >= 90% for compiler/ packages
+#   - >= 95% for AST emission and translation layers
+# Update this file (and AGENTS.md alongside) if those numbers change.
+
+[[threshold]]
+path = "runtime/"
+minimum_lines_pct = 100.0
+
+[[threshold]]
+path = "compiler/internal/emit/"
+minimum_lines_pct = 95.0
+
+[[threshold]]
+path = "compiler/internal/translate/"
+minimum_lines_pct = 95.0
+
+[[threshold]]
+path = "compiler/"
+minimum_lines_pct = 90.0

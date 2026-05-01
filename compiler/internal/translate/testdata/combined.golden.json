@@ -1,0 +1,276 @@
+{
+  "kind": "Package",
+  "name": "main",
+  "files": [
+    {
+      "kind": "File",
+      "name": "combined.go",
+      "imports": [
+        "fmt"
+      ],
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "demo",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "n",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "x"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "0"
+                }
+              ]
+            },
+            {
+              "kind": "For",
+              "init": {
+                "kind": "Assign",
+                "lhs": [
+                  {
+                    "kind": "Ident",
+                    "name": "i"
+                  }
+                ],
+                "define": true,
+                "rhs": [
+                  {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "0"
+                  }
+                ]
+              },
+              "cond": {
+                "kind": "BinOp",
+                "op": "\u003c",
+                "x": {
+                  "kind": "Ident",
+                  "name": "i"
+                },
+                "y": {
+                  "kind": "Ident",
+                  "name": "n"
+                }
+              },
+              "post": {
+                "kind": "Assign",
+                "lhs": [
+                  {
+                    "kind": "Ident",
+                    "name": "i"
+                  }
+                ],
+                "define": false,
+                "rhs": [
+                  {
+                    "kind": "BinOp",
+                    "op": "+",
+                    "x": {
+                      "kind": "Ident",
+                      "name": "i"
+                    },
+                    "y": {
+                      "kind": "Lit",
+                      "litKind": "int",
+                      "value": "1"
+                    }
+                  }
+                ]
+              },
+              "body": [
+                {
+                  "kind": "Assign",
+                  "lhs": [
+                    {
+                      "kind": "Ident",
+                      "name": "x"
+                    }
+                  ],
+                  "define": false,
+                  "rhs": [
+                    {
+                      "kind": "BinOp",
+                      "op": "+",
+                      "x": {
+                        "kind": "Ident",
+                        "name": "x"
+                      },
+                      "y": {
+                        "kind": "BinOp",
+                        "op": "*",
+                        "x": {
+                          "kind": "Ident",
+                          "name": "i"
+                        },
+                        "y": {
+                          "kind": "Lit",
+                          "litKind": "int",
+                          "value": "2"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "If",
+              "cond": {
+                "kind": "BinOp",
+                "op": "\u003e",
+                "x": {
+                  "kind": "Ident",
+                  "name": "x"
+                },
+                "y": {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "100"
+                }
+              },
+              "then": [
+                {
+                  "kind": "Call",
+                  "fun": {
+                    "kind": "Selector",
+                    "x": {
+                      "kind": "Ident",
+                      "name": "fmt"
+                    },
+                    "sel": "Println"
+                  },
+                  "args": [
+                    {
+                      "kind": "Lit",
+                      "litKind": "string",
+                      "value": "\"big\""
+                    }
+                  ]
+                },
+                {
+                  "kind": "Return",
+                  "results": [
+                    {
+                      "kind": "UnaryOp",
+                      "op": "-",
+                      "x": {
+                        "kind": "Ident",
+                        "name": "x"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "else": [
+                {
+                  "kind": "If",
+                  "cond": {
+                    "kind": "BinOp",
+                    "op": "\u003c",
+                    "x": {
+                      "kind": "Ident",
+                      "name": "x"
+                    },
+                    "y": {
+                      "kind": "UnaryOp",
+                      "op": "-",
+                      "x": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "10"
+                      }
+                    }
+                  },
+                  "then": [
+                    {
+                      "kind": "Call",
+                      "fun": {
+                        "kind": "Selector",
+                        "x": {
+                          "kind": "Ident",
+                          "name": "fmt"
+                        },
+                        "sel": "Println"
+                      },
+                      "args": [
+                        {
+                          "kind": "Lit",
+                          "litKind": "string",
+                          "value": "\"small\""
+                        }
+                      ]
+                    },
+                    {
+                      "kind": "Return",
+                      "results": [
+                        {
+                          "kind": "Ident",
+                          "name": "x"
+                        }
+                      ]
+                    }
+                  ],
+                  "else": null
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Lit",
+                  "litKind": "string",
+                  "value": "\"ok\""
+                }
+              ]
+            },
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "Ident",
+                  "name": "x"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

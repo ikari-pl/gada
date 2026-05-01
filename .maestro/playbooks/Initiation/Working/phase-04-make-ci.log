@@ -1,0 +1,302 @@
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/compiler lint
+/Users/ikari/src/gada/tools/lint_go.sh
+0 issues.
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/runtime lint
+/Users/ikari/src/gada/tools/lint_ada.sh
+tools/lint_ada.sh: gnatcheck not found — skipping Ada lint pass.
+
+Reason: gnatcheck ships with GNAT Pro / GNATstudio Pro, not with the FSF
+GNAT distribution that Alire installs on macOS / non-Pro Linux hosts.
+
+To enable on this host:
+  Ubuntu : sudo apt-get install gnat-gps   (or use AdaCore's installer)
+  macOS  : install GNATstudio Pro from AdaCore
+  CI     : install in the Linux runner before invoking `make ci`.
+
+Exiting 0 (soft-skip) so `make ci` does not break on hosts without the
+proprietary tool. The CI workflow's Ubuntu job is the authoritative
+gnatcheck enforcement point for this project.
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/compiler test
+go test -race -count=1 ./...
+ok  	github.com/gada-lang/gada/compiler/cmd/gada	3.107s
+ok  	github.com/gada-lang/gada/compiler/internal/emit	2.088s
+ok  	github.com/gada-lang/gada/compiler/internal/ir	1.476s
+ok  	github.com/gada-lang/gada/compiler/internal/ping	2.252s
+ok  	github.com/gada-lang/gada/compiler/internal/translate	1.664s
+ok  	github.com/gada-lang/gada/compiler/internal/version	1.902s
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/runtime test
+/Users/ikari/src/gada/runtime/tests/run_tests.sh 
+Setup
+   [mkdir]        object directory for project Gada_Core
+   [mkdir]        library directory for project Gada_Core
+   [mkdir]        object directory for project Aunit_Harness
+Compile
+   [Ada]          test_runner.adb
+test_runner.adb:52:28: warning: use of an anonymous access type allocator [-gnatw_a]
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada.ads
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada-core-io.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada-core.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          io_suite.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+Build Libraries
+   [gprlib]       gada_core.lexch
+   [archive]      libgada_core.a
+   [index]        libgada_core.a
+Bind
+   [gprbind]      test_runner.bexch
+   [Ada]          test_runner.ali
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+Link
+   [link]         test_runner.adb
+
+OK Gada.Core.IO suite : Gada.Core.IO.Println emits 'hello, GADA' + LF
+
+Total Tests Run:   1
+Successful Tests:  1
+Failed Assertions: 0
+Unexpected Errors: 0
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/compiler coverage
+/Users/ikari/src/gada/tools/coverage_go.sh
+ok  	github.com/gada-lang/gada/compiler/cmd/gada	3.739s	coverage: 30.8% of statements in ./...
+ok  	github.com/gada-lang/gada/compiler/internal/emit	1.237s	coverage: 54.2% of statements in ./...
+ok  	github.com/gada-lang/gada/compiler/internal/ir	1.412s	coverage: 29.1% of statements in ./...
+ok  	github.com/gada-lang/gada/compiler/internal/ping	2.155s	coverage: 0.1% of statements in ./...
+ok  	github.com/gada-lang/gada/compiler/internal/translate	1.619s	coverage: 40.8% of statements in ./...
+ok  	github.com/gada-lang/gada/compiler/internal/version	1.760s	coverage: 0.1% of statements in ./...
+
+=== go tool cover -func ===
+github.com/gada-lang/gada/compiler/cmd/gada/build.go:43:		runBuild		100.0%
+github.com/gada-lang/gada/compiler/cmd/gada/build.go:64:		Error			100.0%
+github.com/gada-lang/gada/compiler/cmd/gada/build.go:65:		Unwrap			100.0%
+github.com/gada-lang/gada/compiler/cmd/gada/build.go:67:		failStage		100.0%
+github.com/gada-lang/gada/compiler/cmd/gada/build.go:72:		buildPackage		80.0%
+github.com/gada-lang/gada/compiler/cmd/gada/build.go:229:		duplicateRpaths		100.0%
+github.com/gada-lang/gada/compiler/cmd/gada/build.go:250:		parseOtoolRpaths	94.7%
+github.com/gada-lang/gada/compiler/cmd/gada/build.go:307:		writeProjectFile	77.8%
+github.com/gada-lang/gada/compiler/cmd/gada/build.go:325:		findRuntimeProject	100.0%
+github.com/gada-lang/gada/compiler/cmd/gada/build.go:348:		copyExecutable		75.0%
+github.com/gada-lang/gada/compiler/cmd/gada/main.go:22:			main			100.0%
+github.com/gada-lang/gada/compiler/cmd/gada/main.go:35:			run			100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:72:		Package			100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:101:		newEmitter		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:111:		run			100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:128:		println			100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:140:		fail			100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:148:		findMain		85.7%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:166:		emitMainProcedure	91.9%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:227:		emitPackageBody		90.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:262:		emitSubprogram		94.7%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:298:		subpHeader		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:334:		splitDecls		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:348:		emitVarDecl		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:374:		inferDeclType		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:394:		emitStmt		90.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:416:		emitAssign		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:430:		emitIf			100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:445:		emitElseChain		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:471:		emitReturn		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:483:		emitFor			100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:524:		matchTrivialFor		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:565:		emitCallStmt		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:582:		emitExprStmt		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:589:		emitExpr		80.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:609:		emitLit			87.5%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:636:		emitBinOp		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:649:		emitBinOperand		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:657:		translateBinOp		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:675:		emitUnaryOp		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:697:		emitSelector		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:710:		adaIdent		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:718:		capitalize		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:732:		isAdaReserved		100.0%
+github.com/gada-lang/gada/compiler/internal/emit/emit.go:752:		typeName		85.7%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:61:		irDecl			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:62:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:88:		irStmt			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:89:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:99:		irStmt			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:100:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:112:		irStmt			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:113:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:120:		irStmt			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:121:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:131:		irStmt			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:132:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:141:		irStmt			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:142:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:155:		irExpr			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:156:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:176:		irExpr			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:177:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:188:		irExpr			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:189:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:197:		irExpr			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:198:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:208:		irExpr			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:209:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:222:		irType			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:223:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:228:		irType			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:229:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:234:		irType			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:235:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:240:		irType			0.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:241:		NodeKind		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:254:		unmarshalDecl		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:273:		unmarshalStmt		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:322:		unmarshalExpr		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:365:		unmarshalType		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:388:		unmarshalStmtList	100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:403:		unmarshalExprList	100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:420:		unmarshalOptionalStmt	100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:427:		unmarshalOptionalExpr	100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:436:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:444:		UnmarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:457:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:466:		UnmarshalJSON		92.9%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:492:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:502:		UnmarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:523:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:531:		UnmarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:552:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:561:		UnmarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:584:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:593:		UnmarshalJSON		93.8%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:620:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:630:		UnmarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:663:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:670:		UnmarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:685:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:693:		UnmarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:714:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:721:		UnmarshalJSON		87.5%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:738:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:745:		UnmarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:756:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:764:		UnmarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:777:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:786:		UnmarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:809:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:817:		UnmarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:834:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:842:		UnmarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:865:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:869:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:873:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ir/ir.go:877:		MarshalJSON		100.0%
+github.com/gada-lang/gada/compiler/internal/ping/ping.go:13:		Ping			100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:39:	File			100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:92:	transFunc		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:122:	transFieldList		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:146:	transType		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:167:	transStmtList		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:182:	transStmt		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:199:	transAssign		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:214:	transIf			100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:248:	transFor		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:278:	transReturn		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:290:	transExprStmt		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:301:	transCall		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:315:	transExprList		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:330:	transExpr		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:356:	transIdent		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:365:	transBasicLit		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:380:	transBinary		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:392:	transUnary		100.0%
+github.com/gada-lang/gada/compiler/internal/translate/translate.go:400:	transSelector		100.0%
+github.com/gada-lang/gada/compiler/internal/version/version.go:22:	Describe		100.0%
+total:									(statements)		96.5%
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/runtime coverage
+/Users/ikari/src/gada/tools/coverage_ada.sh
+=== building test harness with Build_Mode=coverage --subdirs=cov ===
+Setup
+   [mkdir]        object directory for project Gada_Core
+   [mkdir]        object directory for project Aunit_Harness
+   [mkdir]        library directory for project Gada_Core
+gada_core.gpr:8:17: warning: Linker switches not taken into account in library projects
+Compile
+   [Ada]          test_runner.adb
+test_runner.adb:52:28: warning: use of an anonymous access type allocator [-gnatw_a]
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada.ads
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada-core-io.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada-core.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          io_suite.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+Build Libraries
+   [gprlib]       gada_core.lexch
+   [archive]      libgada_core.a
+   [index]        libgada_core.a
+Bind
+   [gprbind]      test_runner.bexch
+   [Ada]          test_runner.ali
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+Link
+   [link]         test_runner.adb
+
+=== running instrumented test harness ===
+
+OK Gada.Core.IO suite : Gada.Core.IO.Println emits 'hello, GADA' + LF
+
+Total Tests Run:   1
+Successful Tests:  1
+Failed Assertions: 0
+Unexpected Errors: 0
+
+=== capturing coverage with gcov: /Users/ikari/.local/share/alire/toolchains/gnat_native_15.1.2_60748c54/bin/gcov ===
+Message summary:
+  no messages were reported
+
+=== filtering to runtime/src/* ===
+Message summary:
+  no messages were reported
+
+=== lcov --summary /Users/ikari/src/gada/runtime/coverage.lcov ===
+Reading tracefile /Users/ikari/src/gada/runtime/coverage.lcov.
+Summary coverage rate:
+  source files: 1
+  lines.......: 100.0% (3 of 3 lines)
+  functions...: 100.0% (1 of 1 function)
+Message summary:
+  no messages were reported
+
+=== coverage/summary.txt ===
+GADA unified coverage summary
+Generated: 2026-05-01T10:48:16Z
+Repo root: /Users/ikari/src/gada
+
+=== Go compiler module (compiler/) ===
+Profile: coverage/compiler.coverage.out
+total:									(statements)		96.5%
+
+=== Ada runtime crate (runtime/) ===
+Tracefile: coverage/runtime.coverage.lcov
+Summary coverage rate:
+  source files: 1
+  lines.......: 100.0% (3 of 3 lines)
+  functions...: 100.0% (1 of 1 function)
+=== coverage gate: 4 thresholds, 8 files ===
+  file:  80.00%  ( 116/145 )  compiler/cmd/gada/build.go
+  file: 100.00%  (  13/13  )  compiler/cmd/gada/main.go
+  file:  96.31%  ( 339/352 )  compiler/internal/emit/emit.go
+  file:  98.97%  ( 288/291 )  compiler/internal/ir/ir.go
+  file: 100.00%  (   1/1   )  compiler/internal/ping/ping.go
+  file: 100.00%  ( 187/187 )  compiler/internal/translate/translate.go
+  file: 100.00%  (   1/1   )  compiler/internal/version/version.go
+  file: 100.00%  (   3/3   )  runtime/src/gada-core-io.adb
+
+  PASS: 'runtime/'                                 100.00%  (>= 100.00%, 3/3 lines, 1 files)
+  PASS: 'compiler/internal/emit/'                   96.31%  (>= 95.00%, 339/352 lines, 1 files)
+  PASS: 'compiler/internal/translate/'             100.00%  (>= 95.00%, 187/187 lines, 1 files)
+  PASS: 'compiler/'                                 95.45%  (>= 90.00%, 945/990 lines, 7 files)
+
+=== coverage gate: PASSED ===
+/Users/ikari/src/gada/tools/check_roadmap_consistency.sh
+OK: roadmap status consistent across index and 12 phase file(s).

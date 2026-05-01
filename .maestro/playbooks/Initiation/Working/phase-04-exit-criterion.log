@@ -1,0 +1,77 @@
+=== Phase 04 exit criterion (final): make clean && make example HELLO=hello ===
+Host: Darwin 25.5.0 arm64; date: 2026-05-01T10:45:08Z
+Repo: /Users/ikari/src/gada
+
+--- toolchain versions ---
+alr 2.1.0
+GPRBUILD 25.0.0 (2025-05-16) (aarch64-apple-darwin23.6.0)
+go version go1.26.2 darwin/arm64
+
+--- make clean ---
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/compiler clean
+rm -f /Users/ikari/src/gada/compiler/coverage.out
+rm -rf /Users/ikari/src/gada/compiler/bin
+/Applications/Xcode.app/Contents/Developer/usr/bin/make -C /Users/ikari/src/gada/runtime clean
+rm -rf /Users/ikari/src/gada/runtime/obj /Users/ikari/src/gada/runtime/lib
+rm -rf /Users/ikari/src/gada/runtime/tests/obj
+rm -f /Users/ikari/src/gada/runtime/coverage.lcov
+find /Users/ikari/src/gada/runtime -name '*.gcda' -delete 2>/dev/null || true
+find /Users/ikari/src/gada/runtime -name '*.gcno' -delete 2>/dev/null || true
+rm -rf /Users/ikari/src/gada/coverage
+
+--- make example HELLO=hello ---
+=== building compiler/bin/gada ===
+=== gada build examples/hello ===
+Setup
+   [mkdir]        object directory for project Gada_Core
+   [mkdir]        library directory for project Gada_Core
+Compile
+   [Ada]          main.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada.ads
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada-core-io.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+   [Ada]          gada-core.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+Build Libraries
+   [gprlib]       gada_core.lexch
+   [archive]      libgada_core.a
+   [index]        libgada_core.a
+Bind
+   [gprbind]      main.bexch
+   [Ada]          main.ali
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+Link
+   [link]         main.adb
+=== running examples/hello/hello ===
+make example: hello OK
+
+--- exit code: 0 ---
+
+--- ls -lh examples/hello/ ---
+Permissions Size User  Date Modified Name
+.rw-r--r--@   12 ikari  1 May 12:28  expected_output.txt
+.rw-r--r--@   34 ikari  1 May 12:23  go.mod
+.rwxr-xr-x@ 483k ikari  1 May 12:45  hello
+.rw-r--r--@   72 ikari  1 May 12:21  hello.go
+
+--- file examples/hello/hello ---
+examples/hello/hello: Mach-O 64-bit executable arm64
+
+--- ./examples/hello/hello stdout ---
+hello, GADA
+--- exit code of binary: 0 ---
+
+--- diff <(./examples/hello/hello) examples/hello/expected_output.txt ---
+--- exit code of diff: 0 ---
+
+--- otool -l rpath count (should be 1 each) ---
+   1 /Users/ikari/.local/share/alire/toolchains/gnat_native_15.1.2_60748c54/lib
+   1 /Users/ikari/.local/share/alire/toolchains/gnat_native_15.1.2_60748c54/lib/gcc
+   1 /Users/ikari/.local/share/alire/toolchains/gnat_native_15.1.2_60748c54/lib/gcc/aarch64-apple-darwin23.6.0/15.0.1
+   1 /Users/ikari/src/gada/runtime/lib
+   1 /opt/homebrew/lib
+   1 /users/ikari/.local/share/alire/toolchains/gnat_native_15.1.2_60748c54/lib/gcc/aarch64-apple-darwin23.6.0/15.0.1/adalib
+   1 @executable_path/..//obj
+   1 @loader_path

@@ -1,0 +1,49 @@
+==== Phase 01 verification log ====
+host:    Darwin metis 25.5.0 Darwin Kernel Version 25.5.0: Mon Apr  6 21:06:49 PDT 2026; root:xnu-12377.120.91.501.1~2/RELEASE_ARM64_T6020 arm64
+date:    2026-05-01T06:05:57Z
+pwd:     /Users/ikari/src/gada
+PATH:    /Users/ikari/src/gnatstudio/.tools/bin:/Users/ikari/.local/share/alire/toolchains/gnat_native_15.1.2_60748c54/bin:/Users/ikari/.local/share/alire/toolchains/gprbuild_25.0.1_c2b4ada4/bin:/Users/ikari/.nvm/versions/node/v25.2.1/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/Users/ikari/.local/bin:/Users/ikari/.npm-global/bin:/Users/ikari/.bun/bin:/Users/ikari/bin:/Users/ikari/.claude/local:/Users/ikari/.opencode/bin:/home/linuxbrew/.linuxbrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/ikari/.claude/plugins/cache/cc-marketplace/accessibility-expert/1.0.0/bin:/Users/ikari/.claude/plugins/cache/my-gg-plugins/bubbletea/1.0.0/bin:/Users/ikari/.claude/plugins/cache/claude-code-workflows/business-analytics/1.2.1/bin:/Users/ikari/.claude/plugins/cache/claude-plugins-official/clangd-lsp/1.0.0/bin:/Users/ikari/.claude/plugins/cache/akiojin-skills/cli-design/1.0.0/bin:/Users/ikari/.claude/plugins/cache/every-marketplace/compound-engineering/2.23.1/bin:/Users/ikari/.claude/plugins/cache/claude-code-plugins/explanatory-output-style/1.0.0/bin:/Users/ikari/.claude/plugins/cache/geoffjay-claude-plugins/golang-development/1.0.0/bin:/Users/ikari/.claude/plugins/cache/claude-code-workflows/javascript-typescript/1.2.1/bin:/Users/ikari/.claude/plugins/cache/claude-code-workflows/systems-programming/1.2.1/bin:/Users/ikari/.claude/plugins/cache/cc-marketplace/update-claudemd/1.0.0/bin:/Users/ikari/.claude/plugins/cache/mhattingpete-claude-skills/visual-documentation-skills/1.1.0/bin:/Users/ikari/.claude/plugins/cache/thedotmack/claude-mem/10.5.6/bin:/Users/ikari/.claude/plugins/cache/claude-plugins-official/rust-analyzer-lsp/1.0.0/bin:/Users/ikari/.claude/plugins/cache/omc/oh-my-claudecode/4.13.3/bin:/Users/ikari/.claude/plugins/cache/claude-plugins-official/telegram/0.0.6/bin
+
+---- [1/5] tools/check_roadmap_consistency.sh ----
+OK: roadmap status consistent across index and 12 phase file(s).
+exit=0
+
+---- [2/5] gada --version ----
+gada 0.0.0-dev (phase 0 bootstrap)
+exit=0
+
+---- [3/5] go test -race ./... ----
+?   	github.com/gada-lang/gada/compiler/cmd/gada	[no test files]
+ok  	github.com/gada-lang/gada/compiler/internal/ping	(cached)
+?   	github.com/gada-lang/gada/compiler/internal/version	[no test files]
+exit=0
+
+---- [4/5] alr build (runtime) ----
+Note: Building gada_core=0.0.0-dev/gada_core.gpr...
+Compile
+   [Ada]          gada-core-io.adb
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+Build Libraries
+   [gprlib]       gada_core.lexch
+   [archive]      libgada_core.a
+   [index]        libgada_core.a
+Success: Build finished successfully in 0.99 seconds.
+exit=0
+
+---- [5/5] runtime/tests/run_tests.sh ----
+Bind
+   [gprbind]      test_runner.bexch
+   [Ada]          test_runner.ali
+clang: warning: overriding deployment version from '16.0' to '26.0' [-Woverriding-deployment-version]
+Link
+   [link]         test_runner.adb
+
+OK Gada.Core.IO suite : Gada.Core.IO.Println emits 'hello, GADA' + LF
+
+Total Tests Run:   1
+Successful Tests:  1
+Failed Assertions: 0
+Unexpected Errors: 0
+exit=0
+
+==== end of verification log ====

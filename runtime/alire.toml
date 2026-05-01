@@ -1,0 +1,19 @@
+name = "gada_core"
+description = "GADA core runtime library - umbrella Gada and Gada.Core."
+version = "0.0.0-dev"
+
+authors = ["GADA contributors"]
+maintainers = ["cezar@pokor.ski"]
+maintainers-logins = []
+licenses = "Unlicense"
+website = ""
+tags = ["runtime", "ada", "go", "transpiler"]
+
+project-files = ["gada_core.gpr"]
+
+# AUnit is needed by the test harness in `tests/aunit_harness.gpr`. It is
+# a test-only dependency - runtime users do not need it. Alire 2.x has
+# no first-class `[test-dependencies]` table, so it lives in the regular
+# `[[depends-on]]` until we move tests into a sub-crate.
+[[depends-on]]
+aunit = "^26.0.0"

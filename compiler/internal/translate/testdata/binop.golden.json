@@ -1,0 +1,86 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "binop.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "compute",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "a",
+              "type": {
+                "kind": "IntType"
+              }
+            },
+            {
+              "kind": "Param",
+              "name": "b",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "BinOp",
+                  "op": "-",
+                  "x": {
+                    "kind": "BinOp",
+                    "op": "+",
+                    "x": {
+                      "kind": "Ident",
+                      "name": "a"
+                    },
+                    "y": {
+                      "kind": "Ident",
+                      "name": "b"
+                    }
+                  },
+                  "y": {
+                    "kind": "BinOp",
+                    "op": "/",
+                    "x": {
+                      "kind": "BinOp",
+                      "op": "*",
+                      "x": {
+                        "kind": "Ident",
+                        "name": "a"
+                      },
+                      "y": {
+                        "kind": "Ident",
+                        "name": "b"
+                      }
+                    },
+                    "y": {
+                      "kind": "Lit",
+                      "litKind": "int",
+                      "value": "2"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "assign.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "run",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "x"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "1"
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "x"
+                }
+              ],
+              "define": false,
+              "rhs": [
+                {
+                  "kind": "BinOp",
+                  "op": "+",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "x"
+                  },
+                  "y": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "2"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

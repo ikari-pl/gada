@@ -1,0 +1,42 @@
+=== Phase 04: gada build driver — verification log (2026-05-01) ===
+
+Local toolchain status:
+  go: go version go1.26.2 darwin/arm64
+  gprbuild: gprbuild not found
+NOT INSTALLED
+
+=== Build the gada binary ===
+OK ./bin/gada built
+
+=== Smoke: --version dispatches via existing path ===
+gada 0.0.0-dev (phase 0 bootstrap)
+
+=== Smoke: build with no path returns usage error ===
+usage: gada build <path>
+exit=2
+
+=== Smoke: build with bad path is tagged 'resolve:' ===
+gada build: resolve: stat /nonexistent: no such file or directory
+exit=1
+
+=== Unit tests ===
+ok  	github.com/gada-lang/gada/compiler/cmd/gada	2.554s
+
+=== Integration test (build-tagged; skips without gprbuild) ===
+=== RUN   TestBuildIntegration_Hello
+    build_integration_test.go:27: gprbuild not installed on PATH; integration test skipped
+--- SKIP: TestBuildIntegration_Hello (0.02s)
+PASS
+ok  	github.com/gada-lang/gada/compiler/cmd/gada	0.262s
+
+=== End-to-end (deferred): the verify command from Phase-04 spec is
+    cd compiler && go build -o ./bin/gada ./cmd/gada \
+      && ./bin/gada build ../examples/hello \
+      && ../examples/hello/hello | grep -q 'hello, GADA'
+    Cannot run here because:
+      (1) examples/hello is created by the next playbook task; and
+      (2) gprbuild is not installed in this environment.
+    The driver's contract is otherwise covered: integration test
+    skips cleanly, and the in-process happy path with a stubbed
+    gprbuild produces a well-formed main.adb and relocates the
+    fabricated binary to <pkg>/<basename>.

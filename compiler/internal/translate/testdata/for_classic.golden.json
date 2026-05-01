@@ -1,0 +1,87 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "for_classic.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "count",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "n",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "For",
+              "init": {
+                "kind": "Assign",
+                "lhs": [
+                  {
+                    "kind": "Ident",
+                    "name": "i"
+                  }
+                ],
+                "define": true,
+                "rhs": [
+                  {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "0"
+                  }
+                ]
+              },
+              "cond": {
+                "kind": "BinOp",
+                "op": "\u003c",
+                "x": {
+                  "kind": "Ident",
+                  "name": "i"
+                },
+                "y": {
+                  "kind": "Ident",
+                  "name": "n"
+                }
+              },
+              "post": {
+                "kind": "Assign",
+                "lhs": [
+                  {
+                    "kind": "Ident",
+                    "name": "i"
+                  }
+                ],
+                "define": false,
+                "rhs": [
+                  {
+                    "kind": "BinOp",
+                    "op": "+",
+                    "x": {
+                      "kind": "Ident",
+                      "name": "i"
+                    },
+                    "y": {
+                      "kind": "Lit",
+                      "litKind": "int",
+                      "value": "1"
+                    }
+                  }
+                ]
+              },
+              "body": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

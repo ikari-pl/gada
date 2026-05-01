@@ -1,0 +1,272 @@
+# GADA Continuous Integration
+#
+# This workflow is the cloud equivalent of running `make ci` from the repo
+# root: lint -> test -> coverage -> coverage-gate -> roadmap-consistency.
+# Every PR to main and every push to any branch must pass it. Per CLAUDE.md
+# the rule is "green CI or it does not land."
+#
+# Three jobs run on `ubuntu-latest`. `build-test-coverage` and
+# `roadmap-consistency` start in parallel; `examples` runs after
+# `build-test-coverage` succeeds (see `needs:` below).
+#
+#   build-test-coverage
+#     Installs Go 1.22, lcov, golangci-lint, and Alire (via the official
+#     binary tarball), then invokes `make ci`. The `coverage/` directory
+#     produced by `make coverage` is uploaded as a workflow artifact, and
+#     on `pull_request` events the contents of `coverage/summary.txt` are
+#     posted as a sticky PR comment so reviewers see line-coverage
+#     percentages without leaving the PR.
+#
+#   examples
+#     End-to-end Phase-1 regression gate. Runs `make example HELLO=hello`,
+#     which builds the gada compiler, transpiles `examples/hello/hello.go`
+#     to Ada, links it via gprbuild against the in-tree runtime, runs the
+#     produced binary, and `diff -u`s its stdout against
+#     `examples/hello/expected_output.txt`. Any divergence — IR change,
+#     emit change, runtime change, or accidental edit to expected_output.txt
+#     — fails the diff and turns CI red. The produced binary is uploaded
+#     as a workflow artifact for inspection. `needs: build-test-coverage`
+#     gates the (heavyweight) Ada toolchain install behind the cheaper
+#     unit-test pass — no point burning gprbuild minutes if `go test`
+#     already failed.
+#
+#   roadmap-consistency
+#     A redundant-on-success but useful-on-drift sentinel: it runs only
+#     `tools/check_roadmap_consistency.sh`. If only the roadmap status
+#     table is out of sync, this job fails fast (~5s) without waiting for
+#     the heavyweight Go + Alire toolchain install. `make ci` runs the
+#     same script as its final step, so a passing build-test-coverage run
+#     implies this job would also pass; the value is in the failure mode.
+#
+# Triggers:
+#   push          on any branch  (catches direct pushes to feature branches)
+#   pull_request  to main        (the gate before merge)
+
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+
+# Top-level permissions are conservative; the comment step in
+# build-test-coverage needs pull-requests: write, which is granted at the
+# job level rather than globally so the roadmap-consistency job stays
+# minimum-privilege.
+permissions:
+  contents: read
+
+jobs:
+  build-test-coverage:
+    name: build, test, coverage
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # marocchino/sticky-pull-request-comment@v2 requires write access to
+      # post the coverage summary on pull_request events. On forked-PR
+      # runs GitHub still issues a read-only token; the action no-ops in
+      # that case rather than failing the job.
+      pull-requests: write
+
+    env:
+      # Pinned Alire release. The naming convention of the official
+      # tarball is alr-${VERSION}-bin-x86_64-linux.zip on the GitHub
+      # Releases page (https://github.com/alire-project/alire/releases).
+      ALIRE_VERSION: "2.0.2"
+      # golangci-lint v2 schema is mandatory for `.golangci.yml`
+      # (gofmt/goimports moved to a top-level `formatters:` block in v2).
+      # Pinning a specific v2.x release keeps the lint pass deterministic.
+      GOLANGCI_LINT_VERSION: "v2.1.6"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Go 1.22
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          # The compiler module has no external dependencies in Phase 0,
+          # so there is no go.sum to key the cache on. Disabling the
+          # built-in module cache silences the warn-and-skip diagnostic
+          # that setup-go emits otherwise; reinstate caching once Phase 1
+          # adds the first external import.
+          cache: false
+
+      - name: Install lcov (Ada coverage tracefile generator)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y lcov
+          # tools/coverage_ada.sh assumes lcov 2.x ergonomics (specifically
+          # the doubled `--ignore-errors inconsistent,empty,negative,gcov`
+          # form). ubuntu-latest currently provides lcov 2.x; print the
+          # version into the log so a future Ubuntu LTS regression is
+          # immediately visible from the CI output.
+          lcov --version
+
+      - name: Install golangci-lint
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL \
+            https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+            | sh -s -- -b "$HOME/.local/bin" "${GOLANGCI_LINT_VERSION}"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/golangci-lint" --version
+
+      - name: Install Alire (official tarball)
+        run: |
+          set -euo pipefail
+          ALR_TARBALL="alr-${ALIRE_VERSION}-bin-x86_64-linux.zip"
+          curl -sSfL \
+            "https://github.com/alire-project/alire/releases/download/v${ALIRE_VERSION}/${ALR_TARBALL}" \
+            -o /tmp/alr.zip
+          mkdir -p "$HOME/.local/share/alire"
+          unzip -q /tmp/alr.zip -d "$HOME/.local/share/alire"
+          # The tarball lays out `bin/alr` under its top-level directory,
+          # which is what `runtime/Makefile`'s PATH augmentation expects
+          # (`$HOME/.local/share/alire/bin`). Verify and surface the
+          # version into the log.
+          echo "$HOME/.local/share/alire/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/share/alire/bin/alr" --version
+
+      - name: Configure Alire toolchain (non-interactive)
+        run: |
+          set -euo pipefail
+          # Alire's first-run flow prompts to pick a default GNAT. `-n`
+          # forces non-interactive mode; passing the crate names with no
+          # version constraint selects the latest available release of
+          # gnat_native and gprbuild from the community index. This pre-
+          # downloads the toolchain so subsequent `alr exec -- gprbuild`
+          # invocations (issued by tests/run_tests.sh and
+          # tools/coverage_ada.sh) do not block on a TTY prompt.
+          alr -n toolchain --select gnat_native gprbuild
+          # Refresh the community index so AUnit's manifest resolves
+          # against the latest published version.
+          alr -n index --update-all
+
+      - name: Run make ci
+        run: make ci
+
+      - name: Upload coverage artifact
+        # Always upload even on failure; partial coverage output is useful
+        # when diagnosing why the gate or a test failed. `if-no-files-found:
+        # warn` keeps the step non-fatal when an early lint failure aborts
+        # `make ci` before `make coverage` produces anything.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: warn
+
+      - name: Post coverage summary on PR
+        # Only run on pull_request events, and only when coverage actually
+        # produced a summary file. The hashFiles guard prevents the action
+        # from failing the job when an earlier step short-circuited the
+        # coverage step.
+        if: github.event_name == 'pull_request' && hashFiles('coverage/summary.txt') != ''
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          # `header` namespaces the sticky comment so successive pushes
+          # update the same comment instead of stacking new ones.
+          header: gada-coverage-summary
+          path: coverage/summary.txt
+
+  examples:
+    name: examples (end-to-end)
+    runs-on: ubuntu-latest
+    # Gate the heavyweight Ada toolchain install + gprbuild link behind a
+    # green build-test-coverage run. If the Go unit tests or coverage gate
+    # are red, there is no point burning ~3 minutes installing gnat_native
+    # and gprbuild only to fail later. The downside is that on a green
+    # build-test-coverage but red examples run, the workflow takes longer
+    # in serial than it would in parallel; that asymmetry is acceptable
+    # because the steady state is "both green."
+    needs: build-test-coverage
+
+    env:
+      # Same pinned Alire as build-test-coverage; the two must agree or
+      # the gnat_native version differs between the test pass and the
+      # example link, defeating the regression-gate intent.
+      ALIRE_VERSION: "2.0.2"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Go 1.22
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          # See build-test-coverage for the cache rationale; mirrored
+          # verbatim so the two jobs stay in lockstep.
+          cache: false
+
+      - name: Install Alire (official tarball)
+        run: |
+          set -euo pipefail
+          ALR_TARBALL="alr-${ALIRE_VERSION}-bin-x86_64-linux.zip"
+          curl -sSfL \
+            "https://github.com/alire-project/alire/releases/download/v${ALIRE_VERSION}/${ALR_TARBALL}" \
+            -o /tmp/alr.zip
+          mkdir -p "$HOME/.local/share/alire"
+          unzip -q /tmp/alr.zip -d "$HOME/.local/share/alire"
+          echo "$HOME/.local/share/alire/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/share/alire/bin/alr" --version
+
+      - name: Configure Alire toolchain (non-interactive)
+        run: |
+          set -euo pipefail
+          alr -n toolchain --select gnat_native gprbuild
+          alr -n index --update-all
+
+      - name: Expose gprbuild on PATH
+        # `alr toolchain --select` installs gnat_native + gprbuild into
+        # Alire's per-user cache but does NOT, by itself, put `gprbuild`
+        # on PATH for plain (non-`alr exec`) invocations. The runtime
+        # crate's Makefile uses `alr exec`; the top-level `gada build`
+        # driver shells out to `gprbuild` directly via $PATH, so we have
+        # to surface the alire-installed binary.
+        run: |
+          set -euo pipefail
+          GPRBUILD_BIN="$(alr -n exec -- which gprbuild)"
+          GPRBUILD_DIR="$(dirname "$GPRBUILD_BIN")"
+          echo "$GPRBUILD_DIR" >> "$GITHUB_PATH"
+          gprbuild --version | head -1 || true
+
+      - name: Run make example HELLO=hello
+        # The Phase-1 exit-criterion target. Builds the compiler if absent,
+        # transpiles examples/hello/hello.go, links via gprbuild, runs the
+        # binary, and `diff -u`s its stdout against expected_output.txt.
+        # Any mismatch (IR change, emit change, runtime change, or stale
+        # expected_output.txt) fails this step.
+        run: make example HELLO=hello
+
+      - name: Upload example binary as artifact
+        # Always upload — even on failure the partially-built binary (when
+        # present) is useful for post-mortem. `if-no-files-found: warn`
+        # so a pre-link failure does not turn a clean diagnostic into a
+        # second confusing failure.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-hello-binary
+          path: examples/hello/hello
+          if-no-files-found: warn
+
+  roadmap-consistency:
+    name: roadmap consistency
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify roadmap status consistency
+        # The script has no dependencies beyond POSIX bash, awk, sed, grep
+        # — all of which are present on ubuntu-latest by default — so this
+        # job needs no install steps and runs in seconds.
+        run: ./tools/check_roadmap_consistency.sh

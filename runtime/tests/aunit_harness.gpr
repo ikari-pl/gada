@@ -1,0 +1,66 @@
+--  AUnit harness for the GADA runtime.
+--
+--  This is a standalone *executable* project that links against
+--  `gada_core` (the runtime library) and `aunit` (the AdaCore unit-test
+--  framework, resolved via Alire). The runner binary lives at
+--  `tests/obj/test_runner` after a successful build.
+--
+--  Build via:
+--    cd runtime && alr exec -- gprbuild -P tests/aunit_harness.gpr
+--  Run via:
+--    runtime/tests/obj/test_runner
+--
+--  We deliberately do *not* extend `gada_core.gpr` — extension projects
+--  inherit source dirs and switches in ways that break the layering
+--  contract. Instead we `with` it as a normal dependency and add
+--  `tests/` as the only source dir for this project.
+
+with "../gada_core.gpr";
+with "aunit";
+
+project Aunit_Harness is
+
+   --  Mirror gada_core.gpr's Build_Mode scenario variable so a single
+   --  `-XBuild_Mode=coverage` on the command line propagates here too
+   --  (gprbuild requires each project that participates in a scenario
+   --  to declare the variable; importing isn't enough).
+   type Build_Mode_Type is ("normal", "coverage");
+   Build_Mode : Build_Mode_Type := external ("Build_Mode", "normal");
+
+   for Source_Dirs use (".");
+   for Object_Dir  use "obj";
+   for Exec_Dir    use "obj";
+
+   for Main use ("test_runner.adb");
+
+   for Languages use ("Ada");
+
+   package Compiler is
+      Common_Switches := ("-gnat2022",
+                          "-gnatwa",
+                          "-gnatyy",
+                          "-O0",
+                          "-g");
+      case Build_Mode is
+         when "normal" =>
+            for Default_Switches ("Ada") use Common_Switches;
+         when "coverage" =>
+            for Default_Switches ("Ada") use
+              Common_Switches & ("-fprofile-arcs", "-ftest-coverage");
+      end case;
+   end Compiler;
+
+   package Linker is
+      case Build_Mode is
+         when "normal" =>
+            null;
+         when "coverage" =>
+            for Default_Switches ("Ada") use ("-lgcov");
+      end case;
+   end Linker;
+
+   package Builder is
+      for Default_Switches ("Ada") use ("-g");
+   end Builder;
+
+end Aunit_Harness;

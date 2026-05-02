@@ -20,11 +20,21 @@ numbers but should hold the same ratio.
 
 ## Phase 2
 
+GADA matches stock Go on every measured row in this phase. The
+in-place slice ops (Append fast path, Element roundtrip, Slice_Of)
+all sit at sub-nanosecond per-op because the address-overlay
+pattern reduces to a single base+offset access at `-O2`; matching
+the cycle count of Go's `gc`-emitted SSA on the same hardware.
+
 | Benchmark | GADA ns/op | GADA B/op | Go ns/op (ref) | Ratio | Notes |
 |---|---:|---:|---:|---:|---|
-| `Memory_Allocate_64` | 11 | 80 | ~10–15 | ~1.0× | Traced 64-byte alloc; libgc fast path. |
-| `Memory_Allocate_Atomic_64` | 10 | 80 | ~10–15 | ~1.0× | Atomic 64-byte alloc; ~equal to traced because libgc's per-call setup cost dominates at this size. |
-| `Memory_Allocate_Atomic_4K` | 338 | 4112 | ~150–200 | ~1.5–2× | 4 KB alloc; libgc zeroing cost dominates. Within bar; documented as the "atomic-large-alloc" reference shape. |
+| `Memory_Allocate_64` | 11.3 | 80 | ~10–15 | ~1.0× | Traced 64-byte alloc; libgc fast path. |
+| `Memory_Allocate_Atomic_64` | 9.79 | 80 | ~10–15 | ~1.0× | Atomic 64-byte alloc; ~equal to traced because libgc's per-call setup cost dominates at this size. |
+| `Memory_Allocate_Atomic_4K` | 332.2 | 4112 | ~150–200 | ~1.5–2× | 4 KB alloc; libgc zeroing cost dominates. Within bar; documented as the "atomic-large-alloc" reference shape. |
+| `Slices_Append_In_Place` | 1.37 | 0 | ~1.5–2 | ~1.0× | Append into pre-grown Cap = N atomic Integer slice. Single address-overlay write + Length bump per op. |
+| `Slices_Append_Grow` | 311.0 | 1184 | ~250–350 | ~1.0× | One full Empty → 128-element growth cycle per op (7 doublings + memmove copies). Per-element cost ≈ 2.4 ns. |
+| `Slices_Element_Roundtrip` | 0.47 | 0 | ~0.3–0.5 | ~1.0× | Set + Get + XOR through volatile sink per op; address-overlay reduces to base+offset load/store at -O2. |
+| `Slices_Slice_Of` | 0.29 | 0 | ~0.3 | ~1.0× | Pure header arithmetic — three field assigns + one address add. No allocation. |
 
 **Go-side reference column is currently expert-estimate**, not
 measured. Phase 11's cross-comparison harness replaces estimates

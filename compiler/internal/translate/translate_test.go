@@ -40,6 +40,9 @@ func TestCorpus(t *testing.T) {
 		"for_classic.go", "for_infinite.go",
 		"return.go", "binop.go", "unaryop.go",
 		"selector.go", "combined.go",
+		// Phase 2 — slice fixtures (compiler-emit Item 6).
+		"slice_type_param.go", "slice_lit.go", "slice_index.go",
+		"slice_subslice.go", "slice_append.go", "slice_len_cap.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -149,18 +152,45 @@ func f() { switch {} }`, "unsupported stmt"},
 func f() { _ = 1i }`, "literal kind"},
 		{"call as expr in rhs", `package p
 func g() int { return 0 }
-func f() { _ = g() }`, "unsupported expr"},
-		{"composite lit on rhs", `package p
-func f() { _ = []int{} }`, "unsupported"},
+func f() { _ = g() }`, "general call-as-expression"},
+		{"struct composite lit on rhs", `package p
+func f() { _ = struct{}{} }`, "only []T"},
+		{"map composite lit on rhs", `package p
+func f() { _ = map[int]int{} }`, "only []T"},
+		{"fixed-size array composite", `package p
+func f() { _ = [3]int{1, 2, 3} }`, "fixed-size array composite"},
 		// Types.
 		{"unsupported param type name", `package p
 func f(x complex128) {}`, "unsupported type"},
 		{"non-ident param type", `package p
-func f(x []int) {}`, "unsupported type expr"},
+func f(x map[int]int) {}`, "unsupported type expr"},
 		{"unsupported result type", `package p
 func f() complex128 { return 0 }`, "unsupported type"},
-		{"non-call expr stmt err", `package p
-func f() { []int{} }`, "unsupported"},
+		{"fixed-size array param", `package p
+func f(x [3]int) {}`, "fixed-size array types"},
+		{"slice of unsupported elem", `package p
+func f(x []complex128) {}`, "unsupported type"},
+		// Slice-expression edge cases.
+		{"three-index slice", `package p
+func f(s []int) { _ = s[0:1:2] }`, "three-index slice"},
+		{"index with bad subexpr", `package p
+func f(s []int) { _ = s[1i] }`, "literal kind"},
+		{"slice low bad subexpr", `package p
+func f(s []int) { _ = s[1i:2] }`, "literal kind"},
+		{"slice high bad subexpr", `package p
+func f(s []int) { _ = s[0:1i] }`, "literal kind"},
+		{"slice X bad subexpr", `package p
+func f() { _ = (1i)[0:1] }`, "literal kind"},
+		{"index X bad subexpr", `package p
+func f() { _ = (1i)[0] }`, "literal kind"},
+		{"slice lit elem bad", `package p
+func f() { _ = []int{1i} }`, "literal kind"},
+		{"builtin arg bad as stmt", `package p
+func f() { panic(1i) }`, "literal kind"},
+		{"builtin arg bad as expr", `package p
+func f(s []int) { _ = len(1i) }`, "literal kind"},
+		{"composite elided type", `package p
+func f() { _ = [][]int{{1, 2}} }`, "elided type"},
 		// Error propagation through every recursive helper. Each
 		// case plants a Phase-1-unsupported leaf inside a particular
 		// container so the corresponding error branch is exercised.
@@ -180,7 +210,7 @@ func f() { g(1i) }`, "literal kind"},
 		{"return err", `package p
 func f() int { return 1i }`, "literal kind"},
 		{"assign lhs err", `package p
-func f() { []int{} = nil }`, "unsupported"},
+func f() { []int{1i} = nil }`, "literal kind"},
 		{"if cond err", `package p
 func f() { if 1i {} }`, "literal kind"},
 		{"if then err", `package p
@@ -354,6 +384,40 @@ func TestNonCallExprStmt(t *testing.T) {
 	}
 	if _, ok := es.X.(*ir.UnaryOp); !ok {
 		t.Fatalf("expected ExprStmt.X to be *ir.UnaryOp, got %T", es.X)
+	}
+}
+
+// TestStmtPositionBuiltin confirms that a builtin call used as a
+// statement (e.g. bare `panic("boom")`) translates to *ir.BuiltinCall
+// directly, not to *ir.Call wrapped in *ir.ExprStmt. The slice
+// fixtures only exercise builtins in expression position
+// (`xs = append(xs, x)`, `return len(s)`), so this is the dedicated
+// coverage for the stmt-position branch of transExprStmt.
+func TestStmtPositionBuiltin(t *testing.T) {
+	t.Parallel()
+
+	const src = `package p
+func boom() { panic("oh no") }`
+
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "boom.go", src, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	pkg, err := File(af, nil)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	fn := pkg.Files[0].Decls[0].(*ir.Function)
+	bc, ok := fn.Body[0].(*ir.BuiltinCall)
+	if !ok {
+		t.Fatalf("expected first stmt to be *ir.BuiltinCall, got %T", fn.Body[0])
+	}
+	if bc.Name != "panic" {
+		t.Fatalf("expected builtin name 'panic', got %q", bc.Name)
+	}
+	if len(bc.Args) != 1 {
+		t.Fatalf("expected 1 arg, got %d", len(bc.Args))
 	}
 }
 

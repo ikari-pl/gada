@@ -1,0 +1,211 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "slice_subslice.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "mid",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "s",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "SliceExpr",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "s"
+                  },
+                  "low": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "1"
+                  },
+                  "high": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "3"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "tail",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "s",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "SliceExpr",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "s"
+                  },
+                  "low": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "1"
+                  },
+                  "high": null
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "head_n",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "s",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            },
+            {
+              "kind": "Param",
+              "name": "n",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "SliceExpr",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "s"
+                  },
+                  "low": null,
+                  "high": {
+                    "kind": "Ident",
+                    "name": "n"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "full",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "s",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "SliceExpr",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "s"
+                  },
+                  "low": null,
+                  "high": null
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

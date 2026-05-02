@@ -13,10 +13,11 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
 
 ## Items
 
-- [ ] **ADR — scheduler design (libco vs CPS)**
-      *Files:* `docs/adr/0010-scheduler-libco.md`
+- [x] **ADR — scheduler design (libco vs CPS)**
+      *Files:* `docs/adr/0004-scheduler-libco-for-v1.md`
       *Verify:* ADR is `accepted` with consequences enumerated.
       *Done when:* design choice is recorded with the alternatives explicitly considered.
+      *Done 2026-05-01:* Already shipped during Phase 0 foundation work — predates Phase 3 opening. ADR-0004 records the M:N-over-Ada-tasks-plus-libco scheduler design for hosted targets and the one-Ada-task-per-goroutine fallback for Ravenscar. Alternatives explicitly considered and rejected in the ADR: pure CPS transformation (compiler-only, no native stack — rejected for `cgo` interop and stack-trace fidelity), pure Ada-task-per-goroutine (too expensive on hosted), pure threads-on-libco (no fallback for Ravenscar). Roadmap item originally projected number 0010; the existing 0004 supersedes — ADR numbering is monotonic, not phase-aligned.
 
 - [ ] **GADA.Async.Context — userland context switching via libco**
       *Files:* `runtime/src/gada-async-context.ads`, `runtime/src/gada-async-context.adb`, `runtime/src/gada-async-context-thin.c`, `runtime/tests/test_context.adb`

@@ -30,6 +30,9 @@ var corpusFixtures = []string{
 	"for_classic", "for_infinite",
 	"return", "binop", "unaryop",
 	"selector", "combined",
+	// Phase 2 — slice operations (Item 6).
+	"slice_type_param", "slice_lit", "slice_index",
+	"slice_subslice", "slice_append", "slice_len_cap",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -166,7 +169,7 @@ func TestErrorCases(t *testing.T) {
 				&ir.Assign{Define: true,
 					LHS: []ir.Expr{idn("x")},
 					RHS: []ir.Expr{idn("y")}})),
-			wantErr: "literal RHS",
+			wantErr: "literal or composite RHS",
 		},
 		{
 			name: "unknown literal kind",
@@ -612,6 +615,331 @@ func TestProjectTemplateExposed(t *testing.T) {
 		if !strings.Contains(ProjectTemplate, w) {
 			t.Errorf("ProjectTemplate missing %s", w)
 		}
+	}
+}
+
+// TestSliceEmitErrors covers every error branch reachable from the
+// new Phase 2 slice-emission paths. Each entry pins one specific
+// failure mode so a future regression surfaces at the right call
+// site rather than as an opaque "got %T" line.
+func TestSliceEmitErrors(t *testing.T) {
+	t.Parallel()
+
+	intSliceParam := []*ir.Param{{Name: "s", Type: &ir.SliceType{Elem: &ir.IntType{}}}}
+	intSliceResult := []*ir.Param{{Type: &ir.SliceType{Elem: &ir.IntType{}}}}
+
+	cases := []struct {
+		name    string
+		pkg     *ir.Package
+		wantErr string
+	}{
+		{
+			name: "slice of slice element rejected",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Params: []*ir.Param{{Name: "s",
+					Type: &ir.SliceType{Elem: &ir.SliceType{Elem: &ir.IntType{}}}}},
+			}),
+			wantErr: "unsupported slice element type",
+		},
+		{
+			name: "index expr on non-slice ident",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  []*ir.Param{{Name: "x", Type: &ir.IntType{}}},
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.IndexExpr{X: idn("x"), Index: litInt("0")},
+				}}},
+			}),
+			wantErr: "cannot determine slice instantiation",
+		},
+		{
+			name: "index expr on non-ident X",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  intSliceParam,
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.IndexExpr{
+						X:     &ir.SliceLit{Elem: &ir.IntType{}},
+						Index: litInt("0"),
+					},
+				}}},
+			}),
+			wantErr: "cannot determine slice instantiation",
+		},
+		{
+			name: "slice expr on non-ident X",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  intSliceParam,
+				Results: intSliceResult,
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.SliceExpr{
+						X:    &ir.SliceLit{Elem: &ir.IntType{}},
+						Low:  litInt("0"),
+						High: litInt("1"),
+					},
+				}}},
+			}),
+			wantErr: "cannot determine slice instantiation",
+		},
+		{
+			name: "len on unknown ident",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "len", Args: []ir.Expr{idn("nope")}},
+				}}},
+			}),
+			wantErr: "cannot determine slice instantiation",
+		},
+		{
+			name: "append wrong arity",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  intSliceParam,
+				Results: intSliceResult,
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "append", Args: []ir.Expr{idn("s")}},
+				}}},
+			}),
+			wantErr: "append-of-N values not supported",
+		},
+		{
+			name: "len wrong arity",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  intSliceParam,
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "len", Args: []ir.Expr{idn("s"), idn("s")}},
+				}}},
+			}),
+			wantErr: "len takes exactly 1 arg",
+		},
+		{
+			name: "cap wrong arity",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  intSliceParam,
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "cap", Args: []ir.Expr{idn("s"), idn("s")}},
+				}}},
+			}),
+			wantErr: "cap takes exactly 1 arg",
+		},
+		{
+			name: "builtin zero args (slice path)",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "len", Args: nil},
+				}}},
+			}),
+			wantErr: "requires at least 1 arg",
+		},
+		{
+			name: "unsupported builtin in expression position",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "delete", Args: []ir.Expr{idn("m"), idn("k")}},
+				}}},
+			}),
+			wantErr: `builtin "delete" not supported in Phase 2`,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := Package(tc.pkg, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestSliceEmptyLitDispatch covers the `[]int{}` empty-literal
+// shortcut which routes to the runtime's `Slices_Of_Integer.Empty`
+// constant rather than the From_Array call. The corpus uses non-
+// empty literals only, so this is the dedicated assertion.
+func TestSliceEmptyLitDispatch(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name:    "zero",
+		Results: []*ir.Param{{Type: &ir.SliceType{Elem: &ir.IntType{}}}},
+		Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+			&ir.SliceLit{Elem: &ir.IntType{}},
+		}}},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if !strings.Contains(buf.String(), "return Slices_Of_Integer.Empty;") {
+		t.Fatalf("expected Slices_Of_Integer.Empty dispatch, got:\n%s", buf.String())
+	}
+}
+
+// TestSliceLitInVarDecl exercises the `:=` declaration path where
+// the RHS is a SliceLit (the corpus uses SliceLit only as a return
+// expression, so the inferDeclType slice branch is otherwise dead).
+func TestSliceLitInVarDecl(t *testing.T) {
+	t.Parallel()
+	pkg := wrapMain(funcMain(
+		&ir.Assign{Define: true,
+			LHS: []ir.Expr{idn("xs")},
+			RHS: []ir.Expr{&ir.SliceLit{
+				Elem:  &ir.IntType{},
+				Elems: []ir.Expr{litInt("1"), litInt("2")},
+			}},
+		},
+	))
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Xs : Slices_Of_Integer.Slice := Slices_Of_Integer.From_Array ([1, 2]);") {
+		t.Fatalf("expected slice := decl, got:\n%s", out)
+	}
+}
+
+// TestInferRHSTypeNonIntLits covers inferRHSType's bool/string/float
+// branches which the corpus does not reach via SliceLit.
+func TestInferRHSTypeNonIntLits(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		lit  *ir.Lit
+		want ir.Type
+	}{
+		{&ir.Lit{Kind: ir.LitInt, Value: "1"}, &ir.IntType{}},
+		{&ir.Lit{Kind: ir.LitString, Value: `"x"`}, &ir.StringType{}},
+		{&ir.Lit{Kind: ir.LitBool, Value: "true"}, &ir.BoolType{}},
+		{&ir.Lit{Kind: ir.LitFloat, Value: "1.5"}, &ir.Float64Type{}},
+	}
+	for _, tc := range cases {
+		got, ok := inferRHSType(tc.lit)
+		if !ok {
+			t.Fatalf("inferRHSType(%v) = (_, false), want true", tc.lit)
+		}
+		if reflectKind(got) != reflectKind(tc.want) {
+			t.Errorf("inferRHSType(%v) = %T, want %T", tc.lit, got, tc.want)
+		}
+	}
+	// Unknown LitKind bows out with ok=false.
+	if _, ok := inferRHSType(&ir.Lit{Kind: "bogus"}); ok {
+		t.Fatal("inferRHSType(bogus literal) should report ok=false")
+	}
+	// Non-literal, non-SliceLit: also bows out.
+	if _, ok := inferRHSType(idn("x")); ok {
+		t.Fatal("inferRHSType(*ir.Ident) should report ok=false")
+	}
+}
+
+func reflectKind(t ir.Type) string {
+	if t == nil {
+		return "<nil>"
+	}
+	return t.NodeKind()
+}
+
+// TestElemBaseNameTable pins elemBaseName's basic-type table and the
+// rejection of any non-basic element. The slice fixtures only
+// exercise IntType; the other three basic types and the rejection
+// branch live here.
+func TestElemBaseNameTable(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		t    ir.Type
+		want string
+	}{
+		{&ir.IntType{}, "Integer"},
+		{&ir.StringType{}, "String"},
+		{&ir.BoolType{}, "Boolean"},
+		{&ir.Float64Type{}, "Long_Float"},
+	}
+	for _, tc := range cases {
+		got, err := elemBaseName(tc.t)
+		if err != nil {
+			t.Fatalf("elemBaseName(%T): unexpected error %v", tc.t, err)
+		}
+		if got != tc.want {
+			t.Errorf("elemBaseName(%T) = %q, want %q", tc.t, got, tc.want)
+		}
+	}
+	if _, err := elemBaseName(&ir.SliceType{Elem: &ir.IntType{}}); err == nil {
+		t.Fatal("expected error for slice-of-slice element type")
+	}
+	if _, err := slicePkgFor(&ir.SliceType{Elem: &ir.IntType{}}); err == nil {
+		t.Fatal("expected slicePkgFor to propagate the slice-of-slice error")
+	}
+}
+
+// TestTypeNameSliceAndMissing covers typeName's Phase 2 SliceType
+// case and the explicit nil/missing-type branch.
+func TestTypeNameSliceAndMissing(t *testing.T) {
+	t.Parallel()
+	got, err := typeName(&ir.SliceType{Elem: &ir.StringType{}})
+	if err != nil {
+		t.Fatalf("typeName(SliceType{StringType}): unexpected error %v", err)
+	}
+	if got != "Slices_Of_String.Slice" {
+		t.Errorf("typeName(SliceType{StringType}) = %q, want %q", got, "Slices_Of_String.Slice")
+	}
+	if _, err := typeName(nil); err == nil {
+		t.Fatal("expected error for nil type")
+	}
+}
+
+// TestEmitSliceLitOfStringFloatBool covers the three basic-type slice
+// instantiations the corpus does not exercise (corpus is integer-
+// only). Together with TestEmitCorpus they pin every basic-type
+// slice path.
+func TestEmitSliceLitOfStringFloatBool(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		elem     ir.Type
+		wantInst string
+	}{
+		{"string", &ir.StringType{},
+			"package Slices_Of_String is new Gada.Core.Slices (Element_Type => String);"},
+		{"bool", &ir.BoolType{},
+			"package Slices_Of_Boolean is new Gada.Core.Slices (Element_Type => Boolean);"},
+		{"float64", &ir.Float64Type{},
+			"package Slices_Of_Long_Float is new Gada.Core.Slices (Element_Type => Long_Float);"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pkg := wrapPkg(&ir.Function{
+				Name:    "f",
+				Results: []*ir.Param{{Type: &ir.SliceType{Elem: tc.elem}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.SliceLit{Elem: tc.elem},
+				}}},
+			})
+			var buf bytes.Buffer
+			if err := Package(pkg, &buf); err != nil {
+				t.Fatalf("emit: %v", err)
+			}
+			if !strings.Contains(buf.String(), tc.wantInst) {
+				t.Fatalf("expected %q in:\n%s", tc.wantInst, buf.String())
+			}
+		})
 	}
 }
 

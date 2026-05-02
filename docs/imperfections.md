@@ -112,6 +112,18 @@ section at the bottom with the resolution commit / PR reference.
 *What "fixed" looks like:* a coverage exclusion mechanism (`-- LCOV_EXCL_LINE` or equivalent recognised by `tools/coverage_gate.sh`) that lets the source declare "this line is unreachable by invariant; do not count it"; the loops can then read more naturally as `for ... loop`.
 *Tracker:* none (cosmetic; current code is correct and well-commented about the invariant).
 
+### Slice-of-slice element types are rejected at emit
+*Where:* `compiler/internal/emit/emit.go` — `elemBaseName` rejects `*ir.SliceType` with "unsupported slice element type"; the IR + translate layers accept `[][]int` cleanly.
+*Why not fixed yet:* a recursive instantiation chain (`Slices_Of_Integer` *then* `Slices_Of_Slices_Of_Integer is new Gada.Core.Slices (Element_Type => Slices_Of_Integer.Slice);`) needs dependency-ordered emission of *multiple* `package … is new …` declarations, plus an Ada-identifier-safe naming scheme (no dots in the suffix). Phase 2's golden corpus does not exercise the shape; shipping the rejection lets the surface ship clean.
+*What "fixed" looks like:* `elemBaseName` recurses through nested `SliceType`s producing flat-underscore identifiers (e.g. `Slices_Of_Slices_Of_Integer`); `collectSliceElems` topologically sorts the order list so dependencies emit first; one new fixture per nesting depth that lands in the golden corpus.
+*Tracker:* none yet — escalate when a Phase-2-or-later corpus example needs it.
+
+### Go parameter mutation requires hoisting; emit currently rejects
+*Where:* `compiler/internal/emit/emit.go` — Go's `s = append(s, x)` on a function parameter `s` would translate to assigning a value to an Ada `in`-mode parameter, which Ada disallows. The Phase 2 fixture `slice_append.go` was rewritten from `s = append(s, x); return s` to `return append(s, x)` to dodge the issue.
+*Why not fixed yet:* needs a per-function pre-scan that detects "this parameter is later assigned to" and emits a local-variable shadow at the head of the declarative region (e.g. `S_Local : … := S;`) plus a name-rewrite of subsequent body references. The transformation is mechanical but adds a second pass over each function body.
+*What "fixed" looks like:* the original `s = append(s, x)` shape compiles cleanly; the rewrite becomes a documented emit pass with its own unit test; the slice_append fixture restores its idiomatic Go shape.
+*Tracker:* none yet — Phase 3 will need similar hoisting for goroutine-captured locals.
+
 ## Resolved
 
 ### In-tree bench harness scaffolding pending

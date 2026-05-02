@@ -43,15 +43,8 @@
           ],
           "body": [
             {
-              "kind": "Assign",
-              "lhs": [
-                {
-                  "kind": "Ident",
-                  "name": "s"
-                }
-              ],
-              "define": false,
-              "rhs": [
+              "kind": "Return",
+              "results": [
                 {
                   "kind": "BuiltinCall",
                   "name": "append",
@@ -65,15 +58,6 @@
                       "name": "x"
                     }
                   ]
-                }
-              ]
-            },
-            {
-              "kind": "Return",
-              "results": [
-                {
-                  "kind": "Ident",
-                  "name": "s"
                 }
               ]
             }

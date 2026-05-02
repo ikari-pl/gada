@@ -87,6 +87,24 @@ func Package(p *ir.Package, w io.Writer) error {
 // emitter accumulates Ada source into buf with a current indent
 // level. Errors are sticky on err and silence further work via the
 // guards in emitStmt / emitExpr / etc.
+//
+// Phase 2 added two cross-cutting maps:
+//
+//   - sliceElems[k]  = first ir.Type seen with Ada base name k
+//     (e.g. "Integer" → *ir.IntType{}). Drives the
+//     `package Slices_Of_<T> is new …` instantiation
+//     list emitted at the top of the decl region;
+//     one entry per distinct element type per file.
+//   - sliceElemOrder = insertion-ordered list of element-type keys,
+//     so the emitted Ada is deterministic regardless
+//     of map iteration order.
+//   - localTypes     = subprogram-local name → declared type. Built
+//     from the active function's params and from
+//     Define-true `:=` assigns at the head of its
+//     body. Read by IndexExpr / SliceExpr / the
+//     slice-typed BuiltinCalls (append/len/cap) so
+//     they can pick the right Slices_Of_<T> for
+//     dispatch.
 type emitter struct {
 	pkgName string
 	file    *ir.File
@@ -94,23 +112,159 @@ type emitter struct {
 	buf    strings.Builder
 	indent int
 
-	needsCoreIO bool
-	err         error
+	needsCoreIO    bool
+	sliceElems     map[string]ir.Type
+	sliceElemOrder []string
+	localTypes     map[string]ir.Type
+	err            error
 }
 
 func newEmitter(pkg string, f *ir.File) *emitter {
-	e := &emitter{pkgName: pkg, file: f}
+	e := &emitter{
+		pkgName:    pkg,
+		file:       f,
+		sliceElems: map[string]ir.Type{},
+	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
 			e.needsCoreIO = true
 		}
 	}
+	e.collectSliceElems()
 	return e
+}
+
+// collectSliceElems walks the file's IR to surface every element type
+// that appears under any *ir.SliceType (in params/results) or
+// *ir.SliceLit (in expressions). It runs once at construction time so
+// the with-clause and instantiation block can be emitted before any
+// subprogram body. Slice-of-slice (`[][]T`) recurses through Elem
+// naturally; the leaf record is keyed by its Ada base name.
+func (e *emitter) collectSliceElems() {
+	for _, d := range e.file.Decls {
+		fn, ok := d.(*ir.Function)
+		if !ok {
+			continue
+		}
+		for _, p := range fn.Params {
+			e.recordTypeInTree(p.Type)
+		}
+		for _, p := range fn.Results {
+			e.recordTypeInTree(p.Type)
+		}
+		e.walkStmts(fn.Body)
+	}
+}
+
+func (e *emitter) recordTypeInTree(t ir.Type) {
+	if t == nil {
+		return
+	}
+	if st, ok := t.(*ir.SliceType); ok {
+		e.recordSliceElem(st.Elem)
+		e.recordTypeInTree(st.Elem)
+	}
+}
+
+func (e *emitter) recordSliceElem(elem ir.Type) {
+	name, err := elemBaseName(elem)
+	if err != nil {
+		// Surface the typed error at the pre-scan point so unsupported
+		// element types fail fast (e.g. slice-of-slice in Phase 2).
+		// Without this, the eventual instantiation block would silently
+		// omit the offending type and the per-call emit later would
+		// report a more confusing "cannot determine instantiation"
+		// secondary failure.
+		e.fail(err)
+		return
+	}
+	if _, present := e.sliceElems[name]; !present {
+		e.sliceElems[name] = elem
+		e.sliceElemOrder = append(e.sliceElemOrder, name)
+	}
+}
+
+func (e *emitter) walkStmts(stmts []ir.Stmt) {
+	for _, s := range stmts {
+		e.walkStmt(s)
+	}
+}
+
+func (e *emitter) walkStmt(s ir.Stmt) {
+	switch s := s.(type) {
+	case *ir.Assign:
+		for _, x := range s.LHS {
+			e.walkExpr(x)
+		}
+		for _, x := range s.RHS {
+			e.walkExpr(x)
+		}
+	case *ir.If:
+		e.walkExpr(s.Cond)
+		e.walkStmts(s.Then)
+		e.walkStmts(s.Else)
+	case *ir.For:
+		e.walkStmt(s.Init)
+		e.walkExpr(s.Cond)
+		e.walkStmt(s.Post)
+		e.walkStmts(s.Body)
+	case *ir.Return:
+		for _, x := range s.Results {
+			e.walkExpr(x)
+		}
+	case *ir.Call:
+		e.walkExpr(s.Fun)
+		for _, x := range s.Args {
+			e.walkExpr(x)
+		}
+	case *ir.ExprStmt:
+		e.walkExpr(s.X)
+	case *ir.BuiltinCall:
+		for _, x := range s.Args {
+			e.walkExpr(x)
+		}
+	case nil:
+		// optional Init/Post on bare for {}.
+	}
+}
+
+func (e *emitter) walkExpr(x ir.Expr) {
+	switch x := x.(type) {
+	case *ir.SliceLit:
+		e.recordSliceElem(x.Elem)
+		e.recordTypeInTree(x.Elem)
+		for _, el := range x.Elems {
+			e.walkExpr(el)
+		}
+	case *ir.IndexExpr:
+		e.walkExpr(x.X)
+		e.walkExpr(x.Index)
+	case *ir.SliceExpr:
+		e.walkExpr(x.X)
+		e.walkExpr(x.Low)
+		e.walkExpr(x.High)
+	case *ir.BuiltinCall:
+		for _, a := range x.Args {
+			e.walkExpr(a)
+		}
+	case *ir.BinOp:
+		e.walkExpr(x.X)
+		e.walkExpr(x.Y)
+	case *ir.UnaryOp:
+		e.walkExpr(x.X)
+	case *ir.Selector:
+		e.walkExpr(x.X)
+	}
 }
 
 func (e *emitter) run() error {
 	if e.needsCoreIO {
 		e.println("with Gada.Core.IO; use Gada.Core.IO;")
+	}
+	if len(e.sliceElemOrder) > 0 {
+		e.println("with Gada.Core.Slices;")
+	}
+	if e.needsCoreIO || len(e.sliceElemOrder) > 0 {
 		e.println("")
 	}
 	if e.pkgName == "main" {
@@ -119,6 +273,61 @@ func (e *emitter) run() error {
 		e.emitPackageBody()
 	}
 	return e.err
+}
+
+// emitSliceInstantiations writes one `package Slices_Of_<T> is new
+// Gada.Core.Slices (Element_Type => <T>);` line per distinct element
+// type collected in collectSliceElems. The element-name keys are
+// already the elemBaseName output (recordSliceElem keys them), so no
+// re-derivation is needed here. Caller owns indent depth; output is
+// unconditional once sliceElemOrder is non-empty. The
+// Element_Is_Atomic formal stays at its default of False — Phase 2
+// is correctness-first; the atomic-allocator optimisation flips on
+// when type-info plumbing in a later phase can prove element types
+// are pointer-free.
+func (e *emitter) emitSliceInstantiations() {
+	for _, k := range e.sliceElemOrder {
+		e.println("package Slices_Of_" + k +
+			" is new Gada.Core.Slices (Element_Type => " + k + ");")
+	}
+}
+
+// elemBaseName maps a slice-element IR type to its Ada base name —
+// the suffix used by the per-element-type instantiation
+// `Slices_Of_<base> is new Gada.Core.Slices (...)`.
+//
+// Phase 2 supports only the four basic element types. Slice-of-slice
+// (`[][]T`) is rejected here because the emitter would need to
+// dependency-order multiple instantiations (`Slices_Of_Integer`
+// before `Slices_Of_Slices_Of_Integer`) and Phase 2's golden corpus
+// does not exercise that shape; the rejection surfaces a clean
+// error instead of letting a dotted Ada package name (which is
+// illegal as an identifier) leak into emitted source. Map / struct
+// / named-type elements lift in their own phase items.
+func elemBaseName(t ir.Type) (string, error) {
+	switch t.(type) {
+	case *ir.IntType:
+		return "Integer", nil
+	case *ir.StringType:
+		return "String", nil
+	case *ir.BoolType:
+		return "Boolean", nil
+	case *ir.Float64Type:
+		return "Long_Float", nil
+	}
+	return "", fmt.Errorf("emit: unsupported slice element type %T", t)
+}
+
+// slicePkgFor returns the Slices_Of_<T> instantiation prefix for a
+// slice whose element type is elem (e.g. *ir.IntType → "Slices_Of_Integer").
+// Used by every slice-dispatching emit site (SliceLit / IndexExpr /
+// SliceExpr / append / len / cap).
+func slicePkgFor(elem ir.Type) (string, error) {
+	t, err := elemBaseName(elem)
+	if err != nil {
+		return "", err
+	}
+	return "Slices_Of_" + t, nil
 }
 
 // println writes a single line, prefixed with the current indent
@@ -183,7 +392,8 @@ func (e *emitter) emitMainProcedure() {
 		mainDecls, mainBody = splitDecls(main.Body)
 	}
 
-	hasDeclSection := len(others) > 0 || len(mainDecls) > 0
+	hasSlices := len(e.sliceElemOrder) > 0
+	hasDeclSection := hasSlices || len(others) > 0 || len(mainDecls) > 0
 
 	e.println("procedure Main is")
 	if hasDeclSection {
@@ -191,6 +401,12 @@ func (e *emitter) emitMainProcedure() {
 	}
 
 	e.indent++
+	if hasSlices {
+		e.emitSliceInstantiations()
+	}
+	if hasSlices && (len(others) > 0 || len(mainDecls) > 0) {
+		e.println("")
+	}
 	for i, fn := range others {
 		if i > 0 {
 			e.println("")
@@ -199,6 +415,9 @@ func (e *emitter) emitMainProcedure() {
 	}
 	if len(others) > 0 && len(mainDecls) > 0 {
 		e.println("")
+	}
+	if main != nil {
+		e.populateLocals(main)
 	}
 	for _, a := range mainDecls {
 		e.emitVarDecl(a)
@@ -237,12 +456,20 @@ func (e *emitter) emitPackageBody() {
 		fns = append(fns, fn)
 	}
 
+	hasSlices := len(e.sliceElemOrder) > 0
+
 	e.println("package body " + pkg + " is")
-	if len(fns) > 0 {
+	if hasSlices || len(fns) > 0 {
 		e.println("")
 	}
 
 	e.indent++
+	if hasSlices {
+		e.emitSliceInstantiations()
+	}
+	if hasSlices && len(fns) > 0 {
+		e.println("")
+	}
 	for i, fn := range fns {
 		if i > 0 {
 			e.println("")
@@ -251,10 +478,65 @@ func (e *emitter) emitPackageBody() {
 	}
 	e.indent--
 
-	if len(fns) > 0 {
+	if hasSlices || len(fns) > 0 {
 		e.println("")
 	}
 	e.println("end " + pkg + ";")
+}
+
+// populateLocals walks fn's signature and the leading run of `:=`
+// declarations to populate e.localTypes for the subprogram's scope.
+// It is called once per subprogram before any body-stmt emit so
+// IndexExpr / SliceExpr / slice-typed BuiltinCall emit sites can
+// resolve their dispatch by looking up an Ident's declared type.
+func (e *emitter) populateLocals(fn *ir.Function) {
+	e.localTypes = map[string]ir.Type{}
+	for _, p := range fn.Params {
+		if p.Name != "" && p.Type != nil {
+			e.localTypes[p.Name] = p.Type
+		}
+	}
+	for _, s := range fn.Body {
+		a, ok := s.(*ir.Assign)
+		if !ok || !a.Define {
+			break
+		}
+		if len(a.LHS) != 1 || len(a.RHS) != 1 {
+			continue
+		}
+		id, ok := a.LHS[0].(*ir.Ident)
+		if !ok {
+			continue
+		}
+		if t, ok := inferRHSType(a.RHS[0]); ok {
+			e.localTypes[id.Name] = t
+		}
+	}
+}
+
+// inferRHSType returns the IR type of a `:=` RHS when it can be
+// determined statically without consulting *types.Info. Phase 2
+// handles literals (already covered by inferDeclType) and slice
+// composite literals (whose element type is on the node). Other
+// cases bow out so populateLocals leaves the var off the map and
+// downstream emit will fall back to its existing error path.
+func inferRHSType(x ir.Expr) (ir.Type, bool) {
+	switch x := x.(type) {
+	case *ir.Lit:
+		switch x.Kind {
+		case ir.LitInt:
+			return &ir.IntType{}, true
+		case ir.LitString:
+			return &ir.StringType{}, true
+		case ir.LitBool:
+			return &ir.BoolType{}, true
+		case ir.LitFloat:
+			return &ir.Float64Type{}, true
+		}
+	case *ir.SliceLit:
+		return &ir.SliceType{Elem: x.Elem}, true
+	}
+	return nil, false
 }
 
 // emitSubprogram writes one function or procedure body, with its
@@ -263,6 +545,7 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	if e.err != nil {
 		return
 	}
+	e.populateLocals(fn)
 	header, name, ok := e.subpHeader(fn)
 	if !ok {
 		return
@@ -367,26 +650,33 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 	e.println(adaIdent(id.Name) + " : " + typ + " := " + rhs + ";")
 }
 
-// inferDeclType maps a literal RHS to its Ada type name. Phase 1
-// only supports literal RHS in `:=` because we have no real
-// type-inference plumbing yet; non-literal RHS would need to consult
-// types.Info, which the translator does not yet pass through.
+// inferDeclType maps a `:=` RHS to its Ada type name. Phase 1
+// supported literal RHS; Phase 2 also accepts a slice composite
+// literal (whose element type is on the node, so no *types.Info
+// plumbing is needed). Anything else still defers — full RHS-typing
+// arrives with the type-info plumbing in a later phase.
 func inferDeclType(x ir.Expr) (string, error) {
-	l, ok := x.(*ir.Lit)
-	if !ok {
-		return "", fmt.Errorf("emit: := requires a literal RHS in Phase 1, got %T", x)
+	switch x := x.(type) {
+	case *ir.Lit:
+		switch x.Kind {
+		case ir.LitInt:
+			return "Integer", nil
+		case ir.LitString:
+			return "String", nil
+		case ir.LitBool:
+			return "Boolean", nil
+		case ir.LitFloat:
+			return "Long_Float", nil
+		}
+		return "", fmt.Errorf("emit: unknown literal kind %q", x.Kind)
+	case *ir.SliceLit:
+		pkg, err := slicePkgFor(x.Elem)
+		if err != nil {
+			return "", err
+		}
+		return pkg + ".Slice", nil
 	}
-	switch l.Kind {
-	case ir.LitInt:
-		return "Integer", nil
-	case ir.LitString:
-		return "String", nil
-	case ir.LitBool:
-		return "Boolean", nil
-	case ir.LitFloat:
-		return "Long_Float", nil
-	}
-	return "", fmt.Errorf("emit: unknown literal kind %q", l.Kind)
+	return "", fmt.Errorf("emit: := requires a literal or composite RHS, got %T", x)
 }
 
 // --- statements -----------------------------------------------------------
@@ -601,9 +891,147 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		return e.emitUnaryOp(x)
 	case *ir.Selector:
 		return e.emitSelector(x)
+	case *ir.SliceLit:
+		return e.emitSliceLit(x)
+	case *ir.IndexExpr:
+		return e.emitIndexExpr(x)
+	case *ir.SliceExpr:
+		return e.emitSliceExpr(x)
+	case *ir.BuiltinCall:
+		return e.emitBuiltinCall(x)
 	}
 	e.fail(fmt.Errorf("emit: unsupported expr %T", x))
 	return ""
+}
+
+// emitSliceLit dispatches `[]T{e1, e2, …}` to
+// `Slices_Of_<T>.From_Array ([e1, e2, …])` (or `.Empty` if Elems is
+// empty — the runtime exposes a zero-cap singleton).
+func (e *emitter) emitSliceLit(s *ir.SliceLit) string {
+	pkg, err := slicePkgFor(s.Elem)
+	if err != nil {
+		e.fail(err)
+		return ""
+	}
+	if len(s.Elems) == 0 {
+		return pkg + ".Empty"
+	}
+	parts := make([]string, 0, len(s.Elems))
+	for _, el := range s.Elems {
+		parts = append(parts, e.emitExpr(el))
+	}
+	return pkg + ".From_Array ([" + strings.Join(parts, ", ") + "])"
+}
+
+// emitIndexExpr dispatches `s[i]` (slice) to
+// `Slices_Of_<T>.Element (S, I + 1)`. Index translation is always
+// "Go 0-based + 1" because the runtime's slice spec is 1-based; for
+// constant `0` GNAT folds the +1 to a literal `1` at -O2.
+func (e *emitter) emitIndexExpr(ix *ir.IndexExpr) string {
+	pkg, ok := e.slicePkgForExpr(ix.X)
+	if !ok {
+		e.fail(fmt.Errorf("emit: cannot determine slice instantiation for index expr (Phase 2 supports only Ident-of-known-slice-type)"))
+		return ""
+	}
+	x := e.emitExpr(ix.X)
+	idx := e.emitExpr(ix.Index)
+	return pkg + ".Element (" + x + ", " + idx + " + 1)"
+}
+
+// emitSliceExpr dispatches `s[lo:hi]` (and the elided forms) to
+// `Slices_Of_<T>.Slice_Of (S, Low + 1, High + 1)`. Missing Low →
+// constant 1; missing High → `Slices_Of_<T>.Len (S) + 1` (the
+// "one past end" sentinel the runtime accepts).
+func (e *emitter) emitSliceExpr(s *ir.SliceExpr) string {
+	pkg, ok := e.slicePkgForExpr(s.X)
+	if !ok {
+		e.fail(fmt.Errorf("emit: cannot determine slice instantiation for slice expr (Phase 2 supports only Ident-of-known-slice-type)"))
+		return ""
+	}
+	x := e.emitExpr(s.X)
+	var lo, hi string
+	if s.Low != nil {
+		lo = e.emitExpr(s.Low) + " + 1"
+	} else {
+		lo = "1"
+	}
+	if s.High != nil {
+		hi = e.emitExpr(s.High) + " + 1"
+	} else {
+		hi = pkg + ".Len (" + x + ") + 1"
+	}
+	return pkg + ".Slice_Of (" + x + ", " + lo + ", " + hi + ")"
+}
+
+// emitBuiltinCall dispatches the closed Phase 2 set of Go predeclared
+// functions to their Slices_Of_<T> equivalents. Phase 7 (maps) and
+// Phase 8 (defer/panic/recover) extend the dispatch below as their
+// runtime layers ship.
+func (e *emitter) emitBuiltinCall(b *ir.BuiltinCall) string {
+	switch b.Name {
+	case "append", "len", "cap":
+		return e.emitSliceBuiltin(b)
+	}
+	e.fail(fmt.Errorf("emit: builtin %q not supported in Phase 2", b.Name))
+	return ""
+}
+
+func (e *emitter) emitSliceBuiltin(b *ir.BuiltinCall) string {
+	if len(b.Args) < 1 {
+		e.fail(fmt.Errorf("emit: builtin %q requires at least 1 arg", b.Name))
+		return ""
+	}
+	pkg, ok := e.slicePkgForExpr(b.Args[0])
+	if !ok {
+		e.fail(fmt.Errorf("emit: cannot determine slice instantiation for %q (Phase 2 supports only Ident-of-known-slice-type as the first arg)", b.Name))
+		return ""
+	}
+	switch b.Name {
+	case "len":
+		if len(b.Args) != 1 {
+			e.fail(fmt.Errorf("emit: len takes exactly 1 arg, got %d", len(b.Args)))
+			return ""
+		}
+		return pkg + ".Len (" + e.emitExpr(b.Args[0]) + ")"
+	case "cap":
+		if len(b.Args) != 1 {
+			e.fail(fmt.Errorf("emit: cap takes exactly 1 arg, got %d", len(b.Args)))
+			return ""
+		}
+		return pkg + ".Cap (" + e.emitExpr(b.Args[0]) + ")"
+	case "append":
+		if len(b.Args) != 2 {
+			e.fail(fmt.Errorf("emit: append-of-N values not supported in Phase 2 (got %d args)", len(b.Args)))
+			return ""
+		}
+		return pkg + ".Append (" + e.emitExpr(b.Args[0]) + ", " + e.emitExpr(b.Args[1]) + ")"
+	}
+	e.fail(fmt.Errorf("emit: internal — emitSliceBuiltin called with %q", b.Name))
+	return ""
+}
+
+// slicePkgForExpr returns the Slices_Of_<T> prefix for x when x is
+// known to evaluate to a slice; ok=false otherwise. Phase 2 resolves
+// only bare identifiers (looked up in localTypes); other expression
+// shapes need *types.Info plumbing that lands in a later phase.
+func (e *emitter) slicePkgForExpr(x ir.Expr) (string, bool) {
+	id, ok := x.(*ir.Ident)
+	if !ok {
+		return "", false
+	}
+	t, ok := e.localTypes[id.Name]
+	if !ok {
+		return "", false
+	}
+	st, ok := t.(*ir.SliceType)
+	if !ok {
+		return "", false
+	}
+	pkg, err := slicePkgFor(st.Elem)
+	if err != nil {
+		return "", false
+	}
+	return pkg, true
 }
 
 func (e *emitter) emitLit(l *ir.Lit) string {
@@ -747,10 +1175,11 @@ func isAdaReserved(s string) bool {
 	return false
 }
 
-// typeName maps a Phase 1 IR type to its Ada equivalent. Anything
-// outside the four basic types is rejected.
+// typeName maps an IR type to its Ada surface form. Phase 1's four
+// basic types are unchanged; Phase 2 adds *ir.SliceType which lowers
+// to the corresponding `Slices_Of_<T>.Slice` instantiation alias.
 func typeName(t ir.Type) (string, error) {
-	switch t.(type) {
+	switch t := t.(type) {
 	case *ir.IntType:
 		return "Integer", nil
 	case *ir.StringType:
@@ -759,6 +1188,12 @@ func typeName(t ir.Type) (string, error) {
 		return "Boolean", nil
 	case *ir.Float64Type:
 		return "Long_Float", nil
+	case *ir.SliceType:
+		pkg, err := slicePkgFor(t.Elem)
+		if err != nil {
+			return "", err
+		}
+		return pkg + ".Slice", nil
 	case nil:
 		return "", fmt.Errorf("emit: missing type")
 	}

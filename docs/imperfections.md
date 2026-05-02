@@ -100,6 +100,12 @@ section at the bottom with the resolution commit / PR reference.
 *What "fixed" looks like:* future per-task decomposition checks for parent-child Ada coupling and groups co-mandatory units into a single sub-item upfront.
 *Tracker:* none (process note for the next agent).
 
+### In-tree bench harness scaffolding pending
+*Where:* `runtime/bench/` does not yet exist; `runtime/PERF.md` does not yet exist; top-level `Makefile` has no `bench` target.
+*Why not fixed yet:* `docs/adr/0006-runtime-performance-bar.md` deliberately defers the harness until the first Phase 2 module with non-trivial perf surface lands (Slices). Building the harness first risks designing for hypothetical workloads.
+*What "fixed" looks like:* `runtime/bench/{bench_runner.adb, *_bench.{ads,adb}}` shipped alongside the first `Gada.Core.Slices` benchmark; `runtime/PERF.md` exists with at least one GADA-vs-Go ratio row; `make bench` runs the suite and uploads the report as a CI artifact; `make ci` does not depend on `make bench` (slower; PR-only). Until then, the 2× bar applies but is verified by inspection (allocation patterns, growth strategies, Ada-2022 feature use).
+*Tracker:* roadmap/02-core-runtime.md item: `Gada.Core.Slices` (lands as zeroth sub-item).
+
 ## Resolved
 
 (empty — Phase 2's GADA.Core.Memory milestone is the first to add anything to this file)

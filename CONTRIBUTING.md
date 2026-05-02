@@ -193,6 +193,25 @@ every supported platform.
    fix it first. If a check is genuinely irrelevant, that decision
    belongs to a maintainer, not to the PR author.
 
+## Performance bar
+
+The runtime modules that Phase 2 ships and beyond hold to a
+**2× of Go (`gc`-built) ceiling** on micro-benchmarks per
+[`docs/adr/0006-runtime-performance-bar.md`](docs/adr/0006-runtime-performance-bar.md),
+with named exceptions for workloads that stress libgc-conservative
+scanning or libco coroutine context switches (those allow up to 5×).
+
+That ADR also mandates which Ada 2022 features new module surface
+must use where applicable (`'Aggregate` aspect, `Limited_Controlled`,
+`pragma Pre`/`Post`, `'Reduce`, `Static` functions, the `@` redux
+operator) and names the per-module design choices the bar implies
+(Swiss-table maps, geometric-growth slices, controlled-type
+zero-alloc defer).
+
+The in-tree bench harness lands with the first Phase 2 module
+that consumes it (Slices). Until then the bar applies but is
+verified by inspection.
+
 ## ADRs — when to write one
 
 Load-bearing technical decisions are recorded as Architecture

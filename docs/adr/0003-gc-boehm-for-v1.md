@@ -10,6 +10,7 @@ related:
   - "[[0002-runtime-layered]]"
   - "[[0004-scheduler-libco-for-v1]]"
   - "[[0005-libgc-binding-via-pkgconfig]]"
+  - "[[0006-runtime-performance-bar]]"
   - "[[roadmap/00-foundation]]"
 ---
 
@@ -202,6 +203,10 @@ v1 — most Go programs allocate freely.
   refinement. Picks pkg-config as the dep-resolution mechanism
   and names the measurable parity bar any future custom-GC
   successor must clear.
+- [[0006-runtime-performance-bar]] — tightens this ADR's
+  "2x–5x slower than `gc`" framing into a 2× ceiling for Phase
+  2 modules forward, with named exceptions for libgc-structural
+  workloads.
 - [[roadmap/00-foundation]] — the foundation phase that
   ratifies this ADR. The runtime layering and GC choice are
   Phase 0 ratifications, not Phase 0 implementations; the

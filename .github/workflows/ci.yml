@@ -154,6 +154,23 @@ jobs:
           # against the latest published version.
           alr -n index --update-all
 
+      - name: Pre-fetch runtime crate dependencies (aunit, ...)
+        # `alr -n toolchain --select` configures the compiler but does NOT
+        # materialise crate dependencies. AUnit is declared in
+        # `runtime/alire.toml` and `with`-imported by `tests/aunit_harness.gpr`,
+        # so its `.gpr` must be on `GPR_PROJECT_PATH` before gprbuild runs.
+        # `alr -n build` from the runtime crate triggers Alire's resolve +
+        # fetch + build cycle, which lays out aunit (and any other
+        # transitive deps) under `~/.cache/alire/builds/...` and registers
+        # them in the GPR project path that subsequent `alr exec --
+        # gprbuild` invocations inherit. Without this step, fresh runners
+        # fail with `aunit_harness.gpr:19:06: imported project file "aunit"
+        # not found` because the cache is empty.
+        run: |
+          set -euo pipefail
+          cd runtime
+          alr -n build
+
       - name: Run make ci
         run: make ci
 

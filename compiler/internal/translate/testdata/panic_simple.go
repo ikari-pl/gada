@@ -1,5 +1,5 @@
 package p
 
 func f() {
-	panic("boom")
+	panic(42)
 }

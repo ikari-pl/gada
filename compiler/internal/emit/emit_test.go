@@ -36,6 +36,8 @@ var corpusFixtures = []string{
 	// Phase 2 — map operations (Item 7).
 	"map_type_param", "map_lit", "map_index",
 	"map_insert", "map_range", "map_delete",
+	// Phase 2 — defer / panic / recover (Item 8).
+	"defer_simple", "panic_simple", "recover_simple",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -1220,6 +1222,164 @@ func TestMapLitNonEmptyInVarDecl(t *testing.T) {
 	}
 	if !strings.Contains(out, "From_Pairs ([(K => 1, V => 2)])") {
 		t.Fatalf("expected From_Pairs aggregate, got:\n%s", out)
+	}
+}
+
+// TestDeferPanicEmitErrors covers every error branch reachable from
+// the new Phase 2 defer/panic/recover emission paths. Each case pins
+// one specific failure mode so a future regression surfaces at the
+// right call site.
+func TestDeferPanicEmitErrors(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		pkg     *ir.Package
+		wantErr string
+	}{
+		{
+			name: "panic wrong arity (0 args, stmt)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{
+					&ir.BuiltinCall{Name: "panic", Args: nil},
+				},
+			}),
+			wantErr: "panic takes exactly 1 arg",
+		},
+		{
+			name: "panic in expression position (return)",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "panic", Args: []ir.Expr{litInt("1")}},
+				}}},
+			}),
+			wantErr: "panic in expression position",
+		},
+		{
+			name: "recover with args (in return)",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "recover", Args: []ir.Expr{litInt("1")}},
+				}}},
+			}),
+			wantErr: "recover takes no args",
+		},
+		{
+			name: "defer holds unexpected stmt (Return)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{&ir.DeferStmt{Call: &ir.Return{}}},
+			}),
+			wantErr: "defer holds unexpected stmt",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := Package(tc.pkg, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestZeroLiteralOfTable pins the per-type zero-value table used by
+// the per-function panic-recover wrapper's exception path. Integer is
+// corpus-covered; the other three basic types and the unreachable
+// fallback live here.
+func TestZeroLiteralOfTable(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		t    ir.Type
+		want string
+	}{
+		{&ir.IntType{}, "0"},
+		{&ir.BoolType{}, "False"},
+		{&ir.Float64Type{}, "0.0"},
+		{&ir.StringType{}, `""`},
+		// Unreachable fallback for an unsupported type. The pre-scan
+		// rejects panic of unsupported types before the wrapper would
+		// emit; the fallback is defensive.
+		{&ir.SliceType{Elem: &ir.IntType{}}, "0"},
+	}
+	for _, tc := range cases {
+		got := zeroLiteralOf(tc.t)
+		if got != tc.want {
+			t.Errorf("zeroLiteralOf(%T) = %q, want %q", tc.t, got, tc.want)
+		}
+	}
+}
+
+// TestDeferAndPanicCombined exercises the per-function panic-recover
+// wrapper *with* a defer site present — the corpus exercises each in
+// isolation but not the combined shape.
+func TestDeferAndPanicCombined(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name:    "f",
+		Results: []*ir.Param{{Type: &ir.BoolType{}}},
+		Body: []ir.Stmt{
+			&ir.DeferStmt{Call: &ir.Call{Fun: idn("cleanup")}},
+			&ir.BuiltinCall{Name: "panic", Args: []ir.Expr{litInt("99")}},
+			&ir.Return{Results: []ir.Expr{
+				&ir.Lit{Kind: ir.LitBool, Value: "true"},
+			}},
+		},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Defer_Closure_1") {
+		t.Fatalf("expected Defer_Closure_1, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Panic_Of_Integer.Do_Panic (99);") {
+		t.Fatalf("expected Do_Panic (99), got:\n%s", out)
+	}
+	if !strings.Contains(out, "return False;") {
+		t.Fatalf("expected default-return False on exception path, got:\n%s", out)
+	}
+}
+
+// TestDeferInNestedBlocks exercises collectDefers's recursion through
+// if / for / range. Go semantics: defer is bound to the enclosing
+// *function*, not the lexical block, so nested defers hoist all the
+// way out to the top-level declarative region.
+func TestDeferInNestedBlocks(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name: "f",
+		Body: []ir.Stmt{
+			&ir.If{
+				Cond: &ir.Lit{Kind: ir.LitBool, Value: "true"},
+				Then: []ir.Stmt{&ir.DeferStmt{Call: &ir.Call{Fun: idn("a")}}},
+				Else: []ir.Stmt{&ir.DeferStmt{Call: &ir.Call{Fun: idn("b")}}},
+			},
+			&ir.For{
+				Body: []ir.Stmt{&ir.DeferStmt{Call: &ir.Call{Fun: idn("c")}}},
+			},
+		},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"Defer_Closure_1", "Defer_Closure_2", "Defer_Closure_3"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %s, got:\n%s", want, out)
+		}
 	}
 }
 

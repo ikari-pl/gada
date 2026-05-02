@@ -19,8 +19,8 @@
               "args": [
                 {
                   "kind": "Lit",
-                  "litKind": "string",
-                  "value": "\"boom\""
+                  "litKind": "int",
+                  "value": "42"
                 }
               ]
             }

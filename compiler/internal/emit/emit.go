@@ -121,6 +121,8 @@ type emitter struct {
 	indent int
 
 	needsCoreIO    bool
+	needsCoreDefer bool // any DeferStmt seen → emit `with Gada.Core.Defer;`
+	needsCorePanic bool // any panic/recover BuiltinCall seen → emit `with Gada.Core.Panic;` and `package Panic_Of_Integer is new ...`
 	sliceElems     map[string]ir.Type
 	sliceElemOrder []string
 	mapPairs       map[string]*ir.MapType
@@ -253,12 +255,18 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 	case *ir.ExprStmt:
 		e.walkExpr(s.X)
 	case *ir.BuiltinCall:
+		if s.Name == "panic" || s.Name == "recover" {
+			e.needsCorePanic = true
+		}
 		for _, x := range s.Args {
 			e.walkExpr(x)
 		}
 	case *ir.RangeStmt:
 		e.walkExpr(s.X)
 		e.walkStmts(s.Body)
+	case *ir.DeferStmt:
+		e.needsCoreDefer = true
+		e.walkStmt(s.Call)
 	case nil:
 		// optional Init/Post on bare for {}.
 	}
@@ -288,6 +296,9 @@ func (e *emitter) walkExpr(x ir.Expr) {
 		e.walkExpr(x.Low)
 		e.walkExpr(x.High)
 	case *ir.BuiltinCall:
+		if x.Name == "panic" || x.Name == "recover" {
+			e.needsCorePanic = true
+		}
 		for _, a := range x.Args {
 			e.walkExpr(a)
 		}
@@ -312,7 +323,14 @@ func (e *emitter) run() error {
 		e.println("with Gada.Core.Maps;")
 		e.println("with Gada.Core.Hash;")
 	}
-	if e.needsCoreIO || len(e.sliceElemOrder) > 0 || len(e.mapPairOrder) > 0 {
+	if e.needsCoreDefer {
+		e.println("with Gada.Core.Defer;")
+	}
+	if e.needsCorePanic {
+		e.println("with Gada.Core.Panic;")
+	}
+	if e.needsCoreIO || len(e.sliceElemOrder) > 0 || len(e.mapPairOrder) > 0 ||
+		e.needsCoreDefer || e.needsCorePanic {
 		e.println("")
 	}
 	if e.pkgName == "main" {
@@ -360,6 +378,19 @@ func (e *emitter) emitMapInstantiations() {
 		e.println("   Hash          => " + hash + ",")
 		e.println("   Default_Value => " + def + ");")
 	}
+}
+
+// emitPanicInstantiation writes the per-program
+// `package Panic_Of_Integer is new Gada.Core.Panic (...)` block.
+// Phase 2 fixes the panic payload type at Integer — Go's `panic(v)`
+// with a non-int v (string literal, struct, interface{}) waits for
+// Phase 4's `Gada.Reflect.Any` shim to land. With Any in place this
+// becomes `package Panic_Of_Any is new Gada.Core.Panic (Payload_Type
+// => Gada.Reflect.Any, Default => Gada.Reflect.Nil);`.
+func (e *emitter) emitPanicInstantiation() {
+	e.println("package Panic_Of_Integer is new Gada.Core.Panic")
+	e.println("  (Payload_Type => Integer,")
+	e.println("   Default      => 0);")
 }
 
 // mapPairKey returns the canonical "<KName>_To_<VName>" suffix used
@@ -558,7 +589,8 @@ func (e *emitter) emitMainProcedure() {
 
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0
-	hasDeclSection := hasSlices || hasMaps || len(others) > 0 || len(mainDecls) > 0
+	hasPanic := e.needsCorePanic
+	hasDeclSection := hasSlices || hasMaps || hasPanic || len(others) > 0 || len(mainDecls) > 0
 
 	e.println("procedure Main is")
 	if hasDeclSection {
@@ -575,7 +607,13 @@ func (e *emitter) emitMainProcedure() {
 	if hasMaps {
 		e.emitMapInstantiations()
 	}
-	if (hasSlices || hasMaps) && (len(others) > 0 || len(mainDecls) > 0) {
+	if (hasSlices || hasMaps) && hasPanic {
+		e.println("")
+	}
+	if hasPanic {
+		e.emitPanicInstantiation()
+	}
+	if (hasSlices || hasMaps || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
 		e.println("")
 	}
 	for i, fn := range others {
@@ -629,9 +667,10 @@ func (e *emitter) emitPackageBody() {
 
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0
+	hasPanic := e.needsCorePanic
 
 	e.println("package body " + pkg + " is")
-	if hasSlices || hasMaps || len(fns) > 0 {
+	if hasSlices || hasMaps || hasPanic || len(fns) > 0 {
 		e.println("")
 	}
 
@@ -645,7 +684,13 @@ func (e *emitter) emitPackageBody() {
 	if hasMaps {
 		e.emitMapInstantiations()
 	}
-	if (hasSlices || hasMaps) && len(fns) > 0 {
+	if (hasSlices || hasMaps) && hasPanic {
+		e.println("")
+	}
+	if hasPanic {
+		e.emitPanicInstantiation()
+	}
+	if (hasSlices || hasMaps || hasPanic) && len(fns) > 0 {
 		e.println("")
 	}
 	for i, fn := range fns {
@@ -721,6 +766,20 @@ func inferRHSType(x ir.Expr) (ir.Type, bool) {
 
 // emitSubprogram writes one function or procedure body, with its
 // hoisted declarations and statement body.
+//
+// Phase 2 lift: defer sites in fn.Body get pulled out and emitted in
+// the declarative region as one nested closure procedure plus one
+// `Defer_Block (Op => Closure'Access)` per site. Ada finalises the
+// declared blocks in reverse-of-declaration order at scope exit
+// *including under exception unwind*, so the emit gets Go's LIFO
+// `defer`-during-panic semantics with no defer-chain bookkeeping
+// at runtime.
+//
+// If the function calls panic or recover, the body is wrapped in
+// `begin … exception when Panicking => …; end;` per ADR-0007's
+// per-function panic-recover wrapper contract. The handler re-raises
+// iff `Is_Panicking` is still True, matching Go's "if no deferred
+// call recovered, the panic propagates" rule.
 func (e *emitter) emitSubprogram(fn *ir.Function) {
 	if e.err != nil {
 		return
@@ -733,25 +792,253 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	e.println(header)
 
 	decls, body := splitDecls(fn.Body)
+	defers := collectDefers(fn.Body)
+	usesPanic := bodyUsesPanicOrRecover(fn.Body)
+
 	e.indent++
 	for _, a := range decls {
 		e.emitVarDecl(a)
+	}
+	for i, d := range defers {
+		e.emitDeferClosure(i+1, d)
+	}
+	if len(defers) > 0 {
+		// Defer_Block declarations come *after* the closure procedures
+		// they reference (Ada's "declare before use" rule applies here
+		// even though the access value is taken via 'Access).
+		for i := range defers {
+			n := i + 1
+			e.println(fmt.Sprintf("Defer_%d : Gada.Core.Defer.Defer_Block (Op => Defer_Closure_%d'Access);", n, n))
+		}
 	}
 	e.indent--
 
 	e.println("begin")
 
 	e.indent++
-	if len(body) == 0 {
-		e.println("null;")
-	} else {
+	if usesPanic {
+		// One extra level of nesting for the begin/exception block so
+		// the handler's `raise` propagates out of the wrapper without
+		// dragging the whole function with it on a successful return.
+		e.println("begin")
+		e.indent++
+	}
+	// `null;` filler when the body would otherwise emit nothing — Ada
+	// requires at least one statement between `begin` and `end`. The
+	// emit-stmt path for DeferStmt is silent (defers are hoisted to
+	// the declarative region), so a function whose only statements are
+	// defers also lands here.
+	emittedAny := false
+	if len(body) > 0 {
 		for _, s := range body {
+			if _, isDefer := s.(*ir.DeferStmt); !isDefer {
+				emittedAny = true
+			}
 			e.emitStmt(s)
 		}
+	}
+	if !emittedAny {
+		e.println("null;")
+	}
+	if usesPanic {
+		e.indent--
+		e.println("exception")
+		e.indent++
+		e.println("when Panic_Of_Integer.Panicking =>")
+		e.indent++
+		e.println("if Panic_Of_Integer.Is_Panicking then")
+		e.indent++
+		e.println("raise;")
+		e.indent--
+		e.println("end if;")
+		// For functions that return a value, the exception path also
+		// has to terminate with a return; emit a default return of the
+		// result type's zero value. Procedures fall through to `end;`.
+		if len(fn.Results) == 1 {
+			zero := zeroLiteralOf(fn.Results[0].Type)
+			e.println("return " + zero + ";")
+		}
+		e.indent -= 2
+		e.println("end;")
 	}
 	e.indent--
 
 	e.println("end " + name + ";")
+}
+
+// collectDefers returns every DeferStmt under body in source order
+// (depth-first; nested defers inside if / for / range bodies are
+// hoisted to the enclosing function — Go semantics: defer is bound
+// to the *function* scope, not the lexical block).
+func collectDefers(body []ir.Stmt) []*ir.DeferStmt {
+	var out []*ir.DeferStmt
+	var walk func([]ir.Stmt)
+	walk = func(ss []ir.Stmt) {
+		for _, s := range ss {
+			switch s := s.(type) {
+			case *ir.DeferStmt:
+				out = append(out, s)
+			case *ir.If:
+				walk(s.Then)
+				walk(s.Else)
+			case *ir.For:
+				walk(s.Body)
+			case *ir.RangeStmt:
+				walk(s.Body)
+			}
+		}
+	}
+	walk(body)
+	return out
+}
+
+// bodyUsesPanicOrRecover walks body for any panic/recover BuiltinCall.
+// Per-function flag drives whether the body needs the per-function
+// panic-recover wrapper.
+func bodyUsesPanicOrRecover(body []ir.Stmt) bool {
+	var found bool
+	var walkExpr func(ir.Expr)
+	var walkStmt func(ir.Stmt)
+	walkExpr = func(x ir.Expr) {
+		if found || x == nil {
+			return
+		}
+		switch x := x.(type) {
+		case *ir.BuiltinCall:
+			if x.Name == "panic" || x.Name == "recover" {
+				found = true
+				return
+			}
+			for _, a := range x.Args {
+				walkExpr(a)
+			}
+		case *ir.BinOp:
+			walkExpr(x.X)
+			walkExpr(x.Y)
+		case *ir.UnaryOp:
+			walkExpr(x.X)
+		case *ir.IndexExpr:
+			walkExpr(x.X)
+			walkExpr(x.Index)
+		case *ir.SliceExpr:
+			walkExpr(x.X)
+			walkExpr(x.Low)
+			walkExpr(x.High)
+		case *ir.SliceLit:
+			for _, e := range x.Elems {
+				walkExpr(e)
+			}
+		case *ir.MapLit:
+			for _, ent := range x.Entries {
+				walkExpr(ent.Key)
+				walkExpr(ent.Value)
+			}
+		case *ir.Selector:
+			walkExpr(x.X)
+		}
+	}
+	walkStmt = func(s ir.Stmt) {
+		if found || s == nil {
+			return
+		}
+		switch s := s.(type) {
+		case *ir.BuiltinCall:
+			if s.Name == "panic" || s.Name == "recover" {
+				found = true
+				return
+			}
+			for _, a := range s.Args {
+				walkExpr(a)
+			}
+		case *ir.Assign:
+			for _, x := range s.LHS {
+				walkExpr(x)
+			}
+			for _, x := range s.RHS {
+				walkExpr(x)
+			}
+		case *ir.If:
+			walkExpr(s.Cond)
+			for _, t := range s.Then {
+				walkStmt(t)
+			}
+			for _, t := range s.Else {
+				walkStmt(t)
+			}
+		case *ir.For:
+			walkStmt(s.Init)
+			walkExpr(s.Cond)
+			walkStmt(s.Post)
+			for _, t := range s.Body {
+				walkStmt(t)
+			}
+		case *ir.Return:
+			for _, x := range s.Results {
+				walkExpr(x)
+			}
+		case *ir.Call:
+			walkExpr(s.Fun)
+			for _, x := range s.Args {
+				walkExpr(x)
+			}
+		case *ir.ExprStmt:
+			walkExpr(s.X)
+		case *ir.RangeStmt:
+			walkExpr(s.X)
+			for _, t := range s.Body {
+				walkStmt(t)
+			}
+		case *ir.DeferStmt:
+			walkStmt(s.Call)
+		}
+	}
+	for _, s := range body {
+		walkStmt(s)
+		if found {
+			return true
+		}
+	}
+	return false
+}
+
+// emitDeferClosure writes one nested parameterless procedure that the
+// matching Defer_Block's Op formal will call at scope exit. n is the
+// 1-based source-order index of the defer site within the enclosing
+// function.
+func (e *emitter) emitDeferClosure(n int, d *ir.DeferStmt) {
+	e.println(fmt.Sprintf("procedure Defer_Closure_%d is", n))
+	e.println("begin")
+	e.indent++
+	switch c := d.Call.(type) {
+	case *ir.Call:
+		e.emitCallStmt(c)
+	case *ir.BuiltinCall:
+		e.emitBuiltinStmt(c)
+	default:
+		e.fail(fmt.Errorf("emit: defer holds unexpected stmt %T", d.Call))
+	}
+	e.indent--
+	e.println(fmt.Sprintf("end Defer_Closure_%d;", n))
+}
+
+// zeroLiteralOf returns the Ada literal for the zero value of t. Used
+// by the per-function panic-recover wrapper's exception path so a
+// value-returning function still terminates with `return`. Mirrors the
+// runtime instantiation defaults so a `recover()`-rescued function
+// returns the same value its callers would observe on a normal-flow
+// short-circuit.
+func zeroLiteralOf(t ir.Type) string {
+	switch t.(type) {
+	case *ir.IntType:
+		return "0"
+	case *ir.BoolType:
+		return "False"
+	case *ir.Float64Type:
+		return "0.0"
+	case *ir.StringType:
+		return `""`
+	}
+	return "0"
 }
 
 // subpHeader returns the Ada header line for fn ("function Foo (...)
@@ -888,6 +1175,12 @@ func (e *emitter) emitStmt(s ir.Stmt) {
 		e.emitBuiltinStmt(s)
 	case *ir.RangeStmt:
 		e.emitRangeStmt(s)
+	case *ir.DeferStmt:
+		// Hoisted to the declarative region by emitSubprogram (one
+		// closure + one Defer_Block per site, declared in source
+		// order). The body walk reaches here only if a DeferStmt is
+		// encountered outside the head of a function body — which
+		// emitSubprogram should have already collected. Skip silently.
 	default:
 		e.fail(fmt.Errorf("emit: unsupported stmt %T", s))
 	}
@@ -905,6 +1198,13 @@ func (e *emitter) emitBuiltinStmt(b *ir.BuiltinCall) {
 			return
 		}
 		e.println(expr + ";")
+	case "panic":
+		if len(b.Args) != 1 {
+			e.fail(fmt.Errorf("emit: panic takes exactly 1 arg, got %d", len(b.Args)))
+			return
+		}
+		v := e.emitExpr(b.Args[0])
+		e.println("Panic_Of_Integer.Do_Panic (" + v + ");")
 	default:
 		e.fail(fmt.Errorf("emit: builtin %q at statement position not supported in Phase 2", b.Name))
 	}
@@ -1332,6 +1632,18 @@ func (e *emitter) emitBuiltinCall(b *ir.BuiltinCall) string {
 		return e.emitSliceBuiltin(b)
 	case "delete":
 		return e.emitMapBuiltin(b)
+	case "recover":
+		if len(b.Args) != 0 {
+			e.fail(fmt.Errorf("emit: recover takes no args, got %d", len(b.Args)))
+			return ""
+		}
+		return "Panic_Of_Integer.Recover"
+	case "panic":
+		// panic in expression position is rare in Go (e.g. inside a `||`
+		// for short-circuit termination) and Phase 2 does not support
+		// it. Phase 4's Any-payload lift will reconsider.
+		e.fail(fmt.Errorf("emit: panic in expression position not supported in Phase 2"))
+		return ""
 	}
 	e.fail(fmt.Errorf("emit: builtin %q not supported in Phase 2", b.Name))
 	return ""

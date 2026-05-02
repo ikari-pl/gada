@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+#
+#  pre-commit — fast quality gate for `git commit`.
+#
+#  Goal: catch the cheap, common regressions (compile errors, lint
+#  drift, broken Go unit tests, golden mismatches) before a commit
+#  lands, so a contributor doesn't push a series of red commits and
+#  re-discover the same problem in CI five minutes later.
+#
+#  We deliberately do NOT run the full `make ci` here:
+#    - Ada AUnit suite + lcov pass require an Alire build, which
+#      adds 60-90s on a fresh tree -- too slow for an interactive
+#      hook.
+#    - Coverage gate requires the full test pass first; if you've
+#      broken coverage you've also broken something cheaper.
+#  The full gate runs in CI (.github/workflows/ci.yml) and locally
+#  via `make ci`. The precommit hook's contract: green precommit
+#  does NOT promise green CI; red precommit DOES promise red CI.
+#
+#  Enable once per clone:
+#    git config core.hooksPath .githooks
+#  Or via the convenience target:
+#    make hooks
+#
+#  Skip in an emergency (NOT for normal use, hooks exist for a
+#  reason): commit with --no-verify.
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+red()    { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+green()  { printf '\033[32m%s\033[0m\n' "$*"; }
+yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
+
+# Only run Go-side checks when something the Go side cares about
+# changed. A pure-Ada commit (runtime/, docs/, roadmap/) shouldn't
+# pay the Go test bill.
+GO_TOUCHED="$(git diff --cached --name-only --diff-filter=ACMR \
+              | grep -E '^(compiler/|examples/.*\.go$|.+\.go$|go\.mod$|go\.sum$)' \
+              || true)"
+
+if [[ -z "$GO_TOUCHED" ]]; then
+  yellow "pre-commit: no Go-side changes staged, skipping compiler tests."
+  exit 0
+fi
+
+yellow "pre-commit: compiler test sweep (vet + emit/translate/ir unit tests)..."
+
+cd "$REPO_ROOT/compiler"
+
+# 1. go vet — catches "obviously wrong" code (Printf format strings,
+# unreachable returns, nil context, etc.) in milliseconds.
+if ! go vet ./... ; then
+  red "pre-commit: go vet failed"
+  exit 1
+fi
+
+# 2. Unit tests for the three layers that produce the bulk of the
+# emit-side regressions: ir/, translate/, emit/. The emit corpus
+# also auto-validates every fixture's golden against re-emission.
+# `-race` catches data races introduced via concurrent code; cheap
+# at this scale.
+if ! go test -race -count=1 \
+       ./internal/ir/ \
+       ./internal/translate/ \
+       ./internal/emit/ ; then
+  red "pre-commit: compiler unit tests failed"
+  red "  Hint: if a golden drifted intentionally, run:"
+  red "    cd compiler && go test ./internal/translate/... -run TestCorpus -update"
+  red "    cd compiler && go test ./internal/emit/...      -run '^TestCorpus\$' -update"
+  red "  ...inspect the diff, then re-stage the golden(s)."
+  exit 1
+fi
+
+green "pre-commit: OK"

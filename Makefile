@@ -34,7 +34,7 @@
 #                   First failure aborts (Make's default semantics).
 #   clean         — wipe per-side build state and coverage/.
 
-.PHONY: bootstrap test coverage lint coverage-gate bench example ci clean
+.PHONY: bootstrap hooks test coverage lint coverage-gate bench example ci clean
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 COVERAGE_DIR := $(ROOT)/coverage
@@ -86,6 +86,24 @@ bootstrap:
 	else \
 	    echo "Makefile: 'alr' not on PATH — install Alire from https://alire.ada.dev to bootstrap the runtime crate" >&2 ; \
 	fi
+
+#  hooks — point this clone's git at the versioned hook directory.
+#  We deliberately do NOT auto-install on `make bootstrap`: hooks are
+#  developer tooling, opt-in per clone, and forcing them on someone
+#  who only wants to read the source is bad form. Run `make hooks`
+#  once after first checkout (or `git config core.hooksPath .githooks`
+#  by hand) to enable. Skip a single commit with `git commit
+#  --no-verify` if a hook fires incorrectly — but please file an
+#  issue so the hook can be fixed for everyone.
+hooks:
+	@if [ ! -d $(ROOT)/.githooks ]; then \
+	    echo "Makefile: .githooks/ directory missing — clone may be incomplete" >&2 ; \
+	    exit 1 ; \
+	fi
+	@git -C $(ROOT) config core.hooksPath .githooks
+	@echo "hooks: core.hooksPath = .githooks"
+	@echo "hooks: pre-commit will run go vet + compiler unit tests on Go-side commits"
+	@echo "hooks: skip a single commit with 'git commit --no-verify' (use sparingly)"
 
 test:
 	$(MAKE) -C $(ROOT)/compiler test

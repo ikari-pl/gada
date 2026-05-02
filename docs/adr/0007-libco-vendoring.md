@@ -175,29 +175,19 @@ just means `gprbuild`-driver flags have to be re-translated into
 in [[0004-scheduler-libco-for-v1]] and rejected there. Not
 revisited: that ADR's reasoning still holds.
 
-## ISC licence text (as vendored)
+## Licence text — source of truth
 
-The exact text reproduced under
-`runtime/src/vendor/libco/LICENSE` is:
+The verbatim ISC text plus the BSD-style notice for `valgrind.h`
+live at `runtime/src/vendor/libco/LICENSE` and the header of
+`runtime/src/vendor/libco/valgrind.h` respectively. This ADR
+does *not* reproduce them inline because (a) the upstream LICENSE
+wording can shift across commits we bump to, and (b) two copies of
+the same text invite drift. The `vendor: bump libco` workflow
+documented in `runtime/src/vendor/libco/README.md` keeps the
+in-tree LICENSE file in sync with whatever pin we are on.
 
-```
-ISC License
-
-Copyright (c) 2006-2024 byuu et al.
-
-Permission to use, copy, modify, and/or distribute this software for any
-purpose with or without fee is hereby granted, provided that the above
-copyright notice and this permission notice appear in all copies.
-
-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-```
-
-The copyright year is updated mechanically to track the
-upstream `LICENSE` file at each `vendor: bump libco` commit;
-the rest of the text is invariant under the ISC licence.
+The notable point this ADR *does* fix in policy: both notices flow
+through to any GADA distribution that ships libco. The
+project-level `LICENSE` (see [[roadmap/00-foundation]]) gains a
+"Third-party notices" section that cross-references the vendored
+files when that decision is made.

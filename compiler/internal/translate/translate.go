@@ -142,8 +142,8 @@ func transFieldList(fl *ast.FieldList) ([]*ir.Param, error) {
 
 // transType maps the recognised Go type names and shapes to their IR
 // counterparts. Phase 1 covered the four basic types; Phase 2 adds
-// `[]T` (slice). Fixed-size arrays (`[N]T`), named types, struct,
-// channel, function, and map types are deferred.
+// `[]T` (slice) and `map[K]V`. Fixed-size arrays (`[N]T`), named
+// types, struct, channel, and function types are deferred.
 func transType(e ast.Expr) (ir.Type, error) {
 	switch t := e.(type) {
 	case *ast.Ident:
@@ -168,6 +168,16 @@ func transType(e ast.Expr) (ir.Type, error) {
 			return nil, err
 		}
 		return &ir.SliceType{Elem: elem}, nil
+	case *ast.MapType:
+		k, err := transType(t.Key)
+		if err != nil {
+			return nil, err
+		}
+		v, err := transType(t.Value)
+		if err != nil {
+			return nil, err
+		}
+		return &ir.MapType{Key: k, Value: v}, nil
 	default:
 		return nil, fmt.Errorf("translate: unsupported type expr %T", e)
 	}
@@ -213,6 +223,8 @@ func transStmt(s ast.Stmt) (ir.Stmt, error) {
 		return transIf(s)
 	case *ast.ForStmt:
 		return transFor(s)
+	case *ast.RangeStmt:
+		return transRange(s)
 	case *ast.ReturnStmt:
 		return transReturn(s)
 	case *ast.ExprStmt:
@@ -220,6 +232,58 @@ func transStmt(s ast.Stmt) (ir.Stmt, error) {
 	default:
 		return nil, fmt.Errorf("translate: unsupported stmt %T", s)
 	}
+}
+
+// transRange handles `for k, v := range x { ... }` plus the elided
+// shapes `for k := range x`, `for k, _ := range x`, and `for range x`.
+// The blank identifier (`_`) and the absent-name case both decode to
+// an empty Name on the IR side.
+func transRange(s *ast.RangeStmt) (*ir.RangeStmt, error) {
+	if s.Tok != token.ASSIGN && s.Tok != token.DEFINE && s.Tok != token.ILLEGAL {
+		return nil, fmt.Errorf("translate: unsupported range token %s", s.Tok)
+	}
+	keyName, err := identNameOrBlank(s.Key)
+	if err != nil {
+		return nil, err
+	}
+	valueName, err := identNameOrBlank(s.Value)
+	if err != nil {
+		return nil, err
+	}
+	x, err := transExpr(s.X)
+	if err != nil {
+		return nil, err
+	}
+	body, err := transStmtList(s.Body.List)
+	if err != nil {
+		return nil, err
+	}
+	return &ir.RangeStmt{
+		KeyName:   keyName,
+		ValueName: valueName,
+		Define:    s.Tok == token.DEFINE,
+		X:         x,
+		Body:      body,
+	}, nil
+}
+
+// identNameOrBlank extracts a bare identifier name from a Go AST
+// expression, treating nil and the blank `_` identifier identically
+// (both lower to an empty IR name). Anything more complex — selector
+// chains, index expressions — is rejected because Go's range syntax
+// only ever binds bare identifiers as the key/value receivers.
+func identNameOrBlank(e ast.Expr) (string, error) {
+	if e == nil {
+		return "", nil
+	}
+	id, ok := e.(*ast.Ident)
+	if !ok {
+		return "", fmt.Errorf("translate: range key/value must be an identifier (got %T)", e)
+	}
+	if id.Name == "_" {
+		return "", nil
+	}
+	return id.Name, nil
 }
 
 func transAssign(s *ast.AssignStmt) (*ir.Assign, error) {
@@ -424,30 +488,73 @@ func transExpr(e ast.Expr) (ir.Expr, error) {
 	}
 }
 
-// transCompositeLit handles slice composite literals — `[]T{e1, e2}`
-// — which lower to `*ir.SliceLit`. Anything else (struct literals,
-// map literals, fixed-size array literals) falls outside Phase 2's
-// slice item; map literals come in Item 7 and the rest is post-1.0.
+// transCompositeLit handles slice and map composite literals —
+// `[]T{e1, e2}` and `map[K]V{k1: v1, k2: v2}` — which lower to
+// `*ir.SliceLit` and `*ir.MapLit` respectively. Struct literals and
+// fixed-size array literals are post-1.0.
 func transCompositeLit(c *ast.CompositeLit) (ir.Expr, error) {
 	if c.Type == nil {
 		return nil, fmt.Errorf("translate: composite literal with elided type not supported in Phase 2")
 	}
-	at, ok := c.Type.(*ast.ArrayType)
-	if !ok {
-		return nil, fmt.Errorf("translate: only []T composite literals are supported in Phase 2 (got %T)", c.Type)
+	switch ct := c.Type.(type) {
+	case *ast.ArrayType:
+		if ct.Len != nil {
+			return nil, fmt.Errorf("translate: fixed-size array composite literals not supported in Phase 2")
+		}
+		elem, err := transType(ct.Elt)
+		if err != nil {
+			return nil, err
+		}
+		elems, err := transExprList(c.Elts)
+		if err != nil {
+			return nil, err
+		}
+		return &ir.SliceLit{Elem: elem, Elems: elems}, nil
+	case *ast.MapType:
+		k, err := transType(ct.Key)
+		if err != nil {
+			return nil, err
+		}
+		v, err := transType(ct.Value)
+		if err != nil {
+			return nil, err
+		}
+		entries, err := transMapEntries(c.Elts)
+		if err != nil {
+			return nil, err
+		}
+		return &ir.MapLit{Key: k, Value: v, Entries: entries}, nil
+	default:
+		return nil, fmt.Errorf("translate: only []T and map[K]V composite literals are supported in Phase 2 (got %T)", c.Type)
 	}
-	if at.Len != nil {
-		return nil, fmt.Errorf("translate: fixed-size array composite literals not supported in Phase 2")
+}
+
+// transMapEntries lifts a Go composite-literal element list into the
+// IR's *MapEntry slice. Each element must be a `*ast.KeyValueExpr` —
+// Go's grammar guarantees that for `map[K]V{...}` literals, but we
+// re-check at the IR boundary so a malformed AST surfaces here
+// instead of crashing the emitter.
+func transMapEntries(es []ast.Expr) ([]*ir.MapEntry, error) {
+	if len(es) == 0 {
+		return nil, nil
 	}
-	elem, err := transType(at.Elt)
-	if err != nil {
-		return nil, err
+	out := make([]*ir.MapEntry, 0, len(es))
+	for _, e := range es {
+		kv, ok := e.(*ast.KeyValueExpr)
+		if !ok {
+			return nil, fmt.Errorf("translate: map composite literal entry must be K: V (got %T)", e)
+		}
+		k, err := transExpr(kv.Key)
+		if err != nil {
+			return nil, err
+		}
+		v, err := transExpr(kv.Value)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, &ir.MapEntry{Key: k, Value: v})
 	}
-	elems, err := transExprList(c.Elts)
-	if err != nil {
-		return nil, err
-	}
-	return &ir.SliceLit{Elem: elem, Elems: elems}, nil
+	return out, nil
 }
 
 func transIndex(e *ast.IndexExpr) (*ir.IndexExpr, error) {

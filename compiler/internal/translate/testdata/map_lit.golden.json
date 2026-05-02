@@ -1,0 +1,92 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "map_lit.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "f",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "_"
+                }
+              ],
+              "define": false,
+              "rhs": [
+                {
+                  "kind": "MapLit",
+                  "key": {
+                    "kind": "StringType"
+                  },
+                  "value": {
+                    "kind": "IntType"
+                  },
+                  "entries": [
+                    {
+                      "kind": "MapEntry",
+                      "key": {
+                        "kind": "Lit",
+                        "litKind": "string",
+                        "value": "\"a\""
+                      },
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "1"
+                      }
+                    },
+                    {
+                      "kind": "MapEntry",
+                      "key": {
+                        "kind": "Lit",
+                        "litKind": "string",
+                        "value": "\"b\""
+                      },
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "2"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "_"
+                }
+              ],
+              "define": false,
+              "rhs": [
+                {
+                  "kind": "MapLit",
+                  "key": {
+                    "kind": "IntType"
+                  },
+                  "value": {
+                    "kind": "IntType"
+                  },
+                  "entries": null
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

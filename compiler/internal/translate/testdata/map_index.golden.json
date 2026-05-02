@@ -1,0 +1,60 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "map_index.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "f",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "m",
+              "type": {
+                "kind": "MapType",
+                "key": {
+                  "kind": "StringType"
+                },
+                "value": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "IndexExpr",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "m"
+                  },
+                  "index": {
+                    "kind": "Lit",
+                    "litKind": "string",
+                    "value": "\"x\""
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

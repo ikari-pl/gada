@@ -1,0 +1,121 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "map_range.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "f",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "m",
+              "type": {
+                "kind": "MapType",
+                "key": {
+                  "kind": "StringType"
+                },
+                "value": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "total"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "0"
+                }
+              ]
+            },
+            {
+              "kind": "RangeStmt",
+              "keyName": "k",
+              "valueName": "v",
+              "define": true,
+              "x": {
+                "kind": "Ident",
+                "name": "m"
+              },
+              "body": [
+                {
+                  "kind": "Assign",
+                  "lhs": [
+                    {
+                      "kind": "Ident",
+                      "name": "_"
+                    }
+                  ],
+                  "define": false,
+                  "rhs": [
+                    {
+                      "kind": "Ident",
+                      "name": "k"
+                    }
+                  ]
+                },
+                {
+                  "kind": "Assign",
+                  "lhs": [
+                    {
+                      "kind": "Ident",
+                      "name": "total"
+                    }
+                  ],
+                  "define": false,
+                  "rhs": [
+                    {
+                      "kind": "BinOp",
+                      "op": "+",
+                      "x": {
+                        "kind": "Ident",
+                        "name": "total"
+                      },
+                      "y": {
+                        "kind": "Ident",
+                        "name": "v"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "Ident",
+                  "name": "total"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

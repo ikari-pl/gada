@@ -43,6 +43,9 @@ func TestCorpus(t *testing.T) {
 		// Phase 2 — slice fixtures (compiler-emit Item 6).
 		"slice_type_param.go", "slice_lit.go", "slice_index.go",
 		"slice_subslice.go", "slice_append.go", "slice_len_cap.go",
+		// Phase 2 — map fixtures (compiler-emit Item 7).
+		"map_type_param.go", "map_lit.go", "map_index.go",
+		"map_insert.go", "map_range.go", "map_delete.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -154,16 +157,28 @@ func f() { _ = 1i }`, "literal kind"},
 func g() int { return 0 }
 func f() { _ = g() }`, "general call-as-expression"},
 		{"struct composite lit on rhs", `package p
-func f() { _ = struct{}{} }`, "only []T"},
-		{"map composite lit on rhs", `package p
-func f() { _ = map[int]int{} }`, "only []T"},
+func f() { _ = struct{}{} }`, "only []T and map[K]V"},
 		{"fixed-size array composite", `package p
 func f() { _ = [3]int{1, 2, 3} }`, "fixed-size array composite"},
+		{"map lit bad key type", `package p
+func f() { _ = map[complex128]int{} }`, "unsupported type"},
+		{"map lit bad value type", `package p
+func f() { _ = map[int]complex128{} }`, "unsupported type"},
+		{"map lit non-keyed entry", `package p
+func f() { _ = map[int]int{1} }`, "K: V"},
+		{"map lit bad key expr", `package p
+func f() { _ = map[int]int{1i: 2} }`, "literal kind"},
+		{"map lit bad value expr", `package p
+func f() { _ = map[int]int{1: 1i} }`, "literal kind"},
 		// Types.
 		{"unsupported param type name", `package p
 func f(x complex128) {}`, "unsupported type"},
 		{"non-ident param type", `package p
-func f(x map[int]int) {}`, "unsupported type expr"},
+func f(x chan int) {}`, "unsupported type expr"},
+		{"map param bad key", `package p
+func f(x map[complex128]int) {}`, "unsupported type"},
+		{"map param bad value", `package p
+func f(x map[int]complex128) {}`, "unsupported type"},
 		{"unsupported result type", `package p
 func f() complex128 { return 0 }`, "unsupported type"},
 		{"fixed-size array param", `package p
@@ -227,6 +242,11 @@ func f() { for ; 1i; {} }`, "literal kind"},
 func f() { for ; ; x = 1i {} }`, "literal kind"},
 		{"for body err", `package p
 func f() { for { x++ } }`, "unsupported stmt"},
+		// Range-statement edge cases.
+		{"range x bad", `package p
+func f() { for k := range (1i) { _ = k } }`, "literal kind"},
+		{"range body err", `package p
+func f(m map[int]int) { for range m { x++ } }`, "unsupported stmt"},
 	}
 
 	for _, tc := range cases {

@@ -33,6 +33,7 @@ with Slices_Suite;
 with Defer_Suite;
 with Panic_Suite;
 with Maps_Suite;
+with Hash_Suite;
 with Stress_Gc_Suite;
 
 procedure Test_Runner is
@@ -57,6 +58,7 @@ procedure Test_Runner is
       or else Pkg = "core.defer"
       or else Pkg = "core.panic"
       or else Pkg = "core.maps"
+      or else Pkg = "core.hash"
       or else Pkg = "stress.gc");
 
    --  Suites under the `stress.*` namespace are *opt-in*: an
@@ -97,6 +99,9 @@ procedure Test_Runner is
       if Should_Register ("core.maps") then
          Add_Test (Result, new Maps_Suite.Maps_Test);
       end if;
+      if Should_Register ("core.hash") then
+         Add_Test (Result, new Hash_Suite.Hash_Test);
+      end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);
       end if;
@@ -113,7 +118,8 @@ begin
         (Ada.Text_IO.Standard_Error,
          "test_runner: unknown PKG filter '" & Selected_Pkg
          & "'. Known suites: core.io, core.memory, core.slices,"
-         & " core.defer, core.panic, core.maps, stress.gc.");
+         & " core.defer, core.panic, core.maps, core.hash,"
+         & " stress.gc.");
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
       return;
    end if;

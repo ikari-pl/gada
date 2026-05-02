@@ -105,8 +105,14 @@ exercising slices, maps, append, len, cap, defer, panic, recover.
 
 - [ ] **Compiler emission — map operations**
       *Files:* (see sub-items below)
-      *Verify:* `cd compiler && go test ./internal/emit/... -run Map && go test ./internal/translate/... -run Map && go test ./internal/ir/... -run Map`
+      *Verify:* `cd compiler && go test ./...` (covers ir/, translate/, emit/) and `make ci`.
       *Done when:* `map[K]V{}`, `m[k]` lookup, `m[k] = v` insert, `delete(m, k)`, and `for k, v := range m` all emit correctly; one runtime instantiation per `map[K]V` shape.
+
+  - [x] **(0) Runtime hash plug-ins — `Gada.Core.Hash`**
+        *Files:* `runtime/src/gada-core-hash.{ads,adb}`, `runtime/tests/hash_suite.{ads,adb}`, `runtime/tests/test_runner.adb`
+        *Verify:* `make -C runtime test PKG=core.hash`
+        *Done when:* `Hash_Integer`, `Hash_Boolean`, `Hash_Long_Float` all pluggable into the Maps generic's `Hash` formal; runtime/ 100% gate held.
+        *Done 2026-05-02:* Three primitive hash functions ship with the Knuth golden-ratio multiplicative constant (`Fibonacci_Constant = 16#9E37_79B9_7F4A_7C15#`) exposed publicly so user-defined hashes can match the same distribution. `Hash_Integer` is `Unsigned_64 (K) * Fibonacci_Constant`; `Hash_Boolean` lifts via `Boolean'Pos` then multiplies; `Hash_Long_Float` reinterprets the IEEE-754 64-bit image via `Ada.Unchecked_Conversion` then multiplies. Cannot be `pragma Pure` because parent `Gada.Core` is not pure (Ada's "pure unit cannot depend on non-pure unit" rule); the per-function side-effect-freeness still holds in practice. AUnit suite (`hash_suite`) runs 5 tests covering distinctness, determinism, the False=0 / True=Fibonacci_Constant invariants, and the published-constant value. Coverage on `runtime/src/gada-core-hash.adb`: 100% (held at 350/350 lines runtime-wide across 9 files).
 
   - [ ] **(a) IR additions — MapType, MapLit, MapEntry, RangeStmt**
         *Files:* `compiler/internal/ir/ir.go`, `compiler/internal/ir/ir_test.go`

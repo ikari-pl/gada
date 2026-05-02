@@ -91,6 +91,22 @@ package body Gada.Core.Slices is
       return S;
    end Make_Slice;
 
+   function From_Array (Items : Element_Array) return Slice is
+      Result : Slice;
+   begin
+      Allocate_Backing (Result, Items'Length);
+      Result.Length := Items'Length;
+      if Items'Length > 0 then
+         declare
+            A : Element_Array (1 .. Items'Length)
+              with Address => Result.Buf, Import => True;
+         begin
+            A := Items;
+         end;
+      end if;
+      return Result;
+   end From_Array;
+
    ---------------------------------------------------------------
    --  Inspection
    ---------------------------------------------------------------
@@ -104,7 +120,6 @@ package body Gada.Core.Slices is
 
    function Element (S : Slice; Index : Positive) return Element_Type
    is
-      type Element_Array is array (Positive range <>) of Element_Type;
       A : Element_Array (1 .. S.Capacity)
         with Address => S.Buf, Import => True;
    begin
@@ -114,7 +129,6 @@ package body Gada.Core.Slices is
    procedure Set_Element
      (S : Slice; Index : Positive; Value : Element_Type)
    is
-      type Element_Array is array (Positive range <>) of Element_Type;
       A : Element_Array (1 .. S.Capacity)
         with Address => S.Buf, Import => True;
    begin

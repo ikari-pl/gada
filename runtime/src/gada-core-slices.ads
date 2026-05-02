@@ -61,11 +61,30 @@ package Gada.Core.Slices is
    --  Construction
    ---------------------------------------------------------------
 
+   --  Element_Array — public unconstrained array type so users
+   --  (chiefly the compiler-emit layer for Phase 2's slice composite
+   --  literals, `[]T{e1, e2, ...}`) can pass a literal aggregate
+   --  through `From_Array`. Layout-compatible with the same anonymous
+   --  array types declared inside Element / Set_Element / Append at
+   --  the address-overlay sites.
+   type Element_Array is array (Positive range <>) of Element_Type;
+
    --  Make_Slice (N) — Go's `make([]T, N)`. Length == Capacity == N,
    --  all elements zero-initialised by libgc.
    function Make_Slice (Length : Natural) return Slice
      with Post => Len (Make_Slice'Result) = Length
                   and then Cap (Make_Slice'Result) = Length;
+
+   --  From_Array — the single-call constructor the compiler-emit layer
+   --  uses for `[]T{e1, e2, ...}`. Length == Capacity == Items'Length;
+   --  the resulting slice owns fresh backing populated by an unchecked
+   --  whole-array assignment through the address overlay (memcpy at
+   --  -O2 for trivially-copyable element types, element-wise Adjust
+   --  for controlled element types). The caller's Items array is not
+   --  retained by reference.
+   function From_Array (Items : Element_Array) return Slice
+     with Post => Len (From_Array'Result) = Items'Length
+                  and then Cap (From_Array'Result) = Items'Length;
 
    --  Make_Slice (N, Cap) — Go's `make([]T, N, Cap)`. Backing of
    --  Cap elements; first N visible.

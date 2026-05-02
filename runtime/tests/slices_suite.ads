@@ -46,5 +46,11 @@ package Slices_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Traced_Allocator_Path
      (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_From_Array_Round_Trip
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_From_Array_Empty
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_From_Array_Independent_Of_Source
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Slices_Suite;

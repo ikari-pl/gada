@@ -70,6 +70,15 @@ package body Slices_Suite is
       Register_Routine
         (T, Test_Traced_Allocator_Path'Access,
          "Element_Is_Atomic = False allocates via traced path");
+      Register_Routine
+        (T, Test_From_Array_Round_Trip'Access,
+         "From_Array round-trips element values");
+      Register_Routine
+        (T, Test_From_Array_Empty'Access,
+         "From_Array on empty array yields zero-cap slice");
+      Register_Routine
+        (T, Test_From_Array_Independent_Of_Source'Access,
+         "From_Array does not retain caller's array by reference");
    end Register_Tests;
 
    ---------------------------------------------------------------
@@ -279,5 +288,48 @@ package body Slices_Suite is
       Assert (Traced_Int_Slices.Element (S, 3) = 33,
               "S[3] should be 33");
    end Test_Traced_Allocator_Path;
+
+   procedure Test_From_Array_Round_Trip
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Items : constant Int_Slices.Element_Array := [10, 20, 30, 40];
+      S     : constant Int_Slices.Slice := Int_Slices.From_Array (Items);
+   begin
+      Assert (Int_Slices.Len (S) = 4, "Length should be 4");
+      Assert (Int_Slices.Cap (S) = 4, "Capacity should be 4");
+      Assert (Int_Slices.Element (S, 1) = 10, "S[1] should be 10");
+      Assert (Int_Slices.Element (S, 2) = 20, "S[2] should be 20");
+      Assert (Int_Slices.Element (S, 3) = 30, "S[3] should be 30");
+      Assert (Int_Slices.Element (S, 4) = 40, "S[4] should be 40");
+   end Test_From_Array_Round_Trip;
+
+   procedure Test_From_Array_Empty
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Items : constant Int_Slices.Element_Array (1 .. 0) := [others => 0];
+      S     : constant Int_Slices.Slice := Int_Slices.From_Array (Items);
+   begin
+      Assert (Int_Slices.Len (S) = 0, "Empty From_Array → Length 0");
+      Assert (Int_Slices.Cap (S) = 0, "Empty From_Array → Cap 0");
+   end Test_From_Array_Empty;
+
+   procedure Test_From_Array_Independent_Of_Source
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Items : Int_Slices.Element_Array := [1, 2, 3];
+      S     : constant Int_Slices.Slice := Int_Slices.From_Array (Items);
+   begin
+      --  Mutate the caller's array; the slice must keep its own copy.
+      Items (1) := 99;
+      Items (2) := 99;
+      Items (3) := 99;
+      Assert (Int_Slices.Element (S, 1) = 1,
+              "S[1] should retain the original value, not follow Items");
+      Assert (Int_Slices.Element (S, 3) = 3,
+              "S[3] should retain the original value, not follow Items");
+   end Test_From_Array_Independent_Of_Source;
 
 end Slices_Suite;

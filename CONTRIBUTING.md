@@ -226,6 +226,10 @@ name) do **not** warrant an ADR — those go in code review.
   ([`tools/coverage_thresholds.toml`](tools/coverage_thresholds.toml)).
 - *What have we learned recently?* → `docs/journal/` carries the
   narrative entries.
+- *What architectural rough edges are we deliberately living with?* →
+  [`docs/imperfections.md`](docs/imperfections.md) — running list of
+  accepted trade-offs, mitigations, and enabling-work-for-future-phases
+  with the resolution criterion for each.
 
 If after all of that you are still stuck, open a draft PR with what
 you have and a short note describing what you tried. A blocked

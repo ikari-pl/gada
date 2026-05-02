@@ -9,6 +9,7 @@
 # Tooling state (oh-my-claudecode and similar local agents)
 .omc/
 .claude-mem/
+.claude/
 
 # Ada object/library/coverage build artifacts
 runtime/obj/

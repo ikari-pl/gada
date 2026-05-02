@@ -50,6 +50,27 @@ GADA_GC_LDFLAGS := $(shell pkg-config --libs bdw-gc 2>/dev/null)
 GADA_GC_CFLAGS  := $(shell pkg-config --cflags bdw-gc 2>/dev/null)
 export GADA_GC_LDFLAGS GADA_GC_CFLAGS
 
+# Target architecture for the libco vendor selection. v1's contracted
+# matrix is amd64 + aarch64 hosted (ADR-0007 §4); the gpr scenario
+# variable `ARCH` reads this env var via `external ("ARCH", ...)` and
+# excludes the wrong arch's .c file plus libco.c (the upstream
+# dispatcher we don't compile per ADR-0007 §5). Normalisation:
+#   uname -m       → ARCH
+#   x86_64         → amd64    (Linux/macOS Intel)
+#   amd64          → amd64    (FreeBSD)
+#   aarch64        → aarch64  (Linux ARM)
+#   arm64          → aarch64  (macOS Apple Silicon)
+# Anything else falls through to "amd64" so a fresh checkout on an
+# unrecognised host still attempts a build (and fails with a clear
+# wrong-arch link error rather than a silent gpr scenario crash).
+ARCH := $(shell uname -m | sed -e 's/x86_64/amd64/' \
+                              -e 's/arm64/aarch64/' \
+                              -e 's/i386/amd64/')
+ifeq ($(filter $(ARCH),amd64 aarch64),)
+    ARCH := amd64
+endif
+export ARCH
+
 test:
 	$(RUNTIME_DIR)/tests/run_tests.sh $(PKG)
 

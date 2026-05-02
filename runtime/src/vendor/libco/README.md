@@ -78,20 +78,26 @@ class of bug this exclusion list prevents.
 
 ## Per-architecture source selection
 
-`gada_core.gpr` selects exactly *one* of `amd64.c` / `aarch64.c`
-per build via a scenario variable so the wrong architecture's
-symbols cannot leak into the static archive. This is deliberately
-*not* the dispatcher pattern in `libco.c` (which `#include`s the
-arch source via `#ifdef`); the build system is the right layer to
-know the target arch (ADR-0007 §5).
+`gada_core.gpr` compiles exactly *one* of `amd64.c` / `aarch64.c`
+per build via the `ARCH` scenario variable (set by
+`runtime/Makefile` from `uname -m` and exported into the
+`external ("ARCH", ...)` call inside the gpr). The build system
+is the right layer to know the target arch (ADR-0007 §5).
 
-`libco.c` is included in the build but ends up empty after
-preprocessing on architectures we cover (the `#elif` cascade
-matches `amd64.c` or `aarch64.c`, both of which we have, so the
-include resolves and produces no object code beyond what the
-arch file already produces). It is kept in the vendored set
-because removing it would be a per-file deviation from upstream
-that the bump workflow has to remember.
+`libco.c` (upstream's dispatcher) is **not compiled** — it is
+listed in `Excluded_Source_Files` for every supported arch.
+libco.c works by `#include`ing the per-arch source via an
+`#if defined(__amd64__)` cascade; if it were compiled it would
+produce a second translation unit defining the same `co_*`
+symbols the per-arch file already defines, breaking the link
+with duplicate-symbol errors.
+
+Why keep libco.c on disk if we never compile it? Because removing
+it would be a per-file deviation from upstream that the
+`vendor: bump libco` workflow would have to remember. Keeping the
+upstream tree as-is (and excluding at the build layer) means a
+bump is a verbatim copy plus a SHA edit — no diff against
+upstream beyond the README pin block.
 
 ## Reading the upstream
 

@@ -33,6 +33,7 @@ with Slices_Suite;
 with Defer_Suite;
 with Panic_Suite;
 with Maps_Suite;
+with Stress_Gc_Suite;
 
 procedure Test_Runner is
 
@@ -55,10 +56,20 @@ procedure Test_Runner is
       or else Pkg = "core.slices"
       or else Pkg = "core.defer"
       or else Pkg = "core.panic"
-      or else Pkg = "core.maps");
+      or else Pkg = "core.maps"
+      or else Pkg = "stress.gc");
+
+   --  Suites under the `stress.*` namespace are *opt-in*: an
+   --  unfiltered `make test` (the default `make ci` path) skips
+   --  them so the PR-time runtime stays bounded; `make test
+   --  PKG=stress.gc` runs them. The filter shape mirrors the
+   --  intent expressed in roadmap/02-core-runtime.md item 10.
+   function Is_Stress (Pkg : String) return Boolean is
+     (Pkg'Length >= 7 and then Pkg (Pkg'First .. Pkg'First + 6) = "stress.");
 
    function Should_Register (Pkg : String) return Boolean is
-     (Selected_Pkg = "" or else Selected_Pkg = Pkg);
+     (if Selected_Pkg = "" then not Is_Stress (Pkg)
+      else Selected_Pkg = Pkg);
 
    function Gada_Suite return Access_Test_Suite;
    --  Aggregator returning every per-package suite shipped in this
@@ -86,6 +97,9 @@ procedure Test_Runner is
       if Should_Register ("core.maps") then
          Add_Test (Result, new Maps_Suite.Maps_Test);
       end if;
+      if Should_Register ("stress.gc") then
+         Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);
+      end if;
       return Result;
    end Gada_Suite;
 
@@ -99,7 +113,7 @@ begin
         (Ada.Text_IO.Standard_Error,
          "test_runner: unknown PKG filter '" & Selected_Pkg
          & "'. Known suites: core.io, core.memory, core.slices,"
-         & " core.defer, core.panic, core.maps.");
+         & " core.defer, core.panic, core.maps, stress.gc.");
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
       return;
    end if;

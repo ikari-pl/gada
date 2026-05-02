@@ -157,6 +157,16 @@ jobs:
       - name: Run make ci
         run: make ci
 
+      # The `stress.gc` suite is *opt-in* per
+      # `runtime/tests/test_runner.adb`'s registration filter: an
+      # unfiltered `make test` (which `make ci` runs) skips it so
+      # PR-time wall-clock stays bounded. CI wires it as a separate
+      # step here so the GC stress contract from
+      # roadmap/02-core-runtime.md item 10 ("5M × 64 B atomic allocs
+      # keep Heap_Size < 200 MB") is enforced on every push.
+      - name: Run runtime stress.gc suite
+        run: make -C runtime test PKG=stress.gc
+
       - name: Upload coverage artifact
         # Always upload even on failure; partial coverage output is useful
         # when diagnosing why the gate or a test failed. `if-no-files-found:

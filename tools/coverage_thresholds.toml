@@ -16,6 +16,16 @@
 #   - >= 90% for compiler/ packages
 #   - >= 95% for AST emission and translation layers
 # Update this file (and AGENTS.md alongside) if those numbers change.
+#
+# Per-file line exclusions: `[[exclude]]` entries name a single file
+# plus a list of line numbers that the gate should drop from BOTH the
+# numerator and denominator before computing per-threshold percentages.
+# This is the documented escape valve from AGENTS.md ("Deviations are
+# documented per package in `runtime/<package>/COVERAGE.md` with
+# rationale and an explicit reviewer-approved exception"). Use sparingly
+# and *only* for code that is genuinely untestable in CI (e.g. malloc
+# OOM paths under overcommit-on Linux). Each entry MUST point at the
+# package's COVERAGE.md so a future reader can audit the rationale.
 
 [[threshold]]
 path = "runtime/"
@@ -32,3 +42,9 @@ minimum_lines_pct = 95.0
 [[threshold]]
 path = "compiler/"
 minimum_lines_pct = 90.0
+
+# --- per-file exclusions ---------------------------------------------------
+#
+# (No entries yet. Add `[[exclude]]` blocks here when, and only when, a
+# code path is genuinely untestable in CI — see the schema description
+# at the top of this file.)

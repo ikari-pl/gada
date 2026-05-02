@@ -170,11 +170,18 @@ def parse_go_profile(path: str) -> dict[str, tuple[int, int]]:
 
 
 # --- lcov parser ------------------------------------------------------------
-# Only SF (file), LH (lines hit), LF (lines found), and end_of_record are
-# needed; lcov already aggregates the DA: lines into LH/LF for us.
-def parse_lcov(path: str) -> dict[str, tuple[int, int]]:
+# Parses DA: records explicitly so we can apply per-file line exclusions
+# (the documented escape valve in coverage_thresholds.toml's [[exclude]]
+# section) before aggregating into the (LH, LF) summary that the gate
+# scores against. lcov's own LH/LF totals don't honour the exclusions
+# because the lcov 2.x `--filter region` pipeline relies on source-side
+# LCOV_EXCL_* markers, which need source readability and a specific
+# capture-time configuration we deliberately keep out of the build path.
+def parse_lcov(path: str, exclusions: dict[str, set[int]]) -> dict[str, tuple[int, int]]:
     per_file: dict[str, tuple[int, int]] = {}
     cur_file: str | None = None
+    cur_rel: str | None = None
+    cur_excl: set[int] = set()
     cur_lh = 0
     cur_lf = 0
     root_str = str(ROOT)
@@ -183,18 +190,33 @@ def parse_lcov(path: str) -> dict[str, tuple[int, int]]:
             line = raw.rstrip('\r\n')
             if line.startswith('SF:'):
                 cur_file = line[3:]
+                cur_rel = cur_file
+                if cur_rel.startswith(root_str + os.sep):
+                    cur_rel = cur_rel[len(root_str) + 1:]
+                cur_excl = exclusions.get(cur_rel, set())
                 cur_lh = cur_lf = 0
-            elif line.startswith('LF:'):
-                cur_lf = int(line[3:])
-            elif line.startswith('LH:'):
-                cur_lh = int(line[3:])
+            elif line.startswith('DA:'):
+                # DA:<line>,<count>[,<checksum>]
+                payload = line[3:]
+                parts = payload.split(',')
+                if len(parts) < 2:
+                    continue
+                try:
+                    ln = int(parts[0])
+                    cnt = int(parts[1])
+                except ValueError:
+                    continue
+                if ln in cur_excl:
+                    continue  # silently drop excluded line
+                cur_lf += 1
+                if cnt > 0:
+                    cur_lh += 1
             elif line == 'end_of_record':
-                if cur_file is not None:
-                    rel = cur_file
-                    if rel.startswith(root_str + os.sep):
-                        rel = rel[len(root_str) + 1:]
-                    per_file[rel] = (cur_lh, cur_lf)
+                if cur_rel is not None:
+                    per_file[cur_rel] = (cur_lh, cur_lf)
                 cur_file = None
+                cur_rel = None
+                cur_excl = set()
                 cur_lh = cur_lf = 0
     return per_file
 
@@ -207,6 +229,20 @@ if not thresholds:
     print(f"ERROR: no [[threshold]] entries in {CONFIG}", file=sys.stderr)
     sys.exit(127)
 
+# [[exclude]] entries: per-file line numbers the gate should drop from
+# both numerator and denominator. The TOML schema is a list of tables
+# with `file = "<repo-relative path>"` + `lines = [<int>, ...]`. Multiple
+# entries for the same file accumulate (so reviewers can group exclusions
+# by reason without re-listing the file).
+exclusions: dict[str, set[int]] = {}
+for ex in cfg.get('exclude', []):
+    f = ex.get('file')
+    lines = ex.get('lines', [])
+    if not f or not isinstance(lines, list):
+        print(f"ERROR: malformed [[exclude]] entry in {CONFIG}: {ex}", file=sys.stderr)
+        sys.exit(127)
+    exclusions.setdefault(f, set()).update(int(n) for n in lines)
+
 per_file: dict[str, tuple[int, int]] = {}
 if GO_PROFILE:
     per_file.update(parse_go_profile(GO_PROFILE))
@@ -215,7 +251,7 @@ if LCOV:
     # is the authoritative Ada coverage source (Go cover profile never
     # touches Ada files, so there's no actual collision here, but be
     # explicit so a future cross-build can't regress this silently).
-    per_file.update(parse_lcov(LCOV))
+    per_file.update(parse_lcov(LCOV, exclusions))
 
 print(f"=== coverage gate: {len(thresholds)} thresholds, {len(per_file)} files ===")
 for f in sorted(per_file):

@@ -17,7 +17,7 @@
               "type": {
                 "kind": "MapType",
                 "key": {
-                  "kind": "StringType"
+                  "kind": "IntType"
                 },
                 "value": {
                   "kind": "IntType"
@@ -67,22 +67,6 @@
                   "lhs": [
                     {
                       "kind": "Ident",
-                      "name": "_"
-                    }
-                  ],
-                  "define": false,
-                  "rhs": [
-                    {
-                      "kind": "Ident",
-                      "name": "k"
-                    }
-                  ]
-                },
-                {
-                  "kind": "Assign",
-                  "lhs": [
-                    {
-                      "kind": "Ident",
                       "name": "total"
                     }
                   ],
@@ -92,8 +76,16 @@
                       "kind": "BinOp",
                       "op": "+",
                       "x": {
-                        "kind": "Ident",
-                        "name": "total"
+                        "kind": "BinOp",
+                        "op": "+",
+                        "x": {
+                          "kind": "Ident",
+                          "name": "total"
+                        },
+                        "y": {
+                          "kind": "Ident",
+                          "name": "k"
+                        }
                       },
                       "y": {
                         "kind": "Ident",

@@ -88,7 +88,7 @@ func Package(p *ir.Package, w io.Writer) error {
 // level. Errors are sticky on err and silence further work via the
 // guards in emitStmt / emitExpr / etc.
 //
-// Phase 2 added two cross-cutting maps:
+// Phase 2 added these cross-cutting maps:
 //
 //   - sliceElems[k]  = first ir.Type seen with Ada base name k
 //     (e.g. "Integer" → *ir.IntType{}). Drives the
@@ -98,12 +98,20 @@ func Package(p *ir.Package, w io.Writer) error {
 //   - sliceElemOrder = insertion-ordered list of element-type keys,
 //     so the emitted Ada is deterministic regardless
 //     of map iteration order.
+//   - mapPairs[k]    = first *ir.MapType seen with canonical pair key
+//     k = "<KAdaName>_To_<VAdaName>". Drives the
+//     `package Maps_Of_<K>_To_<V> is new …` block
+//     emitted alongside the slice instantiations.
+//   - mapPairOrder   = insertion-ordered list of pair keys (stable
+//     output regardless of Go map iteration).
 //   - localTypes     = subprogram-local name → declared type. Built
 //     from the active function's params and from
 //     Define-true `:=` assigns at the head of its
 //     body. Read by IndexExpr / SliceExpr / the
-//     slice-typed BuiltinCalls (append/len/cap) so
-//     they can pick the right Slices_Of_<T> for
+//     slice-typed BuiltinCalls (append/len/cap) and
+//     by the map-side IndexExpr / range / delete /
+//     len so they can pick the right
+//     Slices_Of_<T> or Maps_Of_<K>_To_<V> for
 //     dispatch.
 type emitter struct {
 	pkgName string
@@ -115,7 +123,10 @@ type emitter struct {
 	needsCoreIO    bool
 	sliceElems     map[string]ir.Type
 	sliceElemOrder []string
+	mapPairs       map[string]*ir.MapType
+	mapPairOrder   []string
 	localTypes     map[string]ir.Type
+	rangeCounter   int
 	err            error
 }
 
@@ -124,6 +135,7 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		pkgName:    pkg,
 		file:       f,
 		sliceElems: map[string]ir.Type{},
+		mapPairs:   map[string]*ir.MapType{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
@@ -160,9 +172,30 @@ func (e *emitter) recordTypeInTree(t ir.Type) {
 	if t == nil {
 		return
 	}
-	if st, ok := t.(*ir.SliceType); ok {
-		e.recordSliceElem(st.Elem)
-		e.recordTypeInTree(st.Elem)
+	switch t := t.(type) {
+	case *ir.SliceType:
+		e.recordSliceElem(t.Elem)
+		e.recordTypeInTree(t.Elem)
+	case *ir.MapType:
+		e.recordMapPair(t)
+		e.recordTypeInTree(t.Key)
+		e.recordTypeInTree(t.Value)
+	}
+}
+
+// recordMapPair adds m to mapPairs/mapPairOrder if its (K, V) shape
+// is fresh. The canonical key is "<KName>_To_<VName>", computed from
+// elemBaseName so unsupported key/value types fail fast at the
+// pre-scan rather than deep inside per-call dispatch.
+func (e *emitter) recordMapPair(m *ir.MapType) {
+	key, err := mapPairKey(m)
+	if err != nil {
+		e.fail(err)
+		return
+	}
+	if _, present := e.mapPairs[key]; !present {
+		e.mapPairs[key] = m
+		e.mapPairOrder = append(e.mapPairOrder, key)
 	}
 }
 
@@ -223,6 +256,9 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 		for _, x := range s.Args {
 			e.walkExpr(x)
 		}
+	case *ir.RangeStmt:
+		e.walkExpr(s.X)
+		e.walkStmts(s.Body)
 	case nil:
 		// optional Init/Post on bare for {}.
 	}
@@ -235,6 +271,14 @@ func (e *emitter) walkExpr(x ir.Expr) {
 		e.recordTypeInTree(x.Elem)
 		for _, el := range x.Elems {
 			e.walkExpr(el)
+		}
+	case *ir.MapLit:
+		e.recordMapPair(&ir.MapType{Key: x.Key, Value: x.Value})
+		e.recordTypeInTree(x.Key)
+		e.recordTypeInTree(x.Value)
+		for _, ent := range x.Entries {
+			e.walkExpr(ent.Key)
+			e.walkExpr(ent.Value)
 		}
 	case *ir.IndexExpr:
 		e.walkExpr(x.X)
@@ -264,7 +308,11 @@ func (e *emitter) run() error {
 	if len(e.sliceElemOrder) > 0 {
 		e.println("with Gada.Core.Slices;")
 	}
-	if e.needsCoreIO || len(e.sliceElemOrder) > 0 {
+	if len(e.mapPairOrder) > 0 {
+		e.println("with Gada.Core.Maps;")
+		e.println("with Gada.Core.Hash;")
+	}
+	if e.needsCoreIO || len(e.sliceElemOrder) > 0 || len(e.mapPairOrder) > 0 {
 		e.println("")
 	}
 	if e.pkgName == "main" {
@@ -290,6 +338,122 @@ func (e *emitter) emitSliceInstantiations() {
 		e.println("package Slices_Of_" + k +
 			" is new Gada.Core.Slices (Element_Type => " + k + ");")
 	}
+}
+
+// emitMapInstantiations writes one
+// `package Maps_Of_<K>_To_<V> is new Gada.Core.Maps (...)` block per
+// distinct (K, V) pair collected by the pre-scan. The Hash formal is
+// the matching Gada.Core.Hash plug-in; the Default_Value matches
+// Go's zero value for V (0 / False / 0.0). The "=" formal binds to
+// the predefined operator by default — overridden only when V grows
+// to user-defined types in a later phase.
+func (e *emitter) emitMapInstantiations() {
+	for _, key := range e.mapPairOrder {
+		m := e.mapPairs[key]
+		kName, vName, hash, def := mapPairAdaParts(m)
+		// Multi-line aggregate is the showcase form: one parameter
+		// per line, aligned column for the "=>" — reads like the
+		// runtime spec it instantiates.
+		e.println("package Maps_Of_" + key + " is new Gada.Core.Maps")
+		e.println("  (Key_Type      => " + kName + ",")
+		e.println("   Value_Type    => " + vName + ",")
+		e.println("   Hash          => " + hash + ",")
+		e.println("   Default_Value => " + def + ");")
+	}
+}
+
+// mapPairKey returns the canonical "<KName>_To_<VName>" suffix used
+// for the Maps_Of_… package instantiation. Both K and V must be
+// supported map-key/value base types (Phase 2 = Integer, Boolean,
+// Long_Float). String requires Unbounded_String wrapping and
+// SipHash-1-3, both deferred to Phase 4 — `docs/imperfections.md`
+// tracks the lift.
+func mapPairKey(m *ir.MapType) (string, error) {
+	kName, err := mapKeyBaseName(m.Key)
+	if err != nil {
+		return "", err
+	}
+	vName, err := mapValueBaseName(m.Value)
+	if err != nil {
+		return "", err
+	}
+	return kName + "_To_" + vName, nil
+}
+
+// mapPairAdaParts returns (K, V, Hash, Default_Value) Ada strings for
+// m's (K, V) pair. Pre-validated: the caller has already accepted
+// the pair via recordMapPair, so this only covers the
+// Phase-2-supported types.
+func mapPairAdaParts(m *ir.MapType) (string, string, string, string) {
+	kName, _ := mapKeyBaseName(m.Key)
+	vName, _ := mapValueBaseName(m.Value)
+	return kName, vName,
+		"Gada.Core.Hash.Hash_" + kName,
+		mapDefaultLiteral(m.Value)
+}
+
+// mapKeyBaseName accepts only types whose hash plug-in already ships
+// in Gada.Core.Hash. String keys await Phase 4's SipHash-1-3 plus
+// Unbounded_String wrapping.
+func mapKeyBaseName(t ir.Type) (string, error) {
+	switch t.(type) {
+	case *ir.IntType:
+		return "Integer", nil
+	case *ir.BoolType:
+		return "Boolean", nil
+	case *ir.Float64Type:
+		return "Long_Float", nil
+	case *ir.StringType:
+		return "", fmt.Errorf("emit: map keys of type string await Phase 4 (SipHash-1-3 + Unbounded_String)")
+	}
+	return "", fmt.Errorf("emit: unsupported map key type %T", t)
+}
+
+// mapValueBaseName accepts the same set as keys: the runtime's
+// Value_Type generic formal is `is private` and so must be definite,
+// which String is not. Once Unbounded_String wrapping lands the
+// restriction lifts to "any definite Ada type".
+func mapValueBaseName(t ir.Type) (string, error) {
+	switch t.(type) {
+	case *ir.IntType:
+		return "Integer", nil
+	case *ir.BoolType:
+		return "Boolean", nil
+	case *ir.Float64Type:
+		return "Long_Float", nil
+	case *ir.StringType:
+		return "", fmt.Errorf("emit: map values of type string await Phase 4 (Unbounded_String wrapping)")
+	}
+	return "", fmt.Errorf("emit: unsupported map value type %T", t)
+}
+
+// mapDefaultLiteral returns the Ada literal for Go's zero value of
+// V. Used as the runtime generic's Default_Value formal so a `Get`
+// on an absent key returns the matching zero (Go semantics).
+func mapDefaultLiteral(v ir.Type) string {
+	switch v.(type) {
+	case *ir.IntType:
+		return "0"
+	case *ir.BoolType:
+		return "False"
+	case *ir.Float64Type:
+		return "0.0"
+	}
+	// recordMapPair has already filtered unsupported value types via
+	// mapValueBaseName, so this is unreachable on a well-formed run.
+	return "0"
+}
+
+// mapPkgFor returns the "Maps_Of_K_To_V" prefix for a known map
+// type. The MapType has already been validated by mapPairKey at
+// pre-scan time, so any error here would indicate a programming
+// bug — bubble it back so the test surface flags it.
+func mapPkgFor(m *ir.MapType) (string, error) {
+	key, err := mapPairKey(m)
+	if err != nil {
+		return "", err
+	}
+	return "Maps_Of_" + key, nil
 }
 
 // elemBaseName maps a slice-element IR type to its Ada base name —
@@ -393,7 +557,8 @@ func (e *emitter) emitMainProcedure() {
 	}
 
 	hasSlices := len(e.sliceElemOrder) > 0
-	hasDeclSection := hasSlices || len(others) > 0 || len(mainDecls) > 0
+	hasMaps := len(e.mapPairOrder) > 0
+	hasDeclSection := hasSlices || hasMaps || len(others) > 0 || len(mainDecls) > 0
 
 	e.println("procedure Main is")
 	if hasDeclSection {
@@ -404,7 +569,13 @@ func (e *emitter) emitMainProcedure() {
 	if hasSlices {
 		e.emitSliceInstantiations()
 	}
-	if hasSlices && (len(others) > 0 || len(mainDecls) > 0) {
+	if hasSlices && hasMaps {
+		e.println("")
+	}
+	if hasMaps {
+		e.emitMapInstantiations()
+	}
+	if (hasSlices || hasMaps) && (len(others) > 0 || len(mainDecls) > 0) {
 		e.println("")
 	}
 	for i, fn := range others {
@@ -457,9 +628,10 @@ func (e *emitter) emitPackageBody() {
 	}
 
 	hasSlices := len(e.sliceElemOrder) > 0
+	hasMaps := len(e.mapPairOrder) > 0
 
 	e.println("package body " + pkg + " is")
-	if hasSlices || len(fns) > 0 {
+	if hasSlices || hasMaps || len(fns) > 0 {
 		e.println("")
 	}
 
@@ -467,7 +639,13 @@ func (e *emitter) emitPackageBody() {
 	if hasSlices {
 		e.emitSliceInstantiations()
 	}
-	if hasSlices && len(fns) > 0 {
+	if hasSlices && hasMaps {
+		e.println("")
+	}
+	if hasMaps {
+		e.emitMapInstantiations()
+	}
+	if (hasSlices || hasMaps) && len(fns) > 0 {
 		e.println("")
 	}
 	for i, fn := range fns {
@@ -478,7 +656,7 @@ func (e *emitter) emitPackageBody() {
 	}
 	e.indent--
 
-	if hasSlices || len(fns) > 0 {
+	if hasSlices || hasMaps || len(fns) > 0 {
 		e.println("")
 	}
 	e.println("end " + pkg + ";")
@@ -535,6 +713,8 @@ func inferRHSType(x ir.Expr) (ir.Type, bool) {
 		}
 	case *ir.SliceLit:
 		return &ir.SliceType{Elem: x.Elem}, true
+	case *ir.MapLit:
+		return &ir.MapType{Key: x.Key, Value: x.Value}, true
 	}
 	return nil, false
 }
@@ -675,6 +855,12 @@ func inferDeclType(x ir.Expr) (string, error) {
 			return "", err
 		}
 		return pkg + ".Slice", nil
+	case *ir.MapLit:
+		pkg, err := mapPkgFor(&ir.MapType{Key: x.Key, Value: x.Value})
+		if err != nil {
+			return "", err
+		}
+		return pkg + ".Map", nil
 	}
 	return "", fmt.Errorf("emit: := requires a literal or composite RHS, got %T", x)
 }
@@ -698,8 +884,29 @@ func (e *emitter) emitStmt(s ir.Stmt) {
 		e.emitCallStmt(s)
 	case *ir.ExprStmt:
 		e.emitExprStmt(s)
+	case *ir.BuiltinCall:
+		e.emitBuiltinStmt(s)
+	case *ir.RangeStmt:
+		e.emitRangeStmt(s)
 	default:
 		e.fail(fmt.Errorf("emit: unsupported stmt %T", s))
+	}
+}
+
+// emitBuiltinStmt handles statement-position BuiltinCalls. The only
+// stmt-position cases Phase 2 emits are `delete(m, k)` (side-effecting
+// map mutation) and `panic(x)` (deferred to Item 8). Anything else
+// falls through to the expression dispatch followed by a semicolon.
+func (e *emitter) emitBuiltinStmt(b *ir.BuiltinCall) {
+	switch b.Name {
+	case "delete":
+		expr := e.emitMapBuiltin(b)
+		if expr == "" {
+			return
+		}
+		e.println(expr + ";")
+	default:
+		e.fail(fmt.Errorf("emit: builtin %q at statement position not supported in Phase 2", b.Name))
 	}
 }
 
@@ -711,6 +918,19 @@ func (e *emitter) emitAssign(a *ir.Assign) {
 	if len(a.LHS) != 1 || len(a.RHS) != 1 {
 		e.fail(fmt.Errorf("emit: multi-value assignment not supported in Phase 1"))
 		return
+	}
+	// Special case: `m[k] = v` on a map type lowers to a runtime
+	// `Insert (M, K, V)` call rather than a `:=` assignment to a
+	// non-existent l-value. The map's `Get` always returns by-value;
+	// you can't assign to it.
+	if ix, ok := a.LHS[0].(*ir.IndexExpr); ok {
+		if pkg, ok := e.mapPkgForExpr(ix.X); ok {
+			m := e.emitExpr(ix.X)
+			k := e.emitExpr(ix.Index)
+			v := e.emitExpr(a.RHS[0])
+			e.println(pkg + ".Insert (" + m + ", " + k + ", " + v + ");")
+			return
+		}
 	}
 	lhs := e.emitExpr(a.LHS[0])
 	rhs := e.emitExpr(a.RHS[0])
@@ -808,6 +1028,106 @@ func (e *emitter) emitFor(f *ir.For) {
 	e.fail(fmt.Errorf("emit: only trivial integer for-loops and bare for {} are supported in Phase 1"))
 }
 
+// emitRangeStmt lowers `for k, v := range m` over a map to the
+// runtime cursor protocol:
+//
+//	declare
+//	   C : Maps_Of_<K>_To_<V>.Cursor := Maps_Of_<K>_To_<V>.First (M);
+//	begin
+//	   while Maps_Of_<K>_To_<V>.Has_Element (M, C) loop
+//	      declare
+//	         <k> : <K> := Maps_Of_<K>_To_<V>.Key   (M, C);
+//	         <v> : <V> := Maps_Of_<K>_To_<V>.Value (M, C);
+//	      begin
+//	         <body>;
+//	      end;
+//	      C := Maps_Of_<K>_To_<V>.Next (M, C);
+//	   end loop;
+//	end;
+//
+// The outer declare scopes the cursor; the inner declare scopes the
+// rebound k/v so the loop body sees fresh bindings each iteration
+// (matching Go's `for k, v := range` rebind semantics). When KeyName
+// or ValueName is empty (Go's blank identifier or absent), the
+// corresponding inner decl is omitted.
+//
+// Range over slices is *not* yet supported — Phase 2 only lifts the
+// map shape because the slice path needs distinct integer-index
+// machinery. Range-over-int (`for i := range n`) and range-over-
+// channel arrive in their respective phases.
+func (e *emitter) emitRangeStmt(s *ir.RangeStmt) {
+	pkg, ok := e.mapPkgForExpr(s.X)
+	if !ok {
+		e.fail(fmt.Errorf("emit: range supports only map values in Phase 2 (got non-Ident or non-map type)"))
+		return
+	}
+	m := e.emitExpr(s.X)
+
+	mt, ok := e.localTypes[s.X.(*ir.Ident).Name].(*ir.MapType)
+	if !ok {
+		// Should be impossible if mapPkgForExpr returned true, but
+		// guard anyway so a future refactor doesn't strand a nil deref.
+		e.fail(fmt.Errorf("emit: internal — range X resolved to non-MapType"))
+		return
+	}
+	kAdaName, _ := mapKeyBaseName(mt.Key)
+	vAdaName, _ := mapValueBaseName(mt.Value)
+
+	e.rangeCounter++
+	cur := fmt.Sprintf("Cursor_%d", e.rangeCounter)
+
+	// Register the loop-bound names in localTypes so any nested
+	// reference to k/v (e.g. `_ = k`, `total + v`) types correctly
+	// for downstream dispatch.
+	if s.KeyName != "" {
+		e.localTypes[s.KeyName] = mt.Key
+	}
+	if s.ValueName != "" {
+		e.localTypes[s.ValueName] = mt.Value
+	}
+
+	e.println("declare")
+	e.indent++
+	e.println(cur + " : " + pkg + ".Cursor := " + pkg + ".First (" + m + ");")
+	e.indent--
+	e.println("begin")
+	e.indent++
+	e.println("while " + pkg + ".Has_Element (" + m + ", " + cur + ") loop")
+	e.indent++
+	hasInnerDecls := s.KeyName != "" || s.ValueName != ""
+	if hasInnerDecls {
+		e.println("declare")
+		e.indent++
+		if s.KeyName != "" {
+			e.println(adaIdent(s.KeyName) + " : constant " + kAdaName +
+				" := " + pkg + ".Key (" + m + ", " + cur + ");")
+		}
+		if s.ValueName != "" {
+			e.println(adaIdent(s.ValueName) + " : constant " + vAdaName +
+				" := " + pkg + ".Value (" + m + ", " + cur + ");")
+		}
+		e.indent--
+		e.println("begin")
+		e.indent++
+	}
+	if len(s.Body) == 0 {
+		e.println("null;")
+	} else {
+		for _, st := range s.Body {
+			e.emitStmt(st)
+		}
+	}
+	if hasInnerDecls {
+		e.indent--
+		e.println("end;")
+	}
+	e.println(cur + " := " + pkg + ".Next (" + m + ", " + cur + ");")
+	e.indent--
+	e.println("end loop;")
+	e.indent--
+	e.println("end;")
+}
+
 // matchTrivialFor recognises the `for V := <start>; V < <end>; V = V
 // + 1 { ... }` shape and returns its components. Anything else
 // returns ok=false so the caller can fall back to an error.
@@ -893,6 +1213,8 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		return e.emitSelector(x)
 	case *ir.SliceLit:
 		return e.emitSliceLit(x)
+	case *ir.MapLit:
+		return e.emitMapLit(x)
 	case *ir.IndexExpr:
 		return e.emitIndexExpr(x)
 	case *ir.SliceExpr:
@@ -924,18 +1246,48 @@ func (e *emitter) emitSliceLit(s *ir.SliceLit) string {
 }
 
 // emitIndexExpr dispatches `s[i]` (slice) to
-// `Slices_Of_<T>.Element (S, I + 1)`. Index translation is always
-// "Go 0-based + 1" because the runtime's slice spec is 1-based; for
-// constant `0` GNAT folds the +1 to a literal `1` at -O2.
+// `Slices_Of_<T>.Element (S, I + 1)` and `m[k]` (map) to
+// `Maps_Of_<K>_To_<V>.Get (M, K)`. The slice path translates Go's
+// 0-based index to Ada's 1-based via a `+ 1` that GNAT folds to a
+// literal at -O2 for constants. The map path is index-equivalent —
+// no offset — and returns Default_Value if K is absent (Go zero-
+// value semantics).
 func (e *emitter) emitIndexExpr(ix *ir.IndexExpr) string {
-	pkg, ok := e.slicePkgForExpr(ix.X)
-	if !ok {
-		e.fail(fmt.Errorf("emit: cannot determine slice instantiation for index expr (Phase 2 supports only Ident-of-known-slice-type)"))
+	if pkg, ok := e.slicePkgForExpr(ix.X); ok {
+		x := e.emitExpr(ix.X)
+		idx := e.emitExpr(ix.Index)
+		return pkg + ".Element (" + x + ", " + idx + " + 1)"
+	}
+	if pkg, ok := e.mapPkgForExpr(ix.X); ok {
+		x := e.emitExpr(ix.X)
+		idx := e.emitExpr(ix.Index)
+		return pkg + ".Get (" + x + ", " + idx + ")"
+	}
+	e.fail(fmt.Errorf("emit: cannot determine slice/map instantiation for index expr (Phase 2 supports only Ident-of-known-slice-or-map-type)"))
+	return ""
+}
+
+// emitMapLit dispatches `map[K]V{k1: v1, k2: v2}` to
+// `Maps_Of_<K>_To_<V>.From_Pairs ([(K => k1, V => v1), ...])` and
+// the empty-literal form `map[K]V{}` to `Maps_Of_<K>_To_<V>.Make_Map`.
+// Make_Map keeps capacity at 0 (deferred allocation) so an empty map
+// stays heap-clean until a first insert; From_Pairs pre-sizes to
+// Items'Length, saving rehashes on bulk init.
+func (e *emitter) emitMapLit(m *ir.MapLit) string {
+	pkg, err := mapPkgFor(&ir.MapType{Key: m.Key, Value: m.Value})
+	if err != nil {
+		e.fail(err)
 		return ""
 	}
-	x := e.emitExpr(ix.X)
-	idx := e.emitExpr(ix.Index)
-	return pkg + ".Element (" + x + ", " + idx + " + 1)"
+	if len(m.Entries) == 0 {
+		return pkg + ".Make_Map"
+	}
+	parts := make([]string, 0, len(m.Entries))
+	for _, ent := range m.Entries {
+		parts = append(parts,
+			"(K => "+e.emitExpr(ent.Key)+", V => "+e.emitExpr(ent.Value)+")")
+	}
+	return pkg + ".From_Pairs ([" + strings.Join(parts, ", ") + "])"
 }
 
 // emitSliceExpr dispatches `s[lo:hi]` (and the elided forms) to
@@ -964,15 +1316,60 @@ func (e *emitter) emitSliceExpr(s *ir.SliceExpr) string {
 }
 
 // emitBuiltinCall dispatches the closed Phase 2 set of Go predeclared
-// functions to their Slices_Of_<T> equivalents. Phase 7 (maps) and
-// Phase 8 (defer/panic/recover) extend the dispatch below as their
-// runtime layers ship.
+// functions to their Slices_Of_<T> / Maps_Of_<K>_To_<V> equivalents.
+// `len` is polymorphic between slice and map; the dispatch peeks at
+// the first arg's resolved type to decide.
 func (e *emitter) emitBuiltinCall(b *ir.BuiltinCall) string {
 	switch b.Name {
-	case "append", "len", "cap":
+	case "append", "cap":
 		return e.emitSliceBuiltin(b)
+	case "len":
+		if len(b.Args) == 1 {
+			if _, ok := e.mapPkgForExpr(b.Args[0]); ok {
+				return e.emitMapBuiltin(b)
+			}
+		}
+		return e.emitSliceBuiltin(b)
+	case "delete":
+		return e.emitMapBuiltin(b)
 	}
 	e.fail(fmt.Errorf("emit: builtin %q not supported in Phase 2", b.Name))
+	return ""
+}
+
+// emitMapBuiltin dispatches `len(m)` and `delete(m, k)`. `delete`
+// also has a statement-position emit path in emitMapBuiltinStmt so
+// the side-effecting semicolon-terminated form lands correctly when
+// it appears inside a statement context (the IR carries it as a
+// stmt-position BuiltinCall).
+func (e *emitter) emitMapBuiltin(b *ir.BuiltinCall) string {
+	if len(b.Args) < 1 {
+		e.fail(fmt.Errorf("emit: builtin %q requires at least 1 arg", b.Name))
+		return ""
+	}
+	pkg, ok := e.mapPkgForExpr(b.Args[0])
+	if !ok {
+		e.fail(fmt.Errorf("emit: cannot determine map instantiation for %q (Phase 2 supports only Ident-of-known-map-type as the first arg)", b.Name))
+		return ""
+	}
+	switch b.Name {
+	case "len":
+		// emitBuiltinCall guarantees arity==1 before routing here, so
+		// no second arity check is needed.
+		return pkg + ".Length (" + e.emitExpr(b.Args[0]) + ")"
+	case "delete":
+		if len(b.Args) != 2 {
+			e.fail(fmt.Errorf("emit: delete takes exactly 2 args, got %d", len(b.Args)))
+			return ""
+		}
+		// Expression-position rendering. Statement position calls
+		// emitBuiltinStmt above, which adds the semicolon.
+		return pkg + ".Delete (" + e.emitExpr(b.Args[0]) + ", " + e.emitExpr(b.Args[1]) + ")"
+	}
+	// Unreachable: emitBuiltinCall only routes "len" or "delete" here.
+	// If a future caller widens the dispatch, the missing case shows up
+	// here as an explicit failure rather than silent miscoding.
+	e.fail(fmt.Errorf("emit: internal — emitMapBuiltin called with %q", b.Name))
 	return ""
 }
 
@@ -1028,6 +1425,30 @@ func (e *emitter) slicePkgForExpr(x ir.Expr) (string, bool) {
 		return "", false
 	}
 	pkg, err := slicePkgFor(st.Elem)
+	if err != nil {
+		return "", false
+	}
+	return pkg, true
+}
+
+// mapPkgForExpr returns the Maps_Of_<K>_To_<V> prefix for x when x
+// is known to evaluate to a map; ok=false otherwise. Same constraint
+// as slicePkgForExpr: bare-ident-only resolution until type-info
+// plumbing arrives.
+func (e *emitter) mapPkgForExpr(x ir.Expr) (string, bool) {
+	id, ok := x.(*ir.Ident)
+	if !ok {
+		return "", false
+	}
+	t, ok := e.localTypes[id.Name]
+	if !ok {
+		return "", false
+	}
+	mt, ok := t.(*ir.MapType)
+	if !ok {
+		return "", false
+	}
+	pkg, err := mapPkgFor(mt)
 	if err != nil {
 		return "", false
 	}
@@ -1194,6 +1615,12 @@ func typeName(t ir.Type) (string, error) {
 			return "", err
 		}
 		return pkg + ".Slice", nil
+	case *ir.MapType:
+		pkg, err := mapPkgFor(t)
+		if err != nil {
+			return "", err
+		}
+		return pkg + ".Map", nil
 	case nil:
 		return "", fmt.Errorf("emit: missing type")
 	}

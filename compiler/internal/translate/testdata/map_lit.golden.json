@@ -11,22 +11,30 @@
           "kind": "Function",
           "name": "f",
           "params": null,
-          "results": null,
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
           "body": [
             {
               "kind": "Assign",
               "lhs": [
                 {
                   "kind": "Ident",
-                  "name": "_"
+                  "name": "m"
                 }
               ],
-              "define": false,
+              "define": true,
               "rhs": [
                 {
                   "kind": "MapLit",
                   "key": {
-                    "kind": "StringType"
+                    "kind": "IntType"
                   },
                   "value": {
                     "kind": "IntType"
@@ -36,26 +44,26 @@
                       "kind": "MapEntry",
                       "key": {
                         "kind": "Lit",
-                        "litKind": "string",
-                        "value": "\"a\""
+                        "litKind": "int",
+                        "value": "1"
                       },
                       "value": {
                         "kind": "Lit",
                         "litKind": "int",
-                        "value": "1"
+                        "value": "2"
                       }
                     },
                     {
                       "kind": "MapEntry",
                       "key": {
                         "kind": "Lit",
-                        "litKind": "string",
-                        "value": "\"b\""
+                        "litKind": "int",
+                        "value": "3"
                       },
                       "value": {
                         "kind": "Lit",
                         "litKind": "int",
-                        "value": "2"
+                        "value": "4"
                       }
                     }
                   ]
@@ -67,10 +75,10 @@
               "lhs": [
                 {
                   "kind": "Ident",
-                  "name": "_"
+                  "name": "e"
                 }
               ],
-              "define": false,
+              "define": true,
               "rhs": [
                 {
                   "kind": "MapLit",
@@ -81,6 +89,35 @@
                     "kind": "IntType"
                   },
                   "entries": null
+                }
+              ]
+            },
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "BinOp",
+                  "op": "+",
+                  "x": {
+                    "kind": "BuiltinCall",
+                    "name": "len",
+                    "args": [
+                      {
+                        "kind": "Ident",
+                        "name": "m"
+                      }
+                    ]
+                  },
+                  "y": {
+                    "kind": "BuiltinCall",
+                    "name": "len",
+                    "args": [
+                      {
+                        "kind": "Ident",
+                        "name": "e"
+                      }
+                    ]
+                  }
                 }
               ]
             }

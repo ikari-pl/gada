@@ -1,5 +1,5 @@
 package p
 
-func f(m map[string]int) {
-	m["x"] = 1
+func f(m map[int]int) {
+	m[1] = 2
 }

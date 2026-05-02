@@ -1,10 +1,9 @@
 package p
 
-func f(m map[string]int) int {
+func f(m map[int]int) int {
 	total := 0
 	for k, v := range m {
-		_ = k
-		total = total + v
+		total = total + k + v
 	}
 	return total
 }

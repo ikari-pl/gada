@@ -1,5 +1,5 @@
 package p
 
-func f(m map[string]int) {
-	delete(m, "x")
+func f(m map[int]int) {
+	delete(m, 1)
 }

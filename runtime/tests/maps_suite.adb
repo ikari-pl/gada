@@ -134,6 +134,15 @@ package body Maps_Suite is
         (T, Test_Iterate_With_Empty_Prefix'Access,
          "Iteration walks past empty leading slots before "
          & "finding live entries");
+      Register_Routine
+        (T, Test_From_Pairs_Round_Trip'Access,
+         "From_Pairs builds a Map containing every pair");
+      Register_Routine
+        (T, Test_From_Pairs_Empty'Access,
+         "From_Pairs on an empty array returns an empty Map");
+      Register_Routine
+        (T, Test_From_Pairs_Last_Write_Wins'Access,
+         "From_Pairs with duplicate keys keeps the last value");
    end Register_Tests;
 
    ---------------------------------------------------------------
@@ -520,5 +529,53 @@ package body Maps_Suite is
               "All 3 entries should be visited despite "
               & "leading-empty slot prefix");
    end Test_Iterate_With_Empty_Prefix;
+
+   ---------------------------------------------------------------
+   --  Bulk constructor — From_Pairs
+   ---------------------------------------------------------------
+
+   procedure Test_From_Pairs_Round_Trip
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Items : constant Int_Map_Fib.Pair_Array :=
+        ((K => 1, V => 10),
+         (K => 2, V => 20),
+         (K => 3, V => 30));
+      M     : constant Int_Map_Fib.Map := Int_Map_Fib.From_Pairs (Items);
+   begin
+      Assert (Int_Map_Fib.Length (M) = 3,
+              "From_Pairs must populate Length = Items'Length on unique keys");
+      Assert (Int_Map_Fib.Get (M, 1) = 10, "From_Pairs key 1 → 10");
+      Assert (Int_Map_Fib.Get (M, 2) = 20, "From_Pairs key 2 → 20");
+      Assert (Int_Map_Fib.Get (M, 3) = 30, "From_Pairs key 3 → 30");
+   end Test_From_Pairs_Round_Trip;
+
+   procedure Test_From_Pairs_Empty
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      M : constant Int_Map_Fib.Map :=
+        Int_Map_Fib.From_Pairs (Int_Map_Fib.Pair_Array'(1 .. 0 => <>));
+   begin
+      Assert (Int_Map_Fib.Length (M) = 0,
+              "From_Pairs on empty array yields empty Map");
+   end Test_From_Pairs_Empty;
+
+   procedure Test_From_Pairs_Last_Write_Wins
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Items : constant Int_Map_Fib.Pair_Array :=
+        ((K => 1, V => 10),
+         (K => 1, V => 20),
+         (K => 1, V => 99));
+      M     : constant Int_Map_Fib.Map := Int_Map_Fib.From_Pairs (Items);
+   begin
+      Assert (Int_Map_Fib.Length (M) = 1,
+              "Duplicate keys collapse to a single entry");
+      Assert (Int_Map_Fib.Get (M, 1) = 99,
+              "Last write wins on From_Pairs duplicate keys");
+   end Test_From_Pairs_Last_Write_Wins;
 
 end Maps_Suite;

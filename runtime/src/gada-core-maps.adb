@@ -394,6 +394,24 @@ package body Gada.Core.Maps is
    end Insert;
 
    ---------------------------------------------------------------
+   --  Bulk constructor — From_Pairs
+   ---------------------------------------------------------------
+
+   --  Pre-sizing to `Items'Length` rather than to the post-dedup
+   --  unique-key count is intentional: it costs at most one extra
+   --  doubling on heavy-duplicate input, and the alternative
+   --  (counting uniques first) requires a separate hash pass that
+   --  buys nothing on the common no-duplicate case.
+   function From_Pairs (Items : Pair_Array) return Map is
+   begin
+      return M : Map := Make_Map (Items'Length) do
+         for P of Items loop
+            Insert (M, P.K, P.V);
+         end loop;
+      end return;
+   end From_Pairs;
+
+   ---------------------------------------------------------------
    --  Lookup
    ---------------------------------------------------------------
 

@@ -17,7 +17,7 @@
               "type": {
                 "kind": "MapType",
                 "key": {
-                  "kind": "StringType"
+                  "kind": "IntType"
                 },
                 "value": {
                   "kind": "IntType"
@@ -38,8 +38,8 @@
                   },
                   "index": {
                     "kind": "Lit",
-                    "litKind": "string",
-                    "value": "\"x\""
+                    "litKind": "int",
+                    "value": "1"
                   }
                 }
               ],
@@ -48,7 +48,7 @@
                 {
                   "kind": "Lit",
                   "litKind": "int",
-                  "value": "1"
+                  "value": "2"
                 }
               ]
             }

@@ -33,6 +33,9 @@ var corpusFixtures = []string{
 	// Phase 2 — slice operations (Item 6).
 	"slice_type_param", "slice_lit", "slice_index",
 	"slice_subslice", "slice_append", "slice_len_cap",
+	// Phase 2 — map operations (Item 7).
+	"map_type_param", "map_lit", "map_index",
+	"map_insert", "map_range", "map_delete",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -652,7 +655,7 @@ func TestSliceEmitErrors(t *testing.T) {
 					&ir.IndexExpr{X: idn("x"), Index: litInt("0")},
 				}}},
 			}),
-			wantErr: "cannot determine slice instantiation",
+			wantErr: "cannot determine slice/map instantiation",
 		},
 		{
 			name: "index expr on non-ident X",
@@ -667,7 +670,7 @@ func TestSliceEmitErrors(t *testing.T) {
 					},
 				}}},
 			}),
-			wantErr: "cannot determine slice instantiation",
+			wantErr: "cannot determine slice/map instantiation",
 		},
 		{
 			name: "slice expr on non-ident X",
@@ -752,7 +755,7 @@ func TestSliceEmitErrors(t *testing.T) {
 					&ir.BuiltinCall{Name: "delete", Args: []ir.Expr{idn("m"), idn("k")}},
 				}}},
 			}),
-			wantErr: `builtin "delete" not supported in Phase 2`,
+			wantErr: `cannot determine map instantiation for "delete"`,
 		},
 	}
 	for _, tc := range cases {
@@ -940,6 +943,283 @@ func TestEmitSliceLitOfStringFloatBool(t *testing.T) {
 				t.Fatalf("expected %q in:\n%s", tc.wantInst, buf.String())
 			}
 		})
+	}
+}
+
+// TestMapEmitErrors covers every error branch reachable from the
+// new Phase 2 map-emission paths. Each case pins one specific failure
+// mode so a future regression surfaces at the right call site rather
+// than as an opaque "got %T" line. Together with TestSliceEmitErrors
+// these pin the negative-space surface of the per-call dispatchers.
+func TestMapEmitErrors(t *testing.T) {
+	t.Parallel()
+
+	intMap := &ir.MapType{Key: &ir.IntType{}, Value: &ir.IntType{}}
+	intMapParam := []*ir.Param{{Name: "m", Type: intMap}}
+
+	cases := []struct {
+		name    string
+		pkg     *ir.Package
+		wantErr string
+	}{
+		{
+			name: "unsupported map key type (string awaits Phase 4)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Params: []*ir.Param{{Name: "m",
+					Type: &ir.MapType{Key: &ir.StringType{}, Value: &ir.IntType{}}}},
+			}),
+			wantErr: "map keys of type string await Phase 4",
+		},
+		{
+			name: "unsupported map value type (string awaits Phase 4)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Params: []*ir.Param{{Name: "m",
+					Type: &ir.MapType{Key: &ir.IntType{}, Value: &ir.StringType{}}}},
+			}),
+			wantErr: "map values of type string await Phase 4",
+		},
+		{
+			name: "delete wrong arity",
+			pkg: wrapPkg(&ir.Function{
+				Name:   "f",
+				Params: intMapParam,
+				Body: []ir.Stmt{
+					&ir.BuiltinCall{Name: "delete", Args: []ir.Expr{idn("m")}},
+				},
+			}),
+			wantErr: "delete takes exactly 2 args",
+		},
+		{
+			name: "len(map) wrong arity",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  intMapParam,
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "len", Args: []ir.Expr{idn("m"), idn("m")}},
+				}}},
+			}),
+			// emitBuiltinCall only routes to emitMapBuiltin when arity==1;
+			// arity≠1 falls through to slice path, which fails first arg
+			// resolution because m is a map ident.
+			wantErr: "cannot determine slice instantiation",
+		},
+		{
+			name: "delete on non-map ident (no instantiation)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{
+					&ir.BuiltinCall{Name: "delete", Args: []ir.Expr{idn("nope"), litInt("1")}},
+				},
+			}),
+			wantErr: `cannot determine map instantiation for "delete"`,
+		},
+		{
+			name: "delete zero args (stmt position)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{
+					&ir.BuiltinCall{Name: "delete", Args: nil},
+				},
+			}),
+			wantErr: `requires at least 1 arg`,
+		},
+		{
+			name: "stmt-position builtin not delete",
+			pkg: wrapPkg(&ir.Function{
+				Name:   "f",
+				Params: intMapParam,
+				Body: []ir.Stmt{
+					&ir.BuiltinCall{Name: "len", Args: []ir.Expr{idn("m")}},
+				},
+			}),
+			wantErr: `builtin "len" at statement position not supported`,
+		},
+		{
+			name: "range over non-map (non-Ident X)",
+			pkg: wrapPkg(&ir.Function{
+				Name:   "f",
+				Params: intMapParam,
+				Body: []ir.Stmt{
+					&ir.RangeStmt{
+						KeyName: "k", ValueName: "v", Define: true,
+						X:    &ir.MapLit{Key: &ir.IntType{}, Value: &ir.IntType{}},
+						Body: nil,
+					},
+				},
+			}),
+			wantErr: "range supports only map values in Phase 2",
+		},
+		{
+			name: "range over unknown ident",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{
+					&ir.RangeStmt{
+						KeyName: "k", ValueName: "v", Define: true,
+						X:    idn("nope"),
+						Body: nil,
+					},
+				},
+			}),
+			wantErr: "range supports only map values in Phase 2",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := Package(tc.pkg, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestMapKeyValueBaseNameTable pins the basic-type acceptance table
+// for map keys and values plus the explicit Phase-4 deferral message
+// for String. The corpus only exercises Integer→Integer, so the
+// other supported pairs and the rejection branches live here.
+func TestMapKeyValueBaseNameTable(t *testing.T) {
+	t.Parallel()
+	keyAccepts := []struct {
+		t    ir.Type
+		want string
+	}{
+		{&ir.IntType{}, "Integer"},
+		{&ir.BoolType{}, "Boolean"},
+		{&ir.Float64Type{}, "Long_Float"},
+	}
+	for _, tc := range keyAccepts {
+		got, err := mapKeyBaseName(tc.t)
+		if err != nil {
+			t.Fatalf("mapKeyBaseName(%T): unexpected error %v", tc.t, err)
+		}
+		if got != tc.want {
+			t.Errorf("mapKeyBaseName(%T) = %q, want %q", tc.t, got, tc.want)
+		}
+	}
+	if _, err := mapKeyBaseName(&ir.StringType{}); err == nil {
+		t.Fatal("mapKeyBaseName(StringType): expected Phase-4 deferral error")
+	}
+	if _, err := mapKeyBaseName(&ir.SliceType{Elem: &ir.IntType{}}); err == nil {
+		t.Fatal("mapKeyBaseName(SliceType): expected unsupported-type error")
+	}
+
+	for _, tc := range keyAccepts {
+		got, err := mapValueBaseName(tc.t)
+		if err != nil {
+			t.Fatalf("mapValueBaseName(%T): unexpected error %v", tc.t, err)
+		}
+		if got != tc.want {
+			t.Errorf("mapValueBaseName(%T) = %q, want %q", tc.t, got, tc.want)
+		}
+	}
+	if _, err := mapValueBaseName(&ir.StringType{}); err == nil {
+		t.Fatal("mapValueBaseName(StringType): expected Phase-4 deferral error")
+	}
+	if _, err := mapValueBaseName(&ir.SliceType{Elem: &ir.IntType{}}); err == nil {
+		t.Fatal("mapValueBaseName(SliceType): expected unsupported-type error")
+	}
+
+	// mapPairKey propagates both branches; mapPkgFor in turn propagates
+	// mapPairKey. Pin both forwarders so a refactor that swaps to a
+	// silent fallback fails here.
+	if _, err := mapPairKey(&ir.MapType{Key: &ir.StringType{}, Value: &ir.IntType{}}); err == nil {
+		t.Fatal("mapPairKey: expected key-side error to propagate")
+	}
+	if _, err := mapPairKey(&ir.MapType{Key: &ir.IntType{}, Value: &ir.StringType{}}); err == nil {
+		t.Fatal("mapPairKey: expected value-side error to propagate")
+	}
+	if _, err := mapPkgFor(&ir.MapType{Key: &ir.StringType{}, Value: &ir.IntType{}}); err == nil {
+		t.Fatal("mapPkgFor: expected error to propagate from mapPairKey")
+	}
+}
+
+// TestMapDefaultLiteralTable pins the per-value-type Default_Value
+// formal the runtime instantiation receives. Integer is corpus-
+// covered; the other two basic types and the unreachable-fallback
+// guard live here.
+func TestMapDefaultLiteralTable(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		t    ir.Type
+		want string
+	}{
+		{&ir.IntType{}, "0"},
+		{&ir.BoolType{}, "False"},
+		{&ir.Float64Type{}, "0.0"},
+		// Unreachable-fallback for an unsupported value type. recordMapPair
+		// already filters these in the pre-scan, so this case proves the
+		// fallback isn't load-bearing — but we keep it in case a future
+		// refactor changes the dispatch order.
+		{&ir.StringType{}, "0"},
+	}
+	for _, tc := range cases {
+		got := mapDefaultLiteral(tc.t)
+		if got != tc.want {
+			t.Errorf("mapDefaultLiteral(%T) = %q, want %q", tc.t, got, tc.want)
+		}
+	}
+}
+
+// TestMapInstantiationViaResultType drives recordTypeInTree's
+// MapType case via a function *result* (rather than a parameter, as
+// the corpus uses). The corpus's map fixtures all have map params
+// only; the result-type branch needs separate cover.
+func TestMapInstantiationViaResultType(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name:    "make_one",
+		Results: []*ir.Param{{Type: &ir.MapType{Key: &ir.IntType{}, Value: &ir.BoolType{}}}},
+		Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+			&ir.MapLit{Key: &ir.IntType{}, Value: &ir.BoolType{}},
+		}}},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Maps_Of_Integer_To_Boolean") {
+		t.Fatalf("expected Maps_Of_Integer_To_Boolean instantiation, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Default_Value => False") {
+		t.Fatalf("expected Default_Value => False, got:\n%s", out)
+	}
+}
+
+// TestMapLitNonEmptyInVarDecl drives emitMapLit through the
+// non-empty `:=` declaration path (the corpus covers only function-
+// body composite literals; the `:=` flow is reachable from elided-
+// type contexts that the translator-side accepts).
+func TestMapLitNonEmptyInVarDecl(t *testing.T) {
+	t.Parallel()
+	pkg := wrapMain(funcMain(
+		&ir.Assign{Define: true,
+			LHS: []ir.Expr{idn("m")},
+			RHS: []ir.Expr{&ir.MapLit{
+				Key: &ir.IntType{}, Value: &ir.IntType{},
+				Entries: []*ir.MapEntry{{Key: litInt("1"), Value: litInt("2")}},
+			}},
+		},
+	))
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "M : Maps_Of_Integer_To_Integer.Map :=") {
+		t.Fatalf("expected map := decl, got:\n%s", out)
+	}
+	if !strings.Contains(out, "From_Pairs ([(K => 1, V => 2)])") {
+		t.Fatalf("expected From_Pairs aggregate, got:\n%s", out)
 	}
 }
 

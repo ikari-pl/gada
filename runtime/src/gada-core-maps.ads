@@ -58,6 +58,25 @@ package Gada.Core.Maps is
    --  first insert allocates the initial 16-slot capacity.
    function Make_Map (Cap_Hint : Natural := 0) return Map;
 
+   --  Pair / Pair_Array exist for `From_Pairs` — they let the
+   --  compiler-emit layer pass a Go-source `map[K]V{k1: v1, k2: v2}`
+   --  literal as a single Ada 2022 array aggregate, side-stepping
+   --  the impossibility of inlining N statements into one
+   --  expression. The shape mirrors `Element_Array` /
+   --  `Slices.From_Array` from `Gada.Core.Slices`.
+   type Pair is record
+      K : Key_Type;
+      V : Value_Type;
+   end record;
+   type Pair_Array is array (Positive range <>) of Pair;
+
+   --  From_Pairs (Items) — pre-size for `Items'Length` then bulk-
+   --  insert. Equivalent to `M := Make_Map (Items'Length); for P of
+   --  Items loop Insert (M, P.K, P.V); end loop;` but expression-
+   --  position so it composes with `:=` initialisation. Last-write-
+   --  wins on duplicate keys.
+   function From_Pairs (Items : Pair_Array) return Map;
+
    ---------------------------------------------------------------
    --  Inspection
    ---------------------------------------------------------------

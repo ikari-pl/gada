@@ -1,6 +1,7 @@
 package p
 
-func f() {
-	_ = map[string]int{"a": 1, "b": 2}
-	_ = map[int]int{}
+func f() int {
+	m := map[int]int{1: 2, 3: 4}
+	e := map[int]int{}
+	return len(m) + len(e)
 }

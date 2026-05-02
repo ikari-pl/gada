@@ -96,6 +96,32 @@ package body Memory_Suite is
          & " ceiling — libgc is leaking or the binding is wrong");
    end Test_Stress_1M_Allocs;
 
+   procedure Test_Total_Bytes_Allocated_Monotonic
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      use System.Storage_Elements;
+
+      Pre_Bytes  : Storage_Count;
+      Post_Bytes : Storage_Count;
+      Addr       : System.Address;
+      pragma Unreferenced (Addr);
+   begin
+      Gada.Core.Memory.Initialize;
+      Pre_Bytes := Gada.Core.Memory.Total_Bytes_Allocated;
+      for I in 1 .. 1000 loop
+         Addr := Gada.Core.Memory.Allocate_Atomic (256);
+      end loop;
+      Post_Bytes := Gada.Core.Memory.Total_Bytes_Allocated;
+
+      --  Strict monotonic increase: 1000 × 256 B = 256 KB minimum
+      --  growth (libgc may round up per slot, never down).
+      AUnit.Assertions.Assert
+        (Post_Bytes - Pre_Bytes >= Storage_Count (1000) * 256,
+         "Total_Bytes_Allocated did not increase by at least the"
+         & " sum of requested allocation sizes");
+   end Test_Total_Bytes_Allocated_Monotonic;
+
    overriding procedure Register_Tests (T : in out Memory_Test) is
       use AUnit.Test_Cases.Registration;
    begin
@@ -108,6 +134,9 @@ package body Memory_Suite is
       Register_Routine
         (T, Test_Stress_1M_Allocs'Access,
          "1M allocs grow heap; Heap_Size after Collect bounded by 2x ceiling");
+      Register_Routine
+        (T, Test_Total_Bytes_Allocated_Monotonic'Access,
+         "Total_Bytes_Allocated grows by >= sum of allocation sizes");
    end Register_Tests;
 
    overriding function Name (T : Memory_Test) return AUnit.Message_String is

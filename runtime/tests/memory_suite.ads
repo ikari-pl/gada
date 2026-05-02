@@ -28,5 +28,7 @@ package Memory_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Stress_1M_Allocs
      (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Total_Bytes_Allocated_Monotonic
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Memory_Suite;

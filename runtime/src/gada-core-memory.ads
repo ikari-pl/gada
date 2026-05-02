@@ -51,4 +51,11 @@ package Gada.Core.Memory is
    function Heap_Size
      return System.Storage_Elements.Storage_Count;
 
+   --  Cumulative bytes allocated since Initialize. Monotonically
+   --  non-decreasing — Collect does not reduce it. The bench harness
+   --  in `runtime/bench/` subtracts two snapshots to compute the
+   --  per-iteration allocation cost ("B/op") of the unit under test.
+   function Total_Bytes_Allocated
+     return System.Storage_Elements.Storage_Count;
+
 end Gada.Core.Memory;

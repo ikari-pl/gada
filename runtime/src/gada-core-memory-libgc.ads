@@ -61,4 +61,11 @@ private package Gada.Core.Memory.Libgc is
    function GC_Get_Heap_Size return Interfaces.C.size_t;
    pragma Import (C, GC_Get_Heap_Size, "GC_get_heap_size");
 
+   --  Cumulative bytes allocated through libgc since GC_init.
+   --  Monotonically non-decreasing — collection does not reduce it.
+   --  Subtract two snapshots to measure bytes-allocated-during-X.
+   --  This is the bench-harness primitive for "B/op" reporting.
+   function GC_Get_Total_Bytes return Interfaces.C.size_t;
+   pragma Import (C, GC_Get_Total_Bytes, "GC_get_total_bytes");
+
 end Gada.Core.Memory.Libgc;

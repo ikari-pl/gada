@@ -53,6 +53,15 @@ export GADA_GC_LDFLAGS GADA_GC_CFLAGS
 test:
 	$(RUNTIME_DIR)/tests/run_tests.sh $(PKG)
 
+#  bench — build + run the in-tree micro-benchmark suite (runtime/bench/).
+#  Output is benchstat-compatible; copy / paste rows into runtime/PERF.md.
+#  Per docs/adr/0006-runtime-performance-bar.md. NOT a `make ci` dependency
+#  — bench takes ~30s and the bar (2x of Go) is enforced at phase exit,
+#  not per PR.
+.PHONY: bench
+bench:
+	$(RUNTIME_DIR)/bench/run_benchmarks.sh
+
 coverage:
 	$(ROOT)/tools/coverage_ada.sh
 
@@ -62,6 +71,7 @@ lint:
 clean:
 	rm -rf $(RUNTIME_DIR)/obj $(RUNTIME_DIR)/lib
 	rm -rf $(RUNTIME_DIR)/tests/obj
+	rm -rf $(RUNTIME_DIR)/bench/obj
 	rm -f $(RUNTIME_DIR)/coverage.lcov
 	find $(RUNTIME_DIR) -name '*.gcda' -delete 2>/dev/null || true
 	find $(RUNTIME_DIR) -name '*.gcno' -delete 2>/dev/null || true

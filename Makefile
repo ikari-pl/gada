@@ -34,7 +34,7 @@
 #                   First failure aborts (Make's default semantics).
 #   clean         — wipe per-side build state and coverage/.
 
-.PHONY: bootstrap test coverage lint coverage-gate example ci clean
+.PHONY: bootstrap test coverage lint coverage-gate bench example ci clean
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 COVERAGE_DIR := $(ROOT)/coverage
@@ -90,6 +90,13 @@ bootstrap:
 test:
 	$(MAKE) -C $(ROOT)/compiler test
 	$(MAKE) -C $(ROOT)/runtime test
+
+# bench — runs the runtime micro-benchmark suite. Output is benchstat-
+# compatible (one row per benchmark on stdout). Copy rows into
+# runtime/PERF.md. Per docs/adr/0006-runtime-performance-bar.md, NOT a
+# `make ci` dependency — the 2x bar is enforced at phase exit.
+bench:
+	$(MAKE) -C $(ROOT)/runtime bench
 
 coverage:
 	@mkdir -p $(COVERAGE_DIR)

@@ -45,4 +45,12 @@ package body Gada.Core.Memory is
         (Libgc.GC_Get_Heap_Size);
    end Heap_Size;
 
+   function Total_Bytes_Allocated
+     return System.Storage_Elements.Storage_Count
+   is
+   begin
+      return System.Storage_Elements.Storage_Count
+        (Libgc.GC_Get_Total_Bytes);
+   end Total_Bytes_Allocated;
+
 end Gada.Core.Memory;

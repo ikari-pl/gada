@@ -1,0 +1,45 @@
+--  Bench harness for the GADA runtime — separate gprbuild project so
+--  the bench tree compiles, links libgc, and runs without dragging
+--  AUnit (the test harness's dep) into the bench-only build.
+--
+--  Build via:
+--    cd runtime && alr exec -- gprbuild -P bench/gada_bench_harness.gpr
+--  Run via:
+--    runtime/bench/obj/bench_runner
+
+with "../gada_core.gpr";
+
+project Gada_Bench_Harness is
+
+   for Source_Dirs use (".");
+   for Object_Dir  use "obj";
+   for Exec_Dir    use "obj";
+
+   for Main use ("bench_runner.adb");
+
+   for Languages use ("Ada");
+
+   package Compiler is
+      for Default_Switches ("Ada") use
+        ("-gnat2022",
+         "-gnatwa",
+         "-gnatyy",
+         "-O2",         --  benchmarks must run optimised
+         "-g");
+   end Compiler;
+
+   --  libgc switches: same shape as tests/aunit_harness.gpr; see
+   --  docs/adr/0005-libgc-binding-via-pkgconfig.md and the comment
+   --  there about Linker.Default_Switches not propagating from
+   --  imported library projects.
+   GC_Switches := external_as_list ("GADA_GC_LDFLAGS", " ") & ("-lgc");
+
+   package Linker is
+      for Default_Switches ("Ada") use GC_Switches;
+   end Linker;
+
+   package Builder is
+      for Default_Switches ("Ada") use ("-g");
+   end Builder;
+
+end Gada_Bench_Harness;

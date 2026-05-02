@@ -2,7 +2,7 @@
 
 [← Phase 1](01-minimal-transpiler.md) · [Index](README.md) · Next: [Phase 3 →](03-concurrency.md)
 
-**Status:** `IN_PROGRESS`
+**Status:** `DONE` (closed 2026-05-02)
 **Prerequisites:** [Phase 1](01-minimal-transpiler.md) `DONE`
 **Goal:** Implement `GADA.Core` — slices, maps, defer, panic/recover,
 GC interface — with full unit-test coverage. After this phase, Go

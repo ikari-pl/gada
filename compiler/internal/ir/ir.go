@@ -281,6 +281,29 @@ type RangeStmt struct {
 func (*RangeStmt) irStmt()          {}
 func (*RangeStmt) NodeKind() string { return "RangeStmt" }
 
+// DeferStmt is Go `defer f(args)`. Call captures the receiver and
+// arguments at the defer site (Go's defer evaluates the call's
+// arguments eagerly but executes the call itself at scope exit).
+//
+// Call is typed as Stmt so it can hold either `*ir.Call` (for
+// `defer f()`) or `*ir.BuiltinCall` (for `defer panic(x)`). Go's
+// grammar permits any call expression after `defer`; both concrete
+// node types are Stmts so this widens cleanly without a parallel
+// expression hierarchy.
+//
+// Phase 2 lowers each defer site to a per-site `Defer_Block` whose
+// `Op` formal points at a synthesised parameterless closure that
+// invokes the Call when the block's `Limited_Controlled` Finalize
+// fires — Ada finalises in reverse declaration order at scope exit
+// *including under exception unwind*, which is exactly Go's LIFO
+// defer-during-panic semantics with no defer-chain bookkeeping.
+type DeferStmt struct {
+	Call Stmt
+}
+
+func (*DeferStmt) irStmt()          {}
+func (*DeferStmt) NodeKind() string { return "DeferStmt" }
+
 // BuiltinCall is a call to a Go predeclared function. Distinguished
 // from Call (which carries an arbitrary Fun expression) so the
 // emitter can dispatch by name without re-deriving builtin-ness.
@@ -436,6 +459,12 @@ func unmarshalStmt(raw json.RawMessage) (Stmt, error) {
 		return &n, nil
 	case "RangeStmt":
 		var n RangeStmt
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "DeferStmt":
+		var n DeferStmt
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1334,5 +1363,30 @@ func (s *RangeStmt) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	s.Body = body
+	return nil
+}
+
+func (s *DeferStmt) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Call Stmt   `json:"call"`
+	}{"DeferStmt", s.Call})
+}
+
+func (s *DeferStmt) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Call json.RawMessage `json:"call"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Call) == 0 || string(aux.Call) == "null" {
+		return fmt.Errorf("ir: DeferStmt missing call")
+	}
+	c, err := unmarshalStmt(aux.Call)
+	if err != nil {
+		return err
+	}
+	s.Call = c
 	return nil
 }

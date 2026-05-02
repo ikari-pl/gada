@@ -54,6 +54,7 @@ func TestNodeKind(t *testing.T) {
 		{"MapType", &MapType{}, "MapType"},
 		{"MapLit", &MapLit{}, "MapLit"},
 		{"RangeStmt", &RangeStmt{}, "RangeStmt"},
+		{"DeferStmt", &DeferStmt{}, "DeferStmt"},
 	}
 
 	for _, tc := range cases {
@@ -84,6 +85,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Stmt = &ExprStmt{}
 	var _ Stmt = &BuiltinCall{} // panic(x) at statement position
 	var _ Stmt = &RangeStmt{}
+	var _ Stmt = &DeferStmt{}
 
 	var _ Expr = &Ident{}
 	var _ Expr = &Lit{}
@@ -365,6 +367,57 @@ func TestMapEntryDirect(t *testing.T) {
 	}
 }
 
+// TestDeferStmtMissingCall locks the explicit-error guard on DeferStmt:
+// a `DeferStmt` without a `call` field is nonsensical (a defer with no
+// callee), and the JSON shape must reject it loud rather than fan out
+// to a silent nil-call later in emit.
+func TestDeferStmtMissingCall(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"kind":"DeferStmt"}`,
+		`{"kind":"DeferStmt","call":null}`,
+	}
+	for _, in := range cases {
+		if _, err := unmarshalStmt(json.RawMessage(in)); err == nil {
+			t.Fatalf("expected error for %s, got nil", in)
+		}
+	}
+}
+
+// TestRoundTripDeferCorpus exercises the new defer/panic/recover IR
+// shapes (DeferStmt holding a Call, BuiltinCall("panic"), BuiltinCall(
+// "recover") at expression position) in a single structure. The slice
+// and map corpora predate these nodes; keeping the defer corpus
+// separate makes the regression surface explicit when only the
+// defer/panic path changes.
+func TestRoundTripDeferCorpus(t *testing.T) {
+	t.Parallel()
+
+	pkg := &Package{
+		Name: "p",
+		Files: []*File{{
+			Name: "p.go",
+			Decls: []Decl{
+				&Function{
+					Name:    "safe",
+					Results: []*Param{{Type: &IntType{}}},
+					Body: []Stmt{
+						&DeferStmt{Call: &Call{Fun: &Ident{Name: "cleanup"}}},
+						&Assign{
+							LHS:    []Expr{&Ident{Name: "r"}},
+							Define: true,
+							RHS:    []Expr{&BuiltinCall{Name: "recover"}},
+						},
+						&BuiltinCall{Name: "panic", Args: []Expr{&Lit{Kind: LitString, Value: `"boom"`}}},
+						&Return{Results: []Expr{&Ident{Name: "r"}}},
+					},
+				},
+			},
+		}},
+	}
+	roundTrip(t, pkg)
+}
+
 // TestHelloGolden snapshots the JSON form of the hello-world IR.
 // The golden file is the cross-phase contract: the translator (next
 // task) and the emitter (the task after) both read it.
@@ -425,6 +478,7 @@ func TestSentinels(t *testing.T) {
 	(&BuiltinCall{}).irStmt()
 	(&MapLit{}).irExpr()
 	(&RangeStmt{}).irStmt()
+	(&DeferStmt{}).irStmt()
 
 	(&IntType{}).irType()
 	(&StringType{}).irType()
@@ -511,6 +565,7 @@ func TestPropagatedDecodeErrors(t *testing.T) {
 		{"BuiltinCall stmt", `{"kind":"BuiltinCall","args":"not-array"}`, stmtErr},
 		{"MapLit", `{"kind":"MapLit","entries":"not-array"}`, exprErr},
 		{"RangeStmt", `{"kind":"RangeStmt","body":"not-array"}`, stmtErr},
+		{"DeferStmt", `{"kind":"DeferStmt","call":42}`, stmtErr},
 	}
 
 	for _, tc := range cases {
@@ -577,6 +632,7 @@ func TestPropagatedChildErrors(t *testing.T) {
 		{"MapLit.Entries[0].Value bad child", `{"kind":"MapLit","key":{"kind":"IntType"},"value":{"kind":"IntType"},"entries":[{"value":` + bad + `}]}`, exprErr},
 		{"RangeStmt.X bad child", `{"kind":"RangeStmt","x":` + bad + `}`, stmtErr},
 		{"RangeStmt.Body bad child", `{"kind":"RangeStmt","body":[` + bad + `]}`, stmtErr},
+		{"DeferStmt.Call bad child", `{"kind":"DeferStmt","call":` + bad + `}`, stmtErr},
 	}
 
 	for _, tc := range cases {

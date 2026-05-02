@@ -11,6 +11,15 @@
 --  exits non-zero with a message naming the unknown PKG so a typo in CI
 --  fails loudly instead of silently registering zero suites.
 
+--  Suppress GNAT's `-gnatw_a` warning on the AUnit `new IO_Suite.IO_Test`
+--  / `new Memory_Suite.Memory_Test` allocators. The pattern is the
+--  AUnit-documented way to register a Test_Case subtype and produces
+--  an anonymous access value that AUnit's `Add_Test` accepts; refusing
+--  it would mean refactoring against the framework. Scoped to this
+--  unit so the warning still fires on real anonymous-access misuse
+--  elsewhere in the runtime.
+pragma Warnings (Off, "use of an anonymous access type allocator");
+
 with Ada.Command_Line;
 with Ada.Text_IO;
 
@@ -19,6 +28,7 @@ with AUnit.Reporter.Text;
 with AUnit.Test_Suites; use AUnit.Test_Suites;
 
 with IO_Suite;
+with Memory_Suite;
 
 procedure Test_Runner is
 
@@ -35,7 +45,9 @@ procedure Test_Runner is
    --  this set, we fail fast — silently registering nothing would let a
    --  CI typo masquerade as success.
    function Is_Known (Pkg : String) return Boolean is
-     (Pkg = "" or else Pkg = "core.io");
+     (Pkg = ""
+      or else Pkg = "core.io"
+      or else Pkg = "core.memory");
 
    function Should_Register (Pkg : String) return Boolean is
      (Selected_Pkg = "" or else Selected_Pkg = Pkg);
@@ -51,6 +63,9 @@ procedure Test_Runner is
       if Should_Register ("core.io") then
          Add_Test (Result, new IO_Suite.IO_Test);
       end if;
+      if Should_Register ("core.memory") then
+         Add_Test (Result, new Memory_Suite.Memory_Test);
+      end if;
       return Result;
    end Gada_Suite;
 
@@ -63,7 +78,7 @@ begin
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,
          "test_runner: unknown PKG filter '" & Selected_Pkg
-         & "'. Known suites: core.io.");
+         & "'. Known suites: core.io, core.memory.");
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
       return;
    end if;

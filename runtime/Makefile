@@ -39,6 +39,17 @@ ROOT := $(abspath $(RUNTIME_DIR)/..)
 PATH := $(HOME)/src/gnatstudio/.tools/bin:$(HOME)/.local/share/alire/bin:$(HOME)/.local/bin:/opt/homebrew/bin:/usr/local/bin:$(PATH)
 export PATH
 
+# Resolve libgc linker/compile switches via pkg-config and export them
+# for gada_core.gpr / aunit_harness.gpr's external_as_list lookup. Per
+# docs/adr/0005-libgc-binding-via-pkgconfig.md. If pkg-config or bdw-gc.pc
+# is missing we fall through to empty here; the gpr files append a literal
+# "-lgc" so default-paths Linux/BSD invocations still link. The top-level
+# `make bootstrap` is the gate that catches a missing libgc up front with
+# the actionable per-platform install hint.
+GADA_GC_LDFLAGS := $(shell pkg-config --libs bdw-gc 2>/dev/null)
+GADA_GC_CFLAGS  := $(shell pkg-config --cflags bdw-gc 2>/dev/null)
+export GADA_GC_LDFLAGS GADA_GC_CFLAGS
+
 test:
 	$(RUNTIME_DIR)/tests/run_tests.sh $(PKG)
 

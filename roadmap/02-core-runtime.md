@@ -138,15 +138,17 @@ exercising slices, maps, append, len, cap, defer, panic, recover.
       *Verify:* `cd compiler && go test ./internal/emit/... -run Control && go test ./internal/translate/... -run Control && go test ./internal/ir/... -run Control`
       *Done when:* `defer f()`, `panic(x)`, `recover()` all emit correct `Gada.Core.Defer` / `Gada.Core.Panic` calls with one per-function panic-recover wrapper.
 
-  - [ ] **(a) IR additions — DeferStmt + Panic/Recover BuiltinCalls**
-        *Files:* `compiler/internal/ir/ir.go`, `compiler/internal/ir/ir_test.go`
-        *Verify:* `cd compiler && go test ./internal/ir/... -run Control`
+  - [x] **(a) IR additions — DeferStmt + Panic/Recover BuiltinCalls**
+        *Files:* `compiler/internal/ir/ir.go`, `compiler/internal/ir/ir_test.go`, `.golangci.yml`
+        *Verify:* `cd compiler && go test ./internal/ir/...`
         *Done when:* DeferStmt added to stmt dispatcher; round-trip stable.
+        *Done 2026-05-02:* `DeferStmt { Call Stmt }` joins the stmt-sum (`irStmt()` + `NodeKind() = "DeferStmt"`); the `Call` field is typed as `Stmt` so the same node accepts either `*ir.Call` (for `defer f()`) or `*ir.BuiltinCall` (for `defer panic(x)`) without a parallel expression hierarchy — both already implement Stmt. `unmarshalStmt` gains the "DeferStmt" case; `MarshalJSON` / `UnmarshalJSON` follow the kind-discriminated envelope used by every other variant. UnmarshalJSON enforces non-null `call` with an explicit `ir: DeferStmt missing call` error so a half-encoded node cannot silently round-trip with a nil call and crash the emitter at the recursive walk later. `panic` and `recover` already work as `BuiltinCall` — they joined `builtinNames` in item 6(b) — so this lift only adds the deferred-call wrapper, not new builtin recognition. Tests: `TestNodeKind`, `TestSealedInterfaces`, `TestSentinels` extended; `TestPropagatedDecodeErrors` and `TestPropagatedChildErrors` gain `DeferStmt` rows so the malformed-body and bad-child-call paths are pinned; `TestDeferStmtMissingCall` locks the explicit-error guard against absent and `null` `call` fields; `TestRoundTripDeferCorpus` exercises `DeferStmt` + `Call` + `BuiltinCall("panic")` + `BuiltinCall("recover")` in a single round-trip structure. `.golangci.yml` revive exclusion regex extended to include `DeferStmt`. Coverage on `compiler/internal/ir/ir.go`: 98.3% (gate 95%).
 
-  - [ ] **(b) translate — defer, panic, recover**
-        *Files:* `compiler/internal/translate/translate.go`, golden fixtures
-        *Verify:* `cd compiler && go test ./internal/translate/... -run Control`
+  - [x] **(b) translate — defer, panic, recover**
+        *Files:* `compiler/internal/translate/translate.go`, `compiler/internal/translate/translate_test.go`, `compiler/internal/translate/testdata/defer_simple.{go,golden.json}`, `…/panic_simple.*`, `…/recover_simple.*`
+        *Verify:* `cd compiler && go test ./internal/translate/...`
         *Done when:* `defer call()` → `DeferStmt{Call}`; `panic(x)` → `BuiltinCall("panic", x)`; `recover()` → `BuiltinCall("recover")`.
+        *Done 2026-05-02:* `transStmt` learns `*ast.DeferStmt` via the new `transDefer` helper, which dispatches the deferred call through the existing `tryBuiltinCall` (so `defer panic(x)` lowers to `*ir.BuiltinCall`) before falling back to the general `transCall` (so `defer cleanup()` lowers to `*ir.Call`); both concrete types satisfy `ir.DeferStmt.Call Stmt` because they both implement Stmt. `panic(x)` and `recover()` already work via `tryBuiltinCall` from item 6(b) — they're in `builtinNames` already — so the panic / recover lift only needs the `defer` wrapper, not new builtin recognition. Three fixtures shipped: `defer_simple.go` (`defer cleanup()`), `panic_simple.go` (`panic("boom")`), `recover_simple.go` (`return recover()` exercising recover at expression position). Corpus list extended; `TestCorpus` passes 25/25. The previously-failing `defer` error case (which expected "unsupported stmt") was retargeted to `defer with bad call subexpr` (`defer g(1i)`) and `defer panic with bad subexpr` (`defer panic(1i)`) — both fail with "literal kind" via the recursive imag-literal rejection inside `transCall` and `tryBuiltinCall` respectively, exercising both arms of `transDefer`. Coverage on `compiler/internal/translate/translate.go`: 96.8% (gate 95%).
 
   - [ ] **(c) emit — defer-block declarations + per-function panic wrapper**
         *Files:* `compiler/internal/emit/emit.go`, golden fixtures

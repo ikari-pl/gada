@@ -46,6 +46,8 @@ func TestCorpus(t *testing.T) {
 		// Phase 2 — map fixtures (compiler-emit Item 7).
 		"map_type_param.go", "map_lit.go", "map_index.go",
 		"map_insert.go", "map_range.go", "map_delete.go",
+		// Phase 2 — defer / panic / recover fixtures (compiler-emit Item 8).
+		"defer_simple.go", "panic_simple.go", "recover_simple.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -145,9 +147,10 @@ func f() { if x := 1; x > 0 {} }`, "if-with-init"},
 		{"go stmt", `package p
 func g() {}
 func f() { go g() }`, "unsupported stmt"},
-		{"defer", `package p
-func g() {}
-func f() { defer g() }`, "unsupported stmt"},
+		{"defer with bad call subexpr", `package p
+func f() { defer g(1i) }`, "literal kind"},
+		{"defer panic with bad subexpr", `package p
+func f() { defer panic(1i) }`, "literal kind"},
 		{"switch stmt", `package p
 func f() { switch {} }`, "unsupported stmt"},
 		// Expression-level features.

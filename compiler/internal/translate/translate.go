@@ -225,6 +225,8 @@ func transStmt(s ast.Stmt) (ir.Stmt, error) {
 		return transFor(s)
 	case *ast.RangeStmt:
 		return transRange(s)
+	case *ast.DeferStmt:
+		return transDefer(s)
 	case *ast.ReturnStmt:
 		return transReturn(s)
 	case *ast.ExprStmt:
@@ -265,6 +267,27 @@ func transRange(s *ast.RangeStmt) (*ir.RangeStmt, error) {
 		X:         x,
 		Body:      body,
 	}, nil
+}
+
+// transDefer handles `defer f(args)`. The Go AST's `*ast.DeferStmt`
+// holds a single `*ast.CallExpr`; we lower it to either an
+// `*ir.BuiltinCall` (for `defer panic(x)` — unusual but legal) or
+// the general `*ir.Call`. Both implement Stmt and so satisfy the
+// IR `DeferStmt.Call Stmt` field. Other defer-able shapes (method
+// values, function literals) re-route through transExpr's standard
+// dispatch and surface the usual unsupported errors at the right
+// failure axis.
+func transDefer(s *ast.DeferStmt) (*ir.DeferStmt, error) {
+	if b, ok, err := tryBuiltinCall(s.Call); err != nil {
+		return nil, err
+	} else if ok {
+		return &ir.DeferStmt{Call: b}, nil
+	}
+	c, err := transCall(s.Call)
+	if err != nil {
+		return nil, err
+	}
+	return &ir.DeferStmt{Call: c}, nil
 }
 
 // identNameOrBlank extracts a bare identifier name from a Go AST

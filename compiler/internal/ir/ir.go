@@ -208,6 +208,61 @@ type Selector struct {
 func (*Selector) irExpr()          {}
 func (*Selector) NodeKind() string { return "Selector" }
 
+// SliceLit is a Go slice composite literal: `[]T{e1, e2, ...}`. Elem
+// is the element type; Elems carries the (possibly empty) initialiser
+// list. Used by Phase 2's slice-emission path to dispatch a single
+// `Slices_Of_<T>.From_Array ([…])` call.
+type SliceLit struct {
+	Elem  Type
+	Elems []Expr
+}
+
+func (*SliceLit) irExpr()          {}
+func (*SliceLit) NodeKind() string { return "SliceLit" }
+
+// IndexExpr is `X[Index]`. The same node shape covers slice indexing
+// (`s[i]`) and map lookup (`m[k]`); the emitter resolves the
+// distinction by inspecting the static type of X via its declaration.
+type IndexExpr struct {
+	X     Expr
+	Index Expr
+}
+
+func (*IndexExpr) irExpr()          {}
+func (*IndexExpr) NodeKind() string { return "IndexExpr" }
+
+// SliceExpr is `X[Low:High]`. Low or High may be nil to model the
+// `s[:j]` / `s[i:]` / `s[:]` shapes; the emitter substitutes 0 for a
+// missing Low and `Length(s)` for a missing High.
+type SliceExpr struct {
+	X    Expr
+	Low  Expr
+	High Expr
+}
+
+func (*SliceExpr) irExpr()          {}
+func (*SliceExpr) NodeKind() string { return "SliceExpr" }
+
+// BuiltinCall is a call to a Go predeclared function. Distinguished
+// from Call (which carries an arbitrary Fun expression) so the
+// emitter can dispatch by name without re-deriving builtin-ness.
+//
+// Phase 2 names: "append", "len", "cap" (slice item); "delete" (map
+// item); "panic", "recover" (defer/panic item). Each later phase
+// widens the recognised set.
+//
+// The node implements both Stmt and Expr because Go allows bare
+// `panic(x)` as a statement and `recover()` as an expression in
+// `if r := recover(); r != nil`.
+type BuiltinCall struct {
+	Name string
+	Args []Expr
+}
+
+func (*BuiltinCall) irExpr()          {}
+func (*BuiltinCall) irStmt()          {}
+func (*BuiltinCall) NodeKind() string { return "BuiltinCall" }
+
 // Type is the sealed interface for type references. Phase 1 covers
 // the four Go basic types the corpus uses; named, struct, slice,
 // map, channel, and function types arrive in later phases.
@@ -239,6 +294,16 @@ type Float64Type struct{}
 
 func (*Float64Type) irType()          {}
 func (*Float64Type) NodeKind() string { return "Float64Type" }
+
+// SliceType is Go `[]T`. Elem is the element type. Translates to a
+// generic instantiation of `Gada.Core.Slices` per element type — the
+// emitter tracks one `Slices_Of_<T>` per file.
+type SliceType struct {
+	Elem Type
+}
+
+func (*SliceType) irType()          {}
+func (*SliceType) NodeKind() string { return "SliceType" }
 
 // ---------------------------------------------------------------------------
 // JSON marshaling and unmarshaling
@@ -314,6 +379,12 @@ func unmarshalStmt(raw json.RawMessage) (Stmt, error) {
 			return nil, err
 		}
 		return &n, nil
+	case "BuiltinCall":
+		var n BuiltinCall
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
 	default:
 		return nil, fmt.Errorf("ir: unknown stmt kind %q", env.Kind)
 	}
@@ -357,6 +428,30 @@ func unmarshalExpr(raw json.RawMessage) (Expr, error) {
 			return nil, err
 		}
 		return &n, nil
+	case "SliceLit":
+		var n SliceLit
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "IndexExpr":
+		var n IndexExpr
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "SliceExpr":
+		var n SliceExpr
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "BuiltinCall":
+		var n BuiltinCall
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
 	default:
 		return nil, fmt.Errorf("ir: unknown expr kind %q", env.Kind)
 	}
@@ -378,6 +473,12 @@ func unmarshalType(raw json.RawMessage) (Type, error) {
 		return &BoolType{}, nil
 	case "Float64Type":
 		return &Float64Type{}, nil
+	case "SliceType":
+		var n SliceType
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
 	default:
 		return nil, fmt.Errorf("ir: unknown type kind %q", env.Kind)
 	}
@@ -876,4 +977,153 @@ func (*BoolType) MarshalJSON() ([]byte, error) {
 
 func (*Float64Type) MarshalJSON() ([]byte, error) {
 	return []byte(`{"kind":"Float64Type"}`), nil
+}
+
+func (t *SliceType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Elem Type   `json:"elem"`
+	}{"SliceType", t.Elem})
+}
+
+func (t *SliceType) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Elem json.RawMessage `json:"elem"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
+		return fmt.Errorf("ir: SliceType missing elem")
+	}
+	elem, err := unmarshalType(aux.Elem)
+	if err != nil {
+		return err
+	}
+	t.Elem = elem
+	return nil
+}
+
+// --- Slice / Index / Builtin expressions ---
+
+func (e *SliceLit) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind  string `json:"kind"`
+		Elem  Type   `json:"elem"`
+		Elems []Expr `json:"elems"`
+	}{"SliceLit", e.Elem, e.Elems})
+}
+
+func (e *SliceLit) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Elem  json.RawMessage   `json:"elem"`
+		Elems []json.RawMessage `json:"elems"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
+		return fmt.Errorf("ir: SliceLit missing elem")
+	}
+	elem, err := unmarshalType(aux.Elem)
+	if err != nil {
+		return err
+	}
+	e.Elem = elem
+	elems, err := unmarshalExprList(aux.Elems)
+	if err != nil {
+		return err
+	}
+	e.Elems = elems
+	return nil
+}
+
+func (e *IndexExpr) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind  string `json:"kind"`
+		X     Expr   `json:"x"`
+		Index Expr   `json:"index"`
+	}{"IndexExpr", e.X, e.Index})
+}
+
+func (e *IndexExpr) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		X     json.RawMessage `json:"x"`
+		Index json.RawMessage `json:"index"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	x, err := unmarshalOptionalExpr(aux.X)
+	if err != nil {
+		return err
+	}
+	e.X = x
+	idx, err := unmarshalOptionalExpr(aux.Index)
+	if err != nil {
+		return err
+	}
+	e.Index = idx
+	return nil
+}
+
+func (e *SliceExpr) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		X    Expr   `json:"x"`
+		Low  Expr   `json:"low"`
+		High Expr   `json:"high"`
+	}{"SliceExpr", e.X, e.Low, e.High})
+}
+
+func (e *SliceExpr) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		X    json.RawMessage `json:"x"`
+		Low  json.RawMessage `json:"low"`
+		High json.RawMessage `json:"high"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	x, err := unmarshalOptionalExpr(aux.X)
+	if err != nil {
+		return err
+	}
+	e.X = x
+	lo, err := unmarshalOptionalExpr(aux.Low)
+	if err != nil {
+		return err
+	}
+	e.Low = lo
+	hi, err := unmarshalOptionalExpr(aux.High)
+	if err != nil {
+		return err
+	}
+	e.High = hi
+	return nil
+}
+
+func (e *BuiltinCall) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+		Args []Expr `json:"args"`
+	}{"BuiltinCall", e.Name, e.Args})
+}
+
+func (e *BuiltinCall) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Name string            `json:"name"`
+		Args []json.RawMessage `json:"args"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	e.Name = aux.Name
+	args, err := unmarshalExprList(aux.Args)
+	if err != nil {
+		return err
+	}
+	e.Args = args
+	return nil
 }

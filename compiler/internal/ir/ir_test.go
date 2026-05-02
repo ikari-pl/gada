@@ -46,6 +46,11 @@ func TestNodeKind(t *testing.T) {
 		{"StringType", &StringType{}, "StringType"},
 		{"BoolType", &BoolType{}, "BoolType"},
 		{"Float64Type", &Float64Type{}, "Float64Type"},
+		{"SliceType", &SliceType{}, "SliceType"},
+		{"SliceLit", &SliceLit{}, "SliceLit"},
+		{"IndexExpr", &IndexExpr{}, "IndexExpr"},
+		{"SliceExpr", &SliceExpr{}, "SliceExpr"},
+		{"BuiltinCall", &BuiltinCall{}, "BuiltinCall"},
 	}
 
 	for _, tc := range cases {
@@ -74,17 +79,23 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Stmt = &Return{}
 	var _ Stmt = &Call{}
 	var _ Stmt = &ExprStmt{}
+	var _ Stmt = &BuiltinCall{} // panic(x) at statement position
 
 	var _ Expr = &Ident{}
 	var _ Expr = &Lit{}
 	var _ Expr = &BinOp{}
 	var _ Expr = &UnaryOp{}
 	var _ Expr = &Selector{}
+	var _ Expr = &SliceLit{}
+	var _ Expr = &IndexExpr{}
+	var _ Expr = &SliceExpr{}
+	var _ Expr = &BuiltinCall{} // recover() at expression position
 
 	var _ Type = &IntType{}
 	var _ Type = &StringType{}
 	var _ Type = &BoolType{}
 	var _ Type = &Float64Type{}
+	var _ Type = &SliceType{}
 }
 
 // TestRoundTripHello marshals the canonical hello-world IR, unmarshals
@@ -104,6 +115,113 @@ func TestRoundTripKitchenSink(t *testing.T) {
 
 	pkg := kitchenSinkPackage()
 	roundTrip(t, pkg)
+}
+
+// TestRoundTripSliceCorpus exercises the new slice / index / builtin
+// IR shapes (SliceType, SliceLit, IndexExpr, SliceExpr, BuiltinCall)
+// in a single structure. The generic kitchen-sink predates these
+// nodes; keeping the slice corpus separate makes the regression
+// surface explicit when only the slice path changes.
+func TestRoundTripSliceCorpus(t *testing.T) {
+	t.Parallel()
+
+	pkg := &Package{
+		Name: "p",
+		Files: []*File{{
+			Name: "p.go",
+			Decls: []Decl{
+				&Function{
+					Name:    "demo",
+					Params:  []*Param{{Name: "s", Type: &SliceType{Elem: &IntType{}}}},
+					Results: []*Param{{Type: &IntType{}}},
+					Body: []Stmt{
+						&Assign{
+							LHS:    []Expr{&Ident{Name: "xs"}},
+							Define: true,
+							RHS: []Expr{&SliceLit{
+								Elem: &IntType{},
+								Elems: []Expr{
+									&Lit{Kind: LitInt, Value: "1"},
+									&Lit{Kind: LitInt, Value: "2"},
+									&Lit{Kind: LitInt, Value: "3"},
+								},
+							}},
+						},
+						// `xs = append(xs, 4)` — BuiltinCall as expr.
+						&Assign{
+							LHS: []Expr{&Ident{Name: "xs"}},
+							RHS: []Expr{&BuiltinCall{
+								Name: "append",
+								Args: []Expr{&Ident{Name: "xs"}, &Lit{Kind: LitInt, Value: "4"}},
+							}},
+						},
+						// `_ = xs[0]` (IndexExpr) and `_ = xs[1:3]` (SliceExpr)
+						&ExprStmt{X: &IndexExpr{X: &Ident{Name: "xs"}, Index: &Lit{Kind: LitInt, Value: "0"}}},
+						&ExprStmt{X: &SliceExpr{
+							X:    &Ident{Name: "xs"},
+							Low:  &Lit{Kind: LitInt, Value: "1"},
+							High: &Lit{Kind: LitInt, Value: "3"},
+						}},
+						// `_ = xs[:]` — both bounds nil.
+						&ExprStmt{X: &SliceExpr{X: &Ident{Name: "xs"}}},
+						// Stmt-position BuiltinCall: `panic("boom")`.
+						&BuiltinCall{
+							Name: "panic",
+							Args: []Expr{&Lit{Kind: LitString, Value: `"boom"`}},
+						},
+						&Return{Results: []Expr{&BuiltinCall{
+							Name: "len",
+							Args: []Expr{&Ident{Name: "xs"}},
+						}}},
+					},
+				},
+			},
+		}},
+	}
+	roundTrip(t, pkg)
+}
+
+// TestSliceTypeMissingElem locks the explicit-error branch in
+// SliceType.UnmarshalJSON: a `SliceType` with no `elem` field is
+// nonsensical and must not silently round-trip to an Elem-nil node.
+func TestSliceTypeMissingElem(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"SliceType"}`)); err == nil {
+		t.Fatal("expected error for SliceType without elem")
+	}
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"SliceType","elem":null}`)); err == nil {
+		t.Fatal("expected error for SliceType with null elem")
+	}
+}
+
+// TestSliceLitMissingElem mirrors the SliceType guard for SliceLit:
+// the element type must always be present so the emitter can pick
+// the right Slices_Of_<T> instantiation.
+func TestSliceLitMissingElem(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"SliceLit"}`)); err == nil {
+		t.Fatal("expected error for SliceLit without elem")
+	}
+	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"SliceLit","elem":null}`)); err == nil {
+		t.Fatal("expected error for SliceLit with null elem")
+	}
+}
+
+// TestSliceTypeBadElem covers the unmarshalType propagation when the
+// nested elem has an unknown kind.
+func TestSliceTypeBadElem(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"SliceType","elem":{"kind":"Bogus"}}`)); err == nil {
+		t.Fatal("expected error for SliceType with bad elem kind")
+	}
+}
+
+// TestSliceLitBadElem covers the same propagation through SliceLit.
+func TestSliceLitBadElem(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"SliceLit","elem":{"kind":"Bogus"}}`)); err == nil {
+		t.Fatal("expected error for SliceLit with bad elem kind")
+	}
 }
 
 // TestHelloGolden snapshots the JSON form of the hello-world IR.
@@ -159,11 +277,17 @@ func TestSentinels(t *testing.T) {
 	(&BinOp{}).irExpr()
 	(&UnaryOp{}).irExpr()
 	(&Selector{}).irExpr()
+	(&SliceLit{}).irExpr()
+	(&IndexExpr{}).irExpr()
+	(&SliceExpr{}).irExpr()
+	(&BuiltinCall{}).irExpr()
+	(&BuiltinCall{}).irStmt()
 
 	(&IntType{}).irType()
 	(&StringType{}).irType()
 	(&BoolType{}).irType()
 	(&Float64Type{}).irType()
+	(&SliceType{}).irType()
 }
 
 // TestNilListHelpers exercises the nil-vs-empty branch of the slice
@@ -236,6 +360,11 @@ func TestPropagatedDecodeErrors(t *testing.T) {
 		{"BinOp", `{"kind":"BinOp","op":42}`, exprErr},
 		{"UnaryOp", `{"kind":"UnaryOp","op":42}`, exprErr},
 		{"Selector", `{"kind":"Selector","sel":42}`, exprErr},
+		{"SliceLit", `{"kind":"SliceLit","elems":"not-array"}`, exprErr},
+		{"IndexExpr", `{"kind":"IndexExpr","x":42}`, exprErr},
+		{"SliceExpr", `{"kind":"SliceExpr","x":42}`, exprErr},
+		{"BuiltinCall expr", `{"kind":"BuiltinCall","args":"not-array"}`, exprErr},
+		{"BuiltinCall stmt", `{"kind":"BuiltinCall","args":"not-array"}`, stmtErr},
 	}
 
 	for _, tc := range cases {
@@ -285,6 +414,15 @@ func TestPropagatedChildErrors(t *testing.T) {
 		{"BinOp.Y bad child", `{"kind":"BinOp","y":` + bad + `}`, exprErr},
 		{"UnaryOp.X bad child", `{"kind":"UnaryOp","x":` + bad + `}`, exprErr},
 		{"Selector.X bad child", `{"kind":"Selector","x":` + bad + `}`, exprErr},
+		{"SliceLit.Elem bad type", `{"kind":"SliceLit","elem":` + bad + `}`, exprErr},
+		{"SliceLit.Elems bad child", `{"kind":"SliceLit","elem":{"kind":"IntType"},"elems":[` + bad + `]}`, exprErr},
+		{"IndexExpr.X bad child", `{"kind":"IndexExpr","x":` + bad + `}`, exprErr},
+		{"IndexExpr.Index bad child", `{"kind":"IndexExpr","x":{"kind":"Ident","name":"s"},"index":` + bad + `}`, exprErr},
+		{"SliceExpr.X bad child", `{"kind":"SliceExpr","x":` + bad + `}`, exprErr},
+		{"SliceExpr.Low bad child", `{"kind":"SliceExpr","x":{"kind":"Ident","name":"s"},"low":` + bad + `}`, exprErr},
+		{"SliceExpr.High bad child", `{"kind":"SliceExpr","x":{"kind":"Ident","name":"s"},"high":` + bad + `}`, exprErr},
+		{"BuiltinCall.Args bad child as expr", `{"kind":"BuiltinCall","name":"len","args":[` + bad + `]}`, exprErr},
+		{"BuiltinCall.Args bad child as stmt", `{"kind":"BuiltinCall","name":"panic","args":[` + bad + `]}`, stmtErr},
 	}
 
 	for _, tc := range cases {

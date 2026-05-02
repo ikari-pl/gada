@@ -78,10 +78,11 @@ exercising slices, maps, append, len, cap, defer, panic, recover.
       *Verify:* `cd compiler && go test ./internal/emit/... -run Slice && go test ./internal/translate/... -run Slice && go test ./internal/ir/... -run Slice`
       *Done when:* `[]int{1,2,3}`, `append`, `s[i]`, `s[i:j]`, `len`, `cap` all emit to `Gada.Core.Slices` calls; one runtime instantiation per element type; coverage ≥ 95% on the new emit code; runtime/ 100% gate held.
 
-  - [ ] **(a) IR additions — SliceType, SliceLit, IndexExpr, SliceExpr, BuiltinCall**
+  - [x] **(a) IR additions — SliceType, SliceLit, IndexExpr, SliceExpr, BuiltinCall**
         *Files:* `compiler/internal/ir/ir.go`, `compiler/internal/ir/ir_test.go`
         *Verify:* `cd compiler && go test ./internal/ir/...`
         *Done when:* five new node types, each with `MarshalJSON` + `UnmarshalJSON`, all wired into `unmarshalType`/`unmarshalExpr`/`unmarshalStmt` dispatchers; JSON round-trip is `reflect.DeepEqual`-stable; coverage ≥ 95%.
+        *Done 2026-05-02:* `SliceType{Elem Type}` joins the Type sum and dispatches via `unmarshalType`; `SliceLit{Elem, Elems}`, `IndexExpr{X, Index}`, `SliceExpr{X, Low, High}` join the Expr sum and dispatch via `unmarshalExpr`; `BuiltinCall{Name, Args}` is *both* an Expr and a Stmt (Go allows `panic(x)` as a stmt and `recover()` as an expr-position) and dispatches from both `unmarshalExpr` and `unmarshalStmt`. Each gets `MarshalJSON` / `UnmarshalJSON` with the standard kind-discriminated envelope; `unmarshalOptionalExpr` is reused for the bound-may-be-nil fields of `SliceExpr` so `s[:]` / `s[i:]` / `s[:j]` round-trip stable. SliceType + SliceLit `UnmarshalJSON` enforce Elem-not-nil with an explicit `ir: SliceType missing elem` error so a Phase-2-buggy translator can't hand the emitter a typeless slice. `TestRoundTripSliceCorpus` exercises every new node in one structure (including a stmt-position `panic("boom")` and an expr-position `len(xs)`); `TestPropagatedDecodeErrors` and `TestPropagatedChildErrors` gain entries for each new variant; `TestSliceType{Missing,Bad}Elem` + `TestSliceLit{Missing,Bad}Elem` lock the explicit guards. Coverage on `compiler/internal/ir/ir.go`: 98.4% (baseline pre-change ~98%, holds the 90% gate on `compiler/`). `go test ./...` green; `go vet` clean.
 
   - [ ] **(b) translate — composite literal, index, slice expr, builtins**
         *Files:* `compiler/internal/translate/translate.go`, `compiler/internal/translate/translate_test.go`, `compiler/internal/translate/testdata/slice_*.{go,golden.json}`

@@ -74,19 +74,69 @@ exercising slices, maps, append, len, cap, defer, panic, recover.
       *Done 2026-05-02:* Generic over `(Payload_Type, Default)` so the per-program panic-value type stays statically typed (compiler-emit instantiates once per transpiled program; production programs use `Gada.Reflect.Any` once Phase 4 lands). `Do_Panic (Value)` pushes onto a fixed 16-entry pending-panic stack and raises `Panicking`; `Recover` pops the most recent payload and returns it (or `Default` if none in flight); `Is_Panicking` reports the pending state. Pending stack is bounded — 17th nested panic raises `Constraint_Error` rather than silently truncating, matching the defensive-correctness contract. Single global stack for v1 single-threaded runtime; promotes to per-task TLS once Phase 3's goroutine scheduler arrives. The runtime owns the *data* plane; converting "we recovered" into "the function returns normally" is the *control* plane that Phase 2 item 8's compiler-emit per-function wrapper does (catches `Panicking`, re-raises iff `Is_Panicking` is still True). Suite (5 tests) covers payload round-trip, Recover-when-clean → Default, nested panics LIFO ordering across two recover frames, pending-stack overflow → Constraint_Error, and the end-to-end Defer + Do_Panic + Recover integration that the compiler-emit shape produces. Coverage on `runtime/src/gada-core-panic.adb`: 17/17 lines (100%); spec 1/1; runtime/ gate held at 118/118 across 7 files.
 
 - [ ] **Compiler emission — slice operations**
-      *Files:* `compiler/internal/emit/slice.go`, golden tests in `compiler/testdata/slice/`
-      *Verify:* `cd compiler && go test ./internal/emit/... -run Slice`
-      *Done when:* `[]int{1,2,3}`, `append`, `s[i:j]`, `len`, `cap` all emit to `Gada.Core.Slices` calls; coverage ≥ 95%.
+      *Files:* (see sub-items below)
+      *Verify:* `cd compiler && go test ./internal/emit/... -run Slice && go test ./internal/translate/... -run Slice && go test ./internal/ir/... -run Slice`
+      *Done when:* `[]int{1,2,3}`, `append`, `s[i]`, `s[i:j]`, `len`, `cap` all emit to `Gada.Core.Slices` calls; one runtime instantiation per element type; coverage ≥ 95% on the new emit code; runtime/ 100% gate held.
+
+  - [ ] **(a) IR additions — SliceType, SliceLit, IndexExpr, SliceExpr, BuiltinCall**
+        *Files:* `compiler/internal/ir/ir.go`, `compiler/internal/ir/ir_test.go`
+        *Verify:* `cd compiler && go test ./internal/ir/...`
+        *Done when:* five new node types, each with `MarshalJSON` + `UnmarshalJSON`, all wired into `unmarshalType`/`unmarshalExpr`/`unmarshalStmt` dispatchers; JSON round-trip is `reflect.DeepEqual`-stable; coverage ≥ 95%.
+
+  - [ ] **(b) translate — composite literal, index, slice expr, builtins**
+        *Files:* `compiler/internal/translate/translate.go`, `compiler/internal/translate/translate_test.go`, `compiler/internal/translate/testdata/slice_*.{go,golden.json}`
+        *Verify:* `cd compiler && go test ./internal/translate/... -run Slice`
+        *Done when:* `[]T` rejected → recognised as `SliceType`; `[]T{a,b,c}` → `SliceLit`; `s[i]` → `IndexExpr`; `s[i:j]` (and `s[i:]`, `s[:j]`, `s[:]`) → `SliceExpr`; `append`/`len`/`cap` calls of arity ≥ 1 with bare-identifier `Fun` → `BuiltinCall`; six golden fixtures cover the surface; corpus-completeness guard updated.
+
+  - [ ] **(c) emit — instantiation preamble + per-call dispatch**
+        *Files:* `compiler/internal/emit/emit.go`, `compiler/internal/emit/emit_test.go`, `compiler/internal/emit/testdata/slice_*.golden.adb`
+        *Verify:* `cd compiler && go test ./internal/emit/... -run Slice`
+        *Done when:* every distinct slice element type in a file gets one `package Slices_Of_<T> is new Gada.Core.Slices (...)` declaration in the declarative region; `with Gada.Core.Slices;` added at top when any slice op appears; `[]T{...}` → `Slices_Of_<T>.From_Array ([…])`; `s[i]` → `Slices_Of_<T>.Element (S, I)`; `s[i:j]` → `Slices_Of_<T>.Slice_Of (S, I, J)`; `append(s, x)` → `Slices_Of_<T>.Append (S, X)`; `len(s)` → `Slices_Of_<T>.Length (S)`; `cap(s)` → `Slices_Of_<T>.Capacity (S)`; six golden fixtures byte-equal; emit-side coverage ≥ 95%.
+
+  - [ ] **(d) Slice runtime — From_Array constructor + emit-shape adjustments**
+        *Files:* `runtime/src/gada-core-slices.{ads,adb}`, `runtime/tests/slices_suite.{ads,adb}`
+        *Verify:* `make -C runtime test PKG=core.slices`
+        *Done when:* `function From_Array (Items : Element_Array) return Slice` lands (compiler-emit needs a single-call constructor for `[]T{1,2,3}`); test coverage 100% on the new lines.
 
 - [ ] **Compiler emission — map operations**
-      *Files:* `compiler/internal/emit/map.go`, golden tests
-      *Verify:* `cd compiler && go test ./internal/emit/... -run Map`
-      *Done when:* `map[string]int{}`, lookup, delete, range emit correctly.
+      *Files:* (see sub-items below)
+      *Verify:* `cd compiler && go test ./internal/emit/... -run Map && go test ./internal/translate/... -run Map && go test ./internal/ir/... -run Map`
+      *Done when:* `map[K]V{}`, `m[k]` lookup, `m[k] = v` insert, `delete(m, k)`, and `for k, v := range m` all emit correctly; one runtime instantiation per `map[K]V` shape.
+
+  - [ ] **(a) IR additions — MapType, MapLit, MapEntry, RangeStmt**
+        *Files:* `compiler/internal/ir/ir.go`, `compiler/internal/ir/ir_test.go`
+        *Verify:* `cd compiler && go test ./internal/ir/... -run Map`
+        *Done when:* four new nodes wired through unmarshal dispatchers; round-trip stable; coverage ≥ 95%.
+
+  - [ ] **(b) translate — map composite, range, delete**
+        *Files:* `compiler/internal/translate/translate.go`, golden fixtures
+        *Verify:* `cd compiler && go test ./internal/translate/... -run Map`
+        *Done when:* `map[K]V{...}` → `MapLit`; `for k, v := range m` → `RangeStmt`; `delete(m, k)` → `BuiltinCall("delete", …)`; `m[k]` lookup-as-expr → `IndexExpr`; `m[k] = v` insert-as-stmt → `Assign` with IndexExpr on LHS.
+
+  - [ ] **(c) emit — map instantiation preamble + per-call dispatch**
+        *Files:* `compiler/internal/emit/emit.go`, golden fixtures
+        *Verify:* `cd compiler && go test ./internal/emit/... -run Map`
+        *Done when:* `package Maps_Of_<K>_To_<V> is new Gada.Core.Maps (...)` per shape; lookup/insert/delete/range all dispatch to the right runtime call; goldens byte-equal.
 
 - [ ] **Compiler emission — defer/panic/recover**
-      *Files:* `compiler/internal/emit/control.go`, golden tests
-      *Verify:* `cd compiler && go test ./internal/emit/... -run Control`
-      *Done when:* `defer`, `panic`, `recover` emit correct GADA.Core calls + scope-exit hooks.
+      *Files:* (see sub-items below)
+      *Verify:* `cd compiler && go test ./internal/emit/... -run Control && go test ./internal/translate/... -run Control && go test ./internal/ir/... -run Control`
+      *Done when:* `defer f()`, `panic(x)`, `recover()` all emit correct `Gada.Core.Defer` / `Gada.Core.Panic` calls with one per-function panic-recover wrapper.
+
+  - [ ] **(a) IR additions — DeferStmt + Panic/Recover BuiltinCalls**
+        *Files:* `compiler/internal/ir/ir.go`, `compiler/internal/ir/ir_test.go`
+        *Verify:* `cd compiler && go test ./internal/ir/... -run Control`
+        *Done when:* DeferStmt added to stmt dispatcher; round-trip stable.
+
+  - [ ] **(b) translate — defer, panic, recover**
+        *Files:* `compiler/internal/translate/translate.go`, golden fixtures
+        *Verify:* `cd compiler && go test ./internal/translate/... -run Control`
+        *Done when:* `defer call()` → `DeferStmt{Call}`; `panic(x)` → `BuiltinCall("panic", x)`; `recover()` → `BuiltinCall("recover")`.
+
+  - [ ] **(c) emit — defer-block declarations + per-function panic wrapper**
+        *Files:* `compiler/internal/emit/emit.go`, golden fixtures
+        *Verify:* `cd compiler && go test ./internal/emit/... -run Control`
+        *Done when:* every function with a `defer` gains one `Defer_<N> : Defer_Block (Op => Defer_Closure_<N>'Access);` per defer site (closures are nested parameterless procedures the emitter synthesises); functions that call `panic`/`recover` are wrapped in `begin … exception when Panicking => …; end;` blocks; goldens byte-equal.
 
 - [ ] **`collections` example**
       *Files:* `examples/collections/collections.go`, `examples/collections/expected_output.txt`

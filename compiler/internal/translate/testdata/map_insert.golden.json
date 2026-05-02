@@ -1,0 +1,60 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "map_insert.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "f",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "m",
+              "type": {
+                "kind": "MapType",
+                "key": {
+                  "kind": "IntType"
+                },
+                "value": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "IndexExpr",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "m"
+                  },
+                  "index": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "1"
+                  }
+                }
+              ],
+              "define": false,
+              "rhs": [
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "2"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -95,17 +95,23 @@ jobs:
           # adds the first external import.
           cache: false
 
-      - name: Install lcov (Ada coverage tracefile generator)
+      - name: Install Ada-side system packages (lcov, bdw-gc, pkg-config)
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y lcov
+          sudo apt-get install -y lcov libgc-dev pkg-config
           # tools/coverage_ada.sh assumes lcov 2.x ergonomics (specifically
           # the doubled `--ignore-errors inconsistent,empty,negative,gcov`
           # form). ubuntu-latest currently provides lcov 2.x; print the
           # version into the log so a future Ubuntu LTS regression is
           # immediately visible from the CI output.
           lcov --version
+          # bdw-gc is the v1 GC per ADR-0003; resolved via pkg-config per
+          # ADR-0005. `make bootstrap` refuses to proceed if bdw-gc.pc is
+          # not discoverable, so install it here before any make-target
+          # runs. Print the version so a future apt-package regression is
+          # visible from the CI log.
+          pkg-config --modversion bdw-gc
 
       - name: Install golangci-lint
         run: |
@@ -148,8 +154,35 @@ jobs:
           # against the latest published version.
           alr -n index --update-all
 
+      - name: Pre-fetch runtime crate dependencies (aunit, ...)
+        # `alr -n toolchain --select` configures the compiler but does NOT
+        # materialise crate dependencies. AUnit is declared in
+        # `runtime/alire.toml` and `with`-imported by `tests/aunit_harness.gpr`,
+        # so its `.gpr` must be on `GPR_PROJECT_PATH` before gprbuild runs.
+        # `alr -n build` from the runtime crate triggers Alire's resolve +
+        # fetch + build cycle, which lays out aunit (and any other
+        # transitive deps) under `~/.cache/alire/builds/...` and registers
+        # them in the GPR project path that subsequent `alr exec --
+        # gprbuild` invocations inherit. Without this step, fresh runners
+        # fail with `aunit_harness.gpr:19:06: imported project file "aunit"
+        # not found` because the cache is empty.
+        run: |
+          set -euo pipefail
+          cd runtime
+          alr -n build
+
       - name: Run make ci
         run: make ci
+
+      # The `stress.gc` suite is *opt-in* per
+      # `runtime/tests/test_runner.adb`'s registration filter: an
+      # unfiltered `make test` (which `make ci` runs) skips it so
+      # PR-time wall-clock stays bounded. CI wires it as a separate
+      # step here so the GC stress contract from
+      # roadmap/02-core-runtime.md item 10 ("5M × 64 B atomic allocs
+      # keep Heap_Size < 200 MB") is enforced on every push.
+      - name: Run runtime stress.gc suite
+        run: make -C runtime test PKG=stress.gc
 
       - name: Upload coverage artifact
         # Always upload even on failure; partial coverage output is useful
@@ -206,6 +239,19 @@ jobs:
           # verbatim so the two jobs stay in lockstep.
           cache: false
 
+      - name: Install Ada-side system packages (libgc, pkg-config)
+        # gada_core.gpr (imported by every emitted project via the
+        # template) links against libgc per ADR-0005. Without
+        # libgc-dev the link fails with `_GC_init` undefined; without
+        # pkg-config the bdw-gc.pc lookup that gada_core.gpr does at
+        # build time fails earlier. Mirrors the build-test-coverage
+        # job's install step (minus lcov, not needed here).
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libgc-dev pkg-config
+          pkg-config --modversion bdw-gc
+
       - name: Install Alire (official tarball)
         run: |
           set -euo pipefail
@@ -224,6 +270,16 @@ jobs:
           alr -n toolchain --select gnat_native gprbuild
           alr -n index --update-all
 
+      - name: Pre-fetch runtime crate dependencies (aunit, ...)
+        # Same rationale as the build/test/coverage job: AUnit and any
+        # transitive Alire deps must be materialised under the build
+        # cache before `alr exec -- gprbuild` can resolve them. `alr`
+        # also needs a crate context to operate, hence the `cd runtime`.
+        run: |
+          set -euo pipefail
+          cd runtime
+          alr -n build
+
       - name: Expose gprbuild on PATH
         # `alr toolchain --select` installs gnat_native + gprbuild into
         # Alire's per-user cache but does NOT, by itself, put `gprbuild`
@@ -231,8 +287,13 @@ jobs:
         # crate's Makefile uses `alr exec`; the top-level `gada build`
         # driver shells out to `gprbuild` directly via $PATH, so we have
         # to surface the alire-installed binary.
+        #
+        # `alr exec` requires a crate context (an alire.toml in cwd or
+        # a parent), so this step cd's into runtime/ — without that,
+        # alr exits 1 with "Cannot continue without a workspace".
         run: |
           set -euo pipefail
+          cd runtime
           GPRBUILD_BIN="$(alr -n exec -- which gprbuild)"
           GPRBUILD_DIR="$(dirname "$GPRBUILD_BIN")"
           echo "$GPRBUILD_DIR" >> "$GITHUB_PATH"
@@ -244,7 +305,27 @@ jobs:
         # binary, and `diff -u`s its stdout against expected_output.txt.
         # Any mismatch (IR change, emit change, runtime change, or stale
         # expected_output.txt) fails this step.
-        run: make example HELLO=hello
+        #
+        # GADA_GC_LDFLAGS surfaces the libgc link switches into the
+        # emitted project's `package Linker` (see template.gpr.tmpl);
+        # without it, the link fails with `_GC_*` undefined externals
+        # because gprbuild does not propagate Linker switches from
+        # imported library projects (ADR-0005).
+        run: |
+          set -euo pipefail
+          export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
+          make example HELLO=hello
+
+      - name: Run make example HELLO=collections
+        # The Phase-2 exit-criterion target (roadmap/02-core-runtime
+        # item 9). Exercises slices, maps, defer, panic, recover end-
+        # to-end through the IR -> translate -> emit -> gprbuild -> run
+        # pipeline; expected output is `slice ok / range ok / recovered
+        # / complete / end`.
+        run: |
+          set -euo pipefail
+          export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
+          make example HELLO=collections
 
       - name: Upload example binary as artifact
         # Always upload — even on failure the partially-built binary (when

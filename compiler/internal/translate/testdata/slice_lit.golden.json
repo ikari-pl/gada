@@ -1,0 +1,60 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "slice_lit.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "three",
+          "params": null,
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "SliceLit",
+                  "elem": {
+                    "kind": "IntType"
+                  },
+                  "elems": [
+                    {
+                      "kind": "Lit",
+                      "litKind": "int",
+                      "value": "1"
+                    },
+                    {
+                      "kind": "Lit",
+                      "litKind": "int",
+                      "value": "2"
+                    },
+                    {
+                      "kind": "Lit",
+                      "litKind": "int",
+                      "value": "3"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

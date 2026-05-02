@@ -49,13 +49,16 @@ library project Gada_Core is
       end case;
    end Compiler;
 
-   package Linker is
-      case Build_Mode is
-         when "normal" =>
-            null;
-         when "coverage" =>
-            for Default_Switches ("Ada") use ("-lgcov");
-      end case;
-   end Linker;
+   --  No `package Linker` here.
+   --
+   --  gada_core is `Library_Kind = "static"` — gprbuild emits
+   --  `libgada_core.a` and the linker switches a static library
+   --  declares are *not* taken into account (gprbuild emits the
+   --  warning "Linker switches not taken into account in library
+   --  projects" if you try). The libgc switches needed at executable
+   --  link time live in `tests/aunit_harness.gpr` (and any future
+   --  executable project that links gada_core); the same applies to
+   --  `-lgcov` under Build_Mode=coverage. See ADR-0005 for the
+   --  resolution mechanism (pkg-config bdw-gc + external_as_list).
 
 end Gada_Core;

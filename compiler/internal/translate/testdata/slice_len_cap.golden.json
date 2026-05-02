@@ -1,0 +1,97 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "slice_len_cap.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "size",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "s",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "BuiltinCall",
+                  "name": "len",
+                  "args": [
+                    {
+                      "kind": "Ident",
+                      "name": "s"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "room",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "s",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "BuiltinCall",
+                  "name": "cap",
+                  "args": [
+                    {
+                      "kind": "Ident",
+                      "name": "s"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -30,6 +30,16 @@ var corpusFixtures = []string{
 	"for_classic", "for_infinite",
 	"return", "binop", "unaryop",
 	"selector", "combined",
+	// Phase 2 — slice operations (Item 6).
+	"slice_type_param", "slice_lit", "slice_index",
+	"slice_subslice", "slice_append", "slice_len_cap",
+	// Phase 2 — map operations (Item 7).
+	"map_type_param", "map_lit", "map_index",
+	"map_insert", "map_range", "map_delete",
+	// Phase 2 — defer / panic / recover (Item 8).
+	"defer_simple", "panic_simple", "recover_simple",
+	// Phase 2 — main-side defer / panic (Item 9 emitMain wiring).
+	"main_defer", "main_panic", "main_defer_panic",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -166,7 +176,7 @@ func TestErrorCases(t *testing.T) {
 				&ir.Assign{Define: true,
 					LHS: []ir.Expr{idn("x")},
 					RHS: []ir.Expr{idn("y")}})),
-			wantErr: "literal RHS",
+			wantErr: "literal or composite RHS",
 		},
 		{
 			name: "unknown literal kind",
@@ -611,6 +621,888 @@ func TestProjectTemplateExposed(t *testing.T) {
 	for _, w := range want {
 		if !strings.Contains(ProjectTemplate, w) {
 			t.Errorf("ProjectTemplate missing %s", w)
+		}
+	}
+}
+
+// TestSliceElementAssignment pins the `s[i] = v` lowering: assigning
+// to a slice element must route through the runtime's `Set_Element`
+// (1-based on the Ada side) rather than the default `lhs := rhs`
+// path, which would emit `Slices_Of_T.Element (S, I + 1) := V;` and
+// fail to compile because `Element` returns by-value. Equivalent
+// guard to the map-side `m[k] = v -> Insert (M, K, V)` lowering
+// already covered by the corpus.
+func TestSliceElementAssignment(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name:   "set_first",
+		Params: []*ir.Param{{Name: "s", Type: &ir.SliceType{Elem: &ir.IntType{}}}},
+		Body: []ir.Stmt{&ir.Assign{
+			LHS: []ir.Expr{&ir.IndexExpr{X: idn("s"), Index: litInt("0")}},
+			RHS: []ir.Expr{litInt("42")},
+		}},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	got := buf.String()
+	want := "Slices_Of_Integer.Set_Element (S, 0 + 1, 42);"
+	if !strings.Contains(got, want) {
+		t.Fatalf("missing %q in output:\n%s", want, got)
+	}
+	// Ensure we did NOT fall through to the default `:=` path,
+	// which would have emitted `:= 42;` (assignment to the
+	// `Element` function's return value).
+	if strings.Contains(got, "Element (S, 0 + 1) :=") {
+		t.Fatalf("emitter fell through to invalid `Element (...) :=` path:\n%s", got)
+	}
+}
+
+// TestRangeAssignFormRejected pins the Phase 2 emit guard that
+// rejects `for k, v = range m` (Tok=ASSIGN). Define=false would
+// otherwise silently emit an inner `K : T := …` shadow that
+// diverges from Go's "write back to outer k/v each iteration"
+// semantics. Phase 4 widens this to honour the assignment form.
+func TestRangeAssignFormRejected(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name: "f",
+		Params: []*ir.Param{{Name: "m",
+			Type: &ir.MapType{Key: &ir.IntType{}, Value: &ir.IntType{}}}},
+		Body: []ir.Stmt{&ir.RangeStmt{
+			KeyName:   "k",
+			ValueName: "v",
+			Define:    false, // `=` form, not `:=`
+			X:         idn("m"),
+		}},
+	})
+	var buf bytes.Buffer
+	err := Package(pkg, &buf)
+	if err == nil {
+		t.Fatalf("expected error, got success:\n%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "range with `=`") {
+		t.Fatalf("wrong error: %v", err)
+	}
+}
+
+// TestRangeBlankBypassesAssignGuard pins the corner case where the
+// Define=false rejection only triggers if the range actually binds
+// at least one name. `for range m` (no key, no value) is harmless
+// regardless of Tok and must continue to emit the cursor walk.
+func TestRangeBlankBypassesAssignGuard(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name: "count",
+		Params: []*ir.Param{{Name: "m",
+			Type: &ir.MapType{Key: &ir.IntType{}, Value: &ir.IntType{}}}},
+		Results: []*ir.Param{{Type: &ir.IntType{}}},
+		Body: []ir.Stmt{&ir.RangeStmt{Define: false, X: idn("m")},
+			&ir.Return{Results: []ir.Expr{litInt("0")}}},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Has_Element") {
+		t.Fatalf("expected cursor walk, got:\n%s", buf.String())
+	}
+}
+
+// TestRangeRestoresLocalTypes pins the localTypes save/restore so
+// that a range-bound `k`/`v` does not poison subsequent dispatch
+// for a same-named outer variable of a different type. Before the
+// save/restore was added, `len(k)` after the range loop would
+// route to `mapPkgFor`/`slicePkgFor` against the *map's* key type
+// rather than the outer `k`'s real type.
+func TestRangeRestoresLocalTypes(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name: "f",
+		Params: []*ir.Param{
+			{Name: "m", Type: &ir.MapType{Key: &ir.IntType{}, Value: &ir.IntType{}}},
+			{Name: "outerK", Type: &ir.SliceType{Elem: &ir.IntType{}}},
+		},
+		Results: []*ir.Param{{Type: &ir.IntType{}}},
+		Body: []ir.Stmt{
+			&ir.RangeStmt{KeyName: "outerK", ValueName: "v", Define: true, X: idn("m")},
+			// After the range, outerK must still be typed as a slice for
+			// `len(outerK)` dispatch — not as an Integer (the map's key
+			// type, which the range temporarily bound during the loop).
+			&ir.Return{Results: []ir.Expr{
+				&ir.BuiltinCall{Name: "len", Args: []ir.Expr{idn("outerK")}},
+			}},
+		},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	got := buf.String()
+	// `len(outerK)` after the range must dispatch to the slice
+	// `Length` call, not error out as a non-determinable instantiation.
+	if !strings.Contains(got, "Slices_Of_Integer.Len (OuterK)") {
+		t.Fatalf("expected post-range len to dispatch as slice, got:\n%s", got)
+	}
+}
+
+// TestSliceEmitErrors covers every error branch reachable from the
+// new Phase 2 slice-emission paths. Each entry pins one specific
+// failure mode so a future regression surfaces at the right call
+// site rather than as an opaque "got %T" line.
+func TestSliceEmitErrors(t *testing.T) {
+	t.Parallel()
+
+	intSliceParam := []*ir.Param{{Name: "s", Type: &ir.SliceType{Elem: &ir.IntType{}}}}
+	intSliceResult := []*ir.Param{{Type: &ir.SliceType{Elem: &ir.IntType{}}}}
+
+	cases := []struct {
+		name    string
+		pkg     *ir.Package
+		wantErr string
+	}{
+		{
+			name: "slice of slice element rejected",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Params: []*ir.Param{{Name: "s",
+					Type: &ir.SliceType{Elem: &ir.SliceType{Elem: &ir.IntType{}}}}},
+			}),
+			wantErr: "unsupported slice element type",
+		},
+		{
+			name: "index expr on non-slice ident",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  []*ir.Param{{Name: "x", Type: &ir.IntType{}}},
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.IndexExpr{X: idn("x"), Index: litInt("0")},
+				}}},
+			}),
+			wantErr: "cannot determine slice/map instantiation",
+		},
+		{
+			name: "index expr on non-ident X",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  intSliceParam,
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.IndexExpr{
+						X:     &ir.SliceLit{Elem: &ir.IntType{}},
+						Index: litInt("0"),
+					},
+				}}},
+			}),
+			wantErr: "cannot determine slice/map instantiation",
+		},
+		{
+			name: "slice expr on non-ident X",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  intSliceParam,
+				Results: intSliceResult,
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.SliceExpr{
+						X:    &ir.SliceLit{Elem: &ir.IntType{}},
+						Low:  litInt("0"),
+						High: litInt("1"),
+					},
+				}}},
+			}),
+			wantErr: "cannot determine slice instantiation",
+		},
+		{
+			name: "len on unknown ident",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "len", Args: []ir.Expr{idn("nope")}},
+				}}},
+			}),
+			wantErr: "cannot determine slice instantiation",
+		},
+		{
+			name: "append wrong arity",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  intSliceParam,
+				Results: intSliceResult,
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "append", Args: []ir.Expr{idn("s")}},
+				}}},
+			}),
+			wantErr: "append-of-N values not supported",
+		},
+		{
+			name: "len wrong arity",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  intSliceParam,
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "len", Args: []ir.Expr{idn("s"), idn("s")}},
+				}}},
+			}),
+			wantErr: "len takes exactly 1 arg",
+		},
+		{
+			name: "cap wrong arity",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  intSliceParam,
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "cap", Args: []ir.Expr{idn("s"), idn("s")}},
+				}}},
+			}),
+			wantErr: "cap takes exactly 1 arg",
+		},
+		{
+			name: "builtin zero args (slice path)",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "len", Args: nil},
+				}}},
+			}),
+			wantErr: "requires at least 1 arg",
+		},
+		{
+			name: "unsupported builtin in expression position",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "delete", Args: []ir.Expr{idn("m"), idn("k")}},
+				}}},
+			}),
+			wantErr: `cannot determine map instantiation for "delete"`,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := Package(tc.pkg, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestSliceEmptyLitDispatch covers the `[]int{}` empty-literal
+// shortcut which routes to the runtime's `Slices_Of_Integer.Empty`
+// constant rather than the From_Array call. The corpus uses non-
+// empty literals only, so this is the dedicated assertion.
+func TestSliceEmptyLitDispatch(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name:    "zero",
+		Results: []*ir.Param{{Type: &ir.SliceType{Elem: &ir.IntType{}}}},
+		Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+			&ir.SliceLit{Elem: &ir.IntType{}},
+		}}},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if !strings.Contains(buf.String(), "return Slices_Of_Integer.Empty;") {
+		t.Fatalf("expected Slices_Of_Integer.Empty dispatch, got:\n%s", buf.String())
+	}
+}
+
+// TestSliceLitInVarDecl exercises the `:=` declaration path where
+// the RHS is a SliceLit (the corpus uses SliceLit only as a return
+// expression, so the inferDeclType slice branch is otherwise dead).
+func TestSliceLitInVarDecl(t *testing.T) {
+	t.Parallel()
+	pkg := wrapMain(funcMain(
+		&ir.Assign{Define: true,
+			LHS: []ir.Expr{idn("xs")},
+			RHS: []ir.Expr{&ir.SliceLit{
+				Elem:  &ir.IntType{},
+				Elems: []ir.Expr{litInt("1"), litInt("2")},
+			}},
+		},
+	))
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Xs : Slices_Of_Integer.Slice := Slices_Of_Integer.From_Array ([1, 2]);") {
+		t.Fatalf("expected slice := decl, got:\n%s", out)
+	}
+}
+
+// TestInferRHSTypeNonIntLits covers inferRHSType's bool/string/float
+// branches which the corpus does not reach via SliceLit.
+func TestInferRHSTypeNonIntLits(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		lit  *ir.Lit
+		want ir.Type
+	}{
+		{&ir.Lit{Kind: ir.LitInt, Value: "1"}, &ir.IntType{}},
+		{&ir.Lit{Kind: ir.LitString, Value: `"x"`}, &ir.StringType{}},
+		{&ir.Lit{Kind: ir.LitBool, Value: "true"}, &ir.BoolType{}},
+		{&ir.Lit{Kind: ir.LitFloat, Value: "1.5"}, &ir.Float64Type{}},
+	}
+	for _, tc := range cases {
+		got, ok := inferRHSType(tc.lit)
+		if !ok {
+			t.Fatalf("inferRHSType(%v) = (_, false), want true", tc.lit)
+		}
+		if reflectKind(got) != reflectKind(tc.want) {
+			t.Errorf("inferRHSType(%v) = %T, want %T", tc.lit, got, tc.want)
+		}
+	}
+	// Unknown LitKind bows out with ok=false.
+	if _, ok := inferRHSType(&ir.Lit{Kind: "bogus"}); ok {
+		t.Fatal("inferRHSType(bogus literal) should report ok=false")
+	}
+	// Non-literal, non-SliceLit: also bows out.
+	if _, ok := inferRHSType(idn("x")); ok {
+		t.Fatal("inferRHSType(*ir.Ident) should report ok=false")
+	}
+}
+
+func reflectKind(t ir.Type) string {
+	if t == nil {
+		return "<nil>"
+	}
+	return t.NodeKind()
+}
+
+// TestElemBaseNameTable pins elemBaseName's basic-type table and the
+// rejection of any non-basic element. The slice fixtures only
+// exercise IntType; the other three basic types and the rejection
+// branch live here.
+func TestElemBaseNameTable(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		t    ir.Type
+		want string
+	}{
+		{&ir.IntType{}, "Integer"},
+		{&ir.StringType{}, "String"},
+		{&ir.BoolType{}, "Boolean"},
+		{&ir.Float64Type{}, "Long_Float"},
+	}
+	for _, tc := range cases {
+		got, err := elemBaseName(tc.t)
+		if err != nil {
+			t.Fatalf("elemBaseName(%T): unexpected error %v", tc.t, err)
+		}
+		if got != tc.want {
+			t.Errorf("elemBaseName(%T) = %q, want %q", tc.t, got, tc.want)
+		}
+	}
+	if _, err := elemBaseName(&ir.SliceType{Elem: &ir.IntType{}}); err == nil {
+		t.Fatal("expected error for slice-of-slice element type")
+	}
+	if _, err := slicePkgFor(&ir.SliceType{Elem: &ir.IntType{}}); err == nil {
+		t.Fatal("expected slicePkgFor to propagate the slice-of-slice error")
+	}
+}
+
+// TestTypeNameSliceAndMissing covers typeName's Phase 2 SliceType
+// case and the explicit nil/missing-type branch.
+func TestTypeNameSliceAndMissing(t *testing.T) {
+	t.Parallel()
+	got, err := typeName(&ir.SliceType{Elem: &ir.StringType{}})
+	if err != nil {
+		t.Fatalf("typeName(SliceType{StringType}): unexpected error %v", err)
+	}
+	if got != "Slices_Of_String.Slice" {
+		t.Errorf("typeName(SliceType{StringType}) = %q, want %q", got, "Slices_Of_String.Slice")
+	}
+	if _, err := typeName(nil); err == nil {
+		t.Fatal("expected error for nil type")
+	}
+}
+
+// TestEmitSliceLitOfStringFloatBool covers the three basic-type slice
+// instantiations the corpus does not exercise (corpus is integer-
+// only). Together with TestEmitCorpus they pin every basic-type
+// slice path.
+func TestEmitSliceLitOfStringFloatBool(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		elem     ir.Type
+		wantInst string
+	}{
+		{"string", &ir.StringType{},
+			"package Slices_Of_String is new Gada.Core.Slices (Element_Type => String);"},
+		{"bool", &ir.BoolType{},
+			"package Slices_Of_Boolean is new Gada.Core.Slices (Element_Type => Boolean);"},
+		{"float64", &ir.Float64Type{},
+			"package Slices_Of_Long_Float is new Gada.Core.Slices (Element_Type => Long_Float);"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pkg := wrapPkg(&ir.Function{
+				Name:    "f",
+				Results: []*ir.Param{{Type: &ir.SliceType{Elem: tc.elem}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.SliceLit{Elem: tc.elem},
+				}}},
+			})
+			var buf bytes.Buffer
+			if err := Package(pkg, &buf); err != nil {
+				t.Fatalf("emit: %v", err)
+			}
+			if !strings.Contains(buf.String(), tc.wantInst) {
+				t.Fatalf("expected %q in:\n%s", tc.wantInst, buf.String())
+			}
+		})
+	}
+}
+
+// TestMapEmitErrors covers every error branch reachable from the
+// new Phase 2 map-emission paths. Each case pins one specific failure
+// mode so a future regression surfaces at the right call site rather
+// than as an opaque "got %T" line. Together with TestSliceEmitErrors
+// these pin the negative-space surface of the per-call dispatchers.
+func TestMapEmitErrors(t *testing.T) {
+	t.Parallel()
+
+	intMap := &ir.MapType{Key: &ir.IntType{}, Value: &ir.IntType{}}
+	intMapParam := []*ir.Param{{Name: "m", Type: intMap}}
+
+	cases := []struct {
+		name    string
+		pkg     *ir.Package
+		wantErr string
+	}{
+		{
+			name: "unsupported map key type (string awaits Phase 4)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Params: []*ir.Param{{Name: "m",
+					Type: &ir.MapType{Key: &ir.StringType{}, Value: &ir.IntType{}}}},
+			}),
+			wantErr: "map keys of type string await Phase 4",
+		},
+		{
+			name: "unsupported map value type (string awaits Phase 4)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Params: []*ir.Param{{Name: "m",
+					Type: &ir.MapType{Key: &ir.IntType{}, Value: &ir.StringType{}}}},
+			}),
+			wantErr: "map values of type string await Phase 4",
+		},
+		{
+			name: "delete wrong arity",
+			pkg: wrapPkg(&ir.Function{
+				Name:   "f",
+				Params: intMapParam,
+				Body: []ir.Stmt{
+					&ir.BuiltinCall{Name: "delete", Args: []ir.Expr{idn("m")}},
+				},
+			}),
+			wantErr: "delete takes exactly 2 args",
+		},
+		{
+			name: "len(map) wrong arity",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Params:  intMapParam,
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "len", Args: []ir.Expr{idn("m"), idn("m")}},
+				}}},
+			}),
+			// emitBuiltinCall only routes to emitMapBuiltin when arity==1;
+			// arity≠1 falls through to slice path, which fails first arg
+			// resolution because m is a map ident.
+			wantErr: "cannot determine slice instantiation",
+		},
+		{
+			name: "delete on non-map ident (no instantiation)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{
+					&ir.BuiltinCall{Name: "delete", Args: []ir.Expr{idn("nope"), litInt("1")}},
+				},
+			}),
+			wantErr: `cannot determine map instantiation for "delete"`,
+		},
+		{
+			name: "delete zero args (stmt position)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{
+					&ir.BuiltinCall{Name: "delete", Args: nil},
+				},
+			}),
+			wantErr: `requires at least 1 arg`,
+		},
+		{
+			name: "stmt-position builtin not delete",
+			pkg: wrapPkg(&ir.Function{
+				Name:   "f",
+				Params: intMapParam,
+				Body: []ir.Stmt{
+					&ir.BuiltinCall{Name: "len", Args: []ir.Expr{idn("m")}},
+				},
+			}),
+			wantErr: `builtin "len" at statement position not supported`,
+		},
+		{
+			name: "range over non-map (non-Ident X)",
+			pkg: wrapPkg(&ir.Function{
+				Name:   "f",
+				Params: intMapParam,
+				Body: []ir.Stmt{
+					&ir.RangeStmt{
+						KeyName: "k", ValueName: "v", Define: true,
+						X:    &ir.MapLit{Key: &ir.IntType{}, Value: &ir.IntType{}},
+						Body: nil,
+					},
+				},
+			}),
+			wantErr: "range supports only map values in Phase 2",
+		},
+		{
+			name: "range over unknown ident",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{
+					&ir.RangeStmt{
+						KeyName: "k", ValueName: "v", Define: true,
+						X:    idn("nope"),
+						Body: nil,
+					},
+				},
+			}),
+			wantErr: "range supports only map values in Phase 2",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := Package(tc.pkg, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestMapKeyValueBaseNameTable pins the basic-type acceptance table
+// for map keys and values plus the explicit Phase-4 deferral message
+// for String. The corpus only exercises Integer→Integer, so the
+// other supported pairs and the rejection branches live here.
+func TestMapKeyValueBaseNameTable(t *testing.T) {
+	t.Parallel()
+	keyAccepts := []struct {
+		t    ir.Type
+		want string
+	}{
+		{&ir.IntType{}, "Integer"},
+		{&ir.BoolType{}, "Boolean"},
+		{&ir.Float64Type{}, "Long_Float"},
+	}
+	for _, tc := range keyAccepts {
+		got, err := mapKeyBaseName(tc.t)
+		if err != nil {
+			t.Fatalf("mapKeyBaseName(%T): unexpected error %v", tc.t, err)
+		}
+		if got != tc.want {
+			t.Errorf("mapKeyBaseName(%T) = %q, want %q", tc.t, got, tc.want)
+		}
+	}
+	if _, err := mapKeyBaseName(&ir.StringType{}); err == nil {
+		t.Fatal("mapKeyBaseName(StringType): expected Phase-4 deferral error")
+	}
+	if _, err := mapKeyBaseName(&ir.SliceType{Elem: &ir.IntType{}}); err == nil {
+		t.Fatal("mapKeyBaseName(SliceType): expected unsupported-type error")
+	}
+
+	for _, tc := range keyAccepts {
+		got, err := mapValueBaseName(tc.t)
+		if err != nil {
+			t.Fatalf("mapValueBaseName(%T): unexpected error %v", tc.t, err)
+		}
+		if got != tc.want {
+			t.Errorf("mapValueBaseName(%T) = %q, want %q", tc.t, got, tc.want)
+		}
+	}
+	if _, err := mapValueBaseName(&ir.StringType{}); err == nil {
+		t.Fatal("mapValueBaseName(StringType): expected Phase-4 deferral error")
+	}
+	if _, err := mapValueBaseName(&ir.SliceType{Elem: &ir.IntType{}}); err == nil {
+		t.Fatal("mapValueBaseName(SliceType): expected unsupported-type error")
+	}
+
+	// mapPairKey propagates both branches; mapPkgFor in turn propagates
+	// mapPairKey. Pin both forwarders so a refactor that swaps to a
+	// silent fallback fails here.
+	if _, err := mapPairKey(&ir.MapType{Key: &ir.StringType{}, Value: &ir.IntType{}}); err == nil {
+		t.Fatal("mapPairKey: expected key-side error to propagate")
+	}
+	if _, err := mapPairKey(&ir.MapType{Key: &ir.IntType{}, Value: &ir.StringType{}}); err == nil {
+		t.Fatal("mapPairKey: expected value-side error to propagate")
+	}
+	if _, err := mapPkgFor(&ir.MapType{Key: &ir.StringType{}, Value: &ir.IntType{}}); err == nil {
+		t.Fatal("mapPkgFor: expected error to propagate from mapPairKey")
+	}
+}
+
+// TestMapDefaultLiteralTable pins the per-value-type Default_Value
+// formal the runtime instantiation receives. Integer is corpus-
+// covered; the other two basic types and the unreachable-fallback
+// guard live here.
+func TestMapDefaultLiteralTable(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		t    ir.Type
+		want string
+	}{
+		{&ir.IntType{}, "0"},
+		{&ir.BoolType{}, "False"},
+		{&ir.Float64Type{}, "0.0"},
+		// Unreachable-fallback for an unsupported value type. recordMapPair
+		// already filters these in the pre-scan, so this case proves the
+		// fallback isn't load-bearing — but we keep it in case a future
+		// refactor changes the dispatch order.
+		{&ir.StringType{}, "0"},
+	}
+	for _, tc := range cases {
+		got := mapDefaultLiteral(tc.t)
+		if got != tc.want {
+			t.Errorf("mapDefaultLiteral(%T) = %q, want %q", tc.t, got, tc.want)
+		}
+	}
+}
+
+// TestMapInstantiationViaResultType drives recordTypeInTree's
+// MapType case via a function *result* (rather than a parameter, as
+// the corpus uses). The corpus's map fixtures all have map params
+// only; the result-type branch needs separate cover.
+func TestMapInstantiationViaResultType(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name:    "make_one",
+		Results: []*ir.Param{{Type: &ir.MapType{Key: &ir.IntType{}, Value: &ir.BoolType{}}}},
+		Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+			&ir.MapLit{Key: &ir.IntType{}, Value: &ir.BoolType{}},
+		}}},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Maps_Of_Integer_To_Boolean") {
+		t.Fatalf("expected Maps_Of_Integer_To_Boolean instantiation, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Default_Value => False") {
+		t.Fatalf("expected Default_Value => False, got:\n%s", out)
+	}
+}
+
+// TestMapLitNonEmptyInVarDecl drives emitMapLit through the
+// non-empty `:=` declaration path (the corpus covers only function-
+// body composite literals; the `:=` flow is reachable from elided-
+// type contexts that the translator-side accepts).
+func TestMapLitNonEmptyInVarDecl(t *testing.T) {
+	t.Parallel()
+	pkg := wrapMain(funcMain(
+		&ir.Assign{Define: true,
+			LHS: []ir.Expr{idn("m")},
+			RHS: []ir.Expr{&ir.MapLit{
+				Key: &ir.IntType{}, Value: &ir.IntType{},
+				Entries: []*ir.MapEntry{{Key: litInt("1"), Value: litInt("2")}},
+			}},
+		},
+	))
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "M : Maps_Of_Integer_To_Integer.Map :=") {
+		t.Fatalf("expected map := decl, got:\n%s", out)
+	}
+	if !strings.Contains(out, "From_Pairs ([(K => 1, V => 2)])") {
+		t.Fatalf("expected From_Pairs aggregate, got:\n%s", out)
+	}
+}
+
+// TestDeferPanicEmitErrors covers every error branch reachable from
+// the new Phase 2 defer/panic/recover emission paths. Each case pins
+// one specific failure mode so a future regression surfaces at the
+// right call site.
+func TestDeferPanicEmitErrors(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		pkg     *ir.Package
+		wantErr string
+	}{
+		{
+			name: "panic wrong arity (0 args, stmt)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{
+					&ir.BuiltinCall{Name: "panic", Args: nil},
+				},
+			}),
+			wantErr: "panic takes exactly 1 arg",
+		},
+		{
+			name: "panic in expression position (return)",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "panic", Args: []ir.Expr{litInt("1")}},
+				}}},
+			}),
+			wantErr: "panic in expression position",
+		},
+		{
+			name: "recover with args (in return)",
+			pkg: wrapPkg(&ir.Function{
+				Name:    "f",
+				Results: []*ir.Param{{Type: &ir.IntType{}}},
+				Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.BuiltinCall{Name: "recover", Args: []ir.Expr{litInt("1")}},
+				}}},
+			}),
+			wantErr: "recover takes no args",
+		},
+		{
+			name: "defer holds unexpected stmt (Return)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{&ir.DeferStmt{Call: &ir.Return{}}},
+			}),
+			wantErr: "defer holds unexpected stmt",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := Package(tc.pkg, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestZeroLiteralOfTable pins the per-type zero-value table used by
+// the per-function panic-recover wrapper's exception path. Integer is
+// corpus-covered; the other three basic types and the unreachable
+// fallback live here.
+func TestZeroLiteralOfTable(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		t    ir.Type
+		want string
+	}{
+		{&ir.IntType{}, "0"},
+		{&ir.BoolType{}, "False"},
+		{&ir.Float64Type{}, "0.0"},
+		{&ir.StringType{}, `""`},
+		// Unreachable fallback for an unsupported type. The pre-scan
+		// rejects panic of unsupported types before the wrapper would
+		// emit; the fallback is defensive.
+		{&ir.SliceType{Elem: &ir.IntType{}}, "0"},
+	}
+	for _, tc := range cases {
+		got := zeroLiteralOf(tc.t)
+		if got != tc.want {
+			t.Errorf("zeroLiteralOf(%T) = %q, want %q", tc.t, got, tc.want)
+		}
+	}
+}
+
+// TestDeferAndPanicCombined exercises the per-function panic-recover
+// wrapper *with* a defer site present — the corpus exercises each in
+// isolation but not the combined shape.
+func TestDeferAndPanicCombined(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name:    "f",
+		Results: []*ir.Param{{Type: &ir.BoolType{}}},
+		Body: []ir.Stmt{
+			&ir.DeferStmt{Call: &ir.Call{Fun: idn("cleanup")}},
+			&ir.BuiltinCall{Name: "panic", Args: []ir.Expr{litInt("99")}},
+			&ir.Return{Results: []ir.Expr{
+				&ir.Lit{Kind: ir.LitBool, Value: "true"},
+			}},
+		},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Defer_Closure_1") {
+		t.Fatalf("expected Defer_Closure_1, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Panic_Of_Integer.Do_Panic (99);") {
+		t.Fatalf("expected Do_Panic (99), got:\n%s", out)
+	}
+	if !strings.Contains(out, "return False;") {
+		t.Fatalf("expected default-return False on exception path, got:\n%s", out)
+	}
+}
+
+// TestDeferInNestedBlocks exercises collectDefers's recursion through
+// if / for / range. Go semantics: defer is bound to the enclosing
+// *function*, not the lexical block, so nested defers hoist all the
+// way out to the top-level declarative region.
+func TestDeferInNestedBlocks(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name: "f",
+		Body: []ir.Stmt{
+			&ir.If{
+				Cond: &ir.Lit{Kind: ir.LitBool, Value: "true"},
+				Then: []ir.Stmt{&ir.DeferStmt{Call: &ir.Call{Fun: idn("a")}}},
+				Else: []ir.Stmt{&ir.DeferStmt{Call: &ir.Call{Fun: idn("b")}}},
+			},
+			&ir.For{
+				Body: []ir.Stmt{&ir.DeferStmt{Call: &ir.Call{Fun: idn("c")}}},
+			},
+		},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{"Defer_Closure_1", "Defer_Closure_2", "Defer_Closure_3"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %s, got:\n%s", want, out)
 		}
 	}
 }

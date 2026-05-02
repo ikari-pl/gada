@@ -1,0 +1,107 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "slice_index.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "first",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "s",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "IndexExpr",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "s"
+                  },
+                  "index": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "0"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "at",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "s",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            },
+            {
+              "kind": "Param",
+              "name": "i",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "IndexExpr",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "s"
+                  },
+                  "index": {
+                    "kind": "Ident",
+                    "name": "i"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

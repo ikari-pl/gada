@@ -46,6 +46,15 @@ func TestNodeKind(t *testing.T) {
 		{"StringType", &StringType{}, "StringType"},
 		{"BoolType", &BoolType{}, "BoolType"},
 		{"Float64Type", &Float64Type{}, "Float64Type"},
+		{"SliceType", &SliceType{}, "SliceType"},
+		{"SliceLit", &SliceLit{}, "SliceLit"},
+		{"IndexExpr", &IndexExpr{}, "IndexExpr"},
+		{"SliceExpr", &SliceExpr{}, "SliceExpr"},
+		{"BuiltinCall", &BuiltinCall{}, "BuiltinCall"},
+		{"MapType", &MapType{}, "MapType"},
+		{"MapLit", &MapLit{}, "MapLit"},
+		{"RangeStmt", &RangeStmt{}, "RangeStmt"},
+		{"DeferStmt", &DeferStmt{}, "DeferStmt"},
 	}
 
 	for _, tc := range cases {
@@ -74,17 +83,27 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Stmt = &Return{}
 	var _ Stmt = &Call{}
 	var _ Stmt = &ExprStmt{}
+	var _ Stmt = &BuiltinCall{} // panic(x) at statement position
+	var _ Stmt = &RangeStmt{}
+	var _ Stmt = &DeferStmt{}
 
 	var _ Expr = &Ident{}
 	var _ Expr = &Lit{}
 	var _ Expr = &BinOp{}
 	var _ Expr = &UnaryOp{}
 	var _ Expr = &Selector{}
+	var _ Expr = &SliceLit{}
+	var _ Expr = &IndexExpr{}
+	var _ Expr = &SliceExpr{}
+	var _ Expr = &BuiltinCall{} // recover() at expression position
+	var _ Expr = &MapLit{}
 
 	var _ Type = &IntType{}
 	var _ Type = &StringType{}
 	var _ Type = &BoolType{}
 	var _ Type = &Float64Type{}
+	var _ Type = &SliceType{}
+	var _ Type = &MapType{}
 }
 
 // TestRoundTripHello marshals the canonical hello-world IR, unmarshals
@@ -103,6 +122,299 @@ func TestRoundTripKitchenSink(t *testing.T) {
 	t.Parallel()
 
 	pkg := kitchenSinkPackage()
+	roundTrip(t, pkg)
+}
+
+// TestRoundTripSliceCorpus exercises the new slice / index / builtin
+// IR shapes (SliceType, SliceLit, IndexExpr, SliceExpr, BuiltinCall)
+// in a single structure. The generic kitchen-sink predates these
+// nodes; keeping the slice corpus separate makes the regression
+// surface explicit when only the slice path changes.
+func TestRoundTripSliceCorpus(t *testing.T) {
+	t.Parallel()
+
+	pkg := &Package{
+		Name: "p",
+		Files: []*File{{
+			Name: "p.go",
+			Decls: []Decl{
+				&Function{
+					Name:    "demo",
+					Params:  []*Param{{Name: "s", Type: &SliceType{Elem: &IntType{}}}},
+					Results: []*Param{{Type: &IntType{}}},
+					Body: []Stmt{
+						&Assign{
+							LHS:    []Expr{&Ident{Name: "xs"}},
+							Define: true,
+							RHS: []Expr{&SliceLit{
+								Elem: &IntType{},
+								Elems: []Expr{
+									&Lit{Kind: LitInt, Value: "1"},
+									&Lit{Kind: LitInt, Value: "2"},
+									&Lit{Kind: LitInt, Value: "3"},
+								},
+							}},
+						},
+						// `xs = append(xs, 4)` — BuiltinCall as expr.
+						&Assign{
+							LHS: []Expr{&Ident{Name: "xs"}},
+							RHS: []Expr{&BuiltinCall{
+								Name: "append",
+								Args: []Expr{&Ident{Name: "xs"}, &Lit{Kind: LitInt, Value: "4"}},
+							}},
+						},
+						// `_ = xs[0]` (IndexExpr) and `_ = xs[1:3]` (SliceExpr)
+						&ExprStmt{X: &IndexExpr{X: &Ident{Name: "xs"}, Index: &Lit{Kind: LitInt, Value: "0"}}},
+						&ExprStmt{X: &SliceExpr{
+							X:    &Ident{Name: "xs"},
+							Low:  &Lit{Kind: LitInt, Value: "1"},
+							High: &Lit{Kind: LitInt, Value: "3"},
+						}},
+						// `_ = xs[:]` — both bounds nil.
+						&ExprStmt{X: &SliceExpr{X: &Ident{Name: "xs"}}},
+						// Stmt-position BuiltinCall: `panic("boom")`.
+						&BuiltinCall{
+							Name: "panic",
+							Args: []Expr{&Lit{Kind: LitString, Value: `"boom"`}},
+						},
+						&Return{Results: []Expr{&BuiltinCall{
+							Name: "len",
+							Args: []Expr{&Ident{Name: "xs"}},
+						}}},
+					},
+				},
+			},
+		}},
+	}
+	roundTrip(t, pkg)
+}
+
+// TestRoundTripMapCorpus exercises the new map-shaped IR nodes
+// (MapType, MapLit, MapEntry, RangeStmt) in a single round-trip.
+// Mirrors TestRoundTripSliceCorpus: keeps the regression surface
+// for the map path explicit even after the kitchen-sink test
+// eventually grows to cover it.
+func TestRoundTripMapCorpus(t *testing.T) {
+	t.Parallel()
+
+	pkg := &Package{
+		Name: "p",
+		Files: []*File{{
+			Name: "p.go",
+			Decls: []Decl{
+				&Function{
+					Name:    "demo",
+					Params:  []*Param{{Name: "m", Type: &MapType{Key: &StringType{}, Value: &IntType{}}}},
+					Results: []*Param{{Type: &IntType{}}},
+					Body: []Stmt{
+						// `m := map[string]int{"a": 1, "b": 2}`
+						&Assign{
+							LHS:    []Expr{&Ident{Name: "m"}},
+							Define: true,
+							RHS: []Expr{&MapLit{
+								Key:   &StringType{},
+								Value: &IntType{},
+								Entries: []*MapEntry{
+									{Key: &Lit{Kind: LitString, Value: `"a"`}, Value: &Lit{Kind: LitInt, Value: "1"}},
+									{Key: &Lit{Kind: LitString, Value: `"b"`}, Value: &Lit{Kind: LitInt, Value: "2"}},
+								},
+							}},
+						},
+						// `for k, v := range m { _ = k; _ = v }`
+						&RangeStmt{
+							KeyName:   "k",
+							ValueName: "v",
+							Define:    true,
+							X:         &Ident{Name: "m"},
+							Body: []Stmt{
+								&ExprStmt{X: &Ident{Name: "k"}},
+								&ExprStmt{X: &Ident{Name: "v"}},
+							},
+						},
+						// `for range m {}` — both names absent, nil X allowed by the
+						// helper but the unmarshaler still tolerates it.
+						&RangeStmt{
+							X:    &Ident{Name: "m"},
+							Body: []Stmt{},
+						},
+						// `delete(m, "a")` as a statement-position BuiltinCall.
+						&BuiltinCall{
+							Name: "delete",
+							Args: []Expr{
+								&Ident{Name: "m"},
+								&Lit{Kind: LitString, Value: `"a"`},
+							},
+						},
+						// Empty map literal: `map[string]int{}`.
+						&Assign{
+							LHS:    []Expr{&Ident{Name: "empty"}},
+							Define: true,
+							RHS: []Expr{&MapLit{
+								Key:   &StringType{},
+								Value: &IntType{},
+							}},
+						},
+						&Return{Results: []Expr{&BuiltinCall{
+							Name: "len",
+							Args: []Expr{&Ident{Name: "m"}},
+						}}},
+					},
+				},
+			},
+		}},
+	}
+	roundTrip(t, pkg)
+}
+
+// TestSliceTypeMissingElem locks the explicit-error branch in
+// SliceType.UnmarshalJSON: a `SliceType` with no `elem` field is
+// nonsensical and must not silently round-trip to an Elem-nil node.
+func TestSliceTypeMissingElem(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"SliceType"}`)); err == nil {
+		t.Fatal("expected error for SliceType without elem")
+	}
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"SliceType","elem":null}`)); err == nil {
+		t.Fatal("expected error for SliceType with null elem")
+	}
+}
+
+// TestSliceLitMissingElem mirrors the SliceType guard for SliceLit:
+// the element type must always be present so the emitter can pick
+// the right Slices_Of_<T> instantiation.
+func TestSliceLitMissingElem(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"SliceLit"}`)); err == nil {
+		t.Fatal("expected error for SliceLit without elem")
+	}
+	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"SliceLit","elem":null}`)); err == nil {
+		t.Fatal("expected error for SliceLit with null elem")
+	}
+}
+
+// TestSliceTypeBadElem covers the unmarshalType propagation when the
+// nested elem has an unknown kind.
+func TestSliceTypeBadElem(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"SliceType","elem":{"kind":"Bogus"}}`)); err == nil {
+		t.Fatal("expected error for SliceType with bad elem kind")
+	}
+}
+
+// TestSliceLitBadElem covers the same propagation through SliceLit.
+func TestSliceLitBadElem(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"SliceLit","elem":{"kind":"Bogus"}}`)); err == nil {
+		t.Fatal("expected error for SliceLit with bad elem kind")
+	}
+}
+
+// TestMapTypeMissingKeyOrValue locks the explicit-error guards on
+// MapType: a `MapType` without a key or value field is nonsensical
+// (the emitter needs both to pick the right Maps_Of_<K>_To_<V>
+// instantiation) and must not silently round-trip with nil fields.
+func TestMapTypeMissingKeyOrValue(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"kind":"MapType"}`,
+		`{"kind":"MapType","key":null,"value":{"kind":"IntType"}}`,
+		`{"kind":"MapType","key":{"kind":"IntType"}}`,
+		`{"kind":"MapType","key":{"kind":"IntType"},"value":null}`,
+	}
+	for _, in := range cases {
+		if _, err := unmarshalType(json.RawMessage(in)); err == nil {
+			t.Fatalf("expected error for %s, got nil", in)
+		}
+	}
+}
+
+// TestMapLitMissingKeyOrValue mirrors the MapType guard for MapLit.
+func TestMapLitMissingKeyOrValue(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"kind":"MapLit"}`,
+		`{"kind":"MapLit","key":null,"value":{"kind":"IntType"}}`,
+		`{"kind":"MapLit","key":{"kind":"IntType"}}`,
+		`{"kind":"MapLit","key":{"kind":"IntType"},"value":null}`,
+	}
+	for _, in := range cases {
+		if _, err := unmarshalExpr(json.RawMessage(in)); err == nil {
+			t.Fatalf("expected error for %s, got nil", in)
+		}
+	}
+}
+
+// TestMapEntryDirect exercises MapEntry's own UnmarshalJSON path —
+// MapEntry is not a sum-type variant, so it has its own test like
+// Param. Empty key+value is intentionally allowed (the type carries
+// the schema; entries can be nil for `map[K]V{}`).
+func TestMapEntryDirect(t *testing.T) {
+	t.Parallel()
+
+	var e MapEntry
+	if err := e.UnmarshalJSON([]byte(`not json`)); err == nil {
+		t.Fatal("expected error for malformed MapEntry JSON")
+	}
+	var e2 MapEntry
+	if err := e2.UnmarshalJSON([]byte(`{"key":{"kind":"Bogus"}}`)); err == nil {
+		t.Fatal("expected error for MapEntry with bad key kind")
+	}
+	var e3 MapEntry
+	if err := e3.UnmarshalJSON(
+		[]byte(`{"key":{"kind":"Lit","litKind":"int","value":"1"},"value":{"kind":"Bogus"}}`),
+	); err == nil {
+		t.Fatal("expected error for MapEntry with bad value kind")
+	}
+}
+
+// TestDeferStmtMissingCall locks the explicit-error guard on DeferStmt:
+// a `DeferStmt` without a `call` field is nonsensical (a defer with no
+// callee), and the JSON shape must reject it loud rather than fan out
+// to a silent nil-call later in emit.
+func TestDeferStmtMissingCall(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"kind":"DeferStmt"}`,
+		`{"kind":"DeferStmt","call":null}`,
+	}
+	for _, in := range cases {
+		if _, err := unmarshalStmt(json.RawMessage(in)); err == nil {
+			t.Fatalf("expected error for %s, got nil", in)
+		}
+	}
+}
+
+// TestRoundTripDeferCorpus exercises the new defer/panic/recover IR
+// shapes (DeferStmt holding a Call, BuiltinCall("panic"), BuiltinCall(
+// "recover") at expression position) in a single structure. The slice
+// and map corpora predate these nodes; keeping the defer corpus
+// separate makes the regression surface explicit when only the
+// defer/panic path changes.
+func TestRoundTripDeferCorpus(t *testing.T) {
+	t.Parallel()
+
+	pkg := &Package{
+		Name: "p",
+		Files: []*File{{
+			Name: "p.go",
+			Decls: []Decl{
+				&Function{
+					Name:    "safe",
+					Results: []*Param{{Type: &IntType{}}},
+					Body: []Stmt{
+						&DeferStmt{Call: &Call{Fun: &Ident{Name: "cleanup"}}},
+						&Assign{
+							LHS:    []Expr{&Ident{Name: "r"}},
+							Define: true,
+							RHS:    []Expr{&BuiltinCall{Name: "recover"}},
+						},
+						&BuiltinCall{Name: "panic", Args: []Expr{&Lit{Kind: LitString, Value: `"boom"`}}},
+						&Return{Results: []Expr{&Ident{Name: "r"}}},
+					},
+				},
+			},
+		}},
+	}
 	roundTrip(t, pkg)
 }
 
@@ -159,11 +471,21 @@ func TestSentinels(t *testing.T) {
 	(&BinOp{}).irExpr()
 	(&UnaryOp{}).irExpr()
 	(&Selector{}).irExpr()
+	(&SliceLit{}).irExpr()
+	(&IndexExpr{}).irExpr()
+	(&SliceExpr{}).irExpr()
+	(&BuiltinCall{}).irExpr()
+	(&BuiltinCall{}).irStmt()
+	(&MapLit{}).irExpr()
+	(&RangeStmt{}).irStmt()
+	(&DeferStmt{}).irStmt()
 
 	(&IntType{}).irType()
 	(&StringType{}).irType()
 	(&BoolType{}).irType()
 	(&Float64Type{}).irType()
+	(&SliceType{}).irType()
+	(&MapType{}).irType()
 }
 
 // TestNilListHelpers exercises the nil-vs-empty branch of the slice
@@ -236,6 +558,14 @@ func TestPropagatedDecodeErrors(t *testing.T) {
 		{"BinOp", `{"kind":"BinOp","op":42}`, exprErr},
 		{"UnaryOp", `{"kind":"UnaryOp","op":42}`, exprErr},
 		{"Selector", `{"kind":"Selector","sel":42}`, exprErr},
+		{"SliceLit", `{"kind":"SliceLit","elems":"not-array"}`, exprErr},
+		{"IndexExpr", `{"kind":"IndexExpr","x":42}`, exprErr},
+		{"SliceExpr", `{"kind":"SliceExpr","x":42}`, exprErr},
+		{"BuiltinCall expr", `{"kind":"BuiltinCall","args":"not-array"}`, exprErr},
+		{"BuiltinCall stmt", `{"kind":"BuiltinCall","args":"not-array"}`, stmtErr},
+		{"MapLit", `{"kind":"MapLit","entries":"not-array"}`, exprErr},
+		{"RangeStmt", `{"kind":"RangeStmt","body":"not-array"}`, stmtErr},
+		{"DeferStmt", `{"kind":"DeferStmt","call":42}`, stmtErr},
 	}
 
 	for _, tc := range cases {
@@ -285,6 +615,24 @@ func TestPropagatedChildErrors(t *testing.T) {
 		{"BinOp.Y bad child", `{"kind":"BinOp","y":` + bad + `}`, exprErr},
 		{"UnaryOp.X bad child", `{"kind":"UnaryOp","x":` + bad + `}`, exprErr},
 		{"Selector.X bad child", `{"kind":"Selector","x":` + bad + `}`, exprErr},
+		{"SliceLit.Elem bad type", `{"kind":"SliceLit","elem":` + bad + `}`, exprErr},
+		{"SliceLit.Elems bad child", `{"kind":"SliceLit","elem":{"kind":"IntType"},"elems":[` + bad + `]}`, exprErr},
+		{"IndexExpr.X bad child", `{"kind":"IndexExpr","x":` + bad + `}`, exprErr},
+		{"IndexExpr.Index bad child", `{"kind":"IndexExpr","x":{"kind":"Ident","name":"s"},"index":` + bad + `}`, exprErr},
+		{"SliceExpr.X bad child", `{"kind":"SliceExpr","x":` + bad + `}`, exprErr},
+		{"SliceExpr.Low bad child", `{"kind":"SliceExpr","x":{"kind":"Ident","name":"s"},"low":` + bad + `}`, exprErr},
+		{"SliceExpr.High bad child", `{"kind":"SliceExpr","x":{"kind":"Ident","name":"s"},"high":` + bad + `}`, exprErr},
+		{"BuiltinCall.Args bad child as expr", `{"kind":"BuiltinCall","name":"len","args":[` + bad + `]}`, exprErr},
+		{"BuiltinCall.Args bad child as stmt", `{"kind":"BuiltinCall","name":"panic","args":[` + bad + `]}`, stmtErr},
+		{"MapType.Key bad type", `{"kind":"MapType","key":` + bad + `,"value":{"kind":"IntType"}}`, func(b json.RawMessage) error { _, err := unmarshalType(b); return err }},
+		{"MapType.Value bad type", `{"kind":"MapType","key":{"kind":"IntType"},"value":` + bad + `}`, func(b json.RawMessage) error { _, err := unmarshalType(b); return err }},
+		{"MapLit.Key bad type", `{"kind":"MapLit","key":` + bad + `,"value":{"kind":"IntType"}}`, exprErr},
+		{"MapLit.Value bad type", `{"kind":"MapLit","key":{"kind":"IntType"},"value":` + bad + `}`, exprErr},
+		{"MapLit.Entries[0].Key bad child", `{"kind":"MapLit","key":{"kind":"IntType"},"value":{"kind":"IntType"},"entries":[{"key":` + bad + `}]}`, exprErr},
+		{"MapLit.Entries[0].Value bad child", `{"kind":"MapLit","key":{"kind":"IntType"},"value":{"kind":"IntType"},"entries":[{"value":` + bad + `}]}`, exprErr},
+		{"RangeStmt.X bad child", `{"kind":"RangeStmt","x":` + bad + `}`, stmtErr},
+		{"RangeStmt.Body bad child", `{"kind":"RangeStmt","body":[` + bad + `]}`, stmtErr},
+		{"DeferStmt.Call bad child", `{"kind":"DeferStmt","call":` + bad + `}`, stmtErr},
 	}
 
 	for _, tc := range cases {

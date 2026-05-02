@@ -10,6 +10,7 @@ related:
   - "[[0002-runtime-layered]]"
   - "[[0003-gc-boehm-for-v1]]"
   - "[[0004-scheduler-libco-for-v1]]"
+  - "[[0006-runtime-performance-bar]]"
   - "[[roadmap/02-core-runtime]]"
 ---
 
@@ -208,5 +209,9 @@ marginal benefit over pkg-config. Rejected.
   interface; higher layers never call `GC_malloc` directly.
 - [[0004-scheduler-libco-for-v1]] — the scheduler ADR. Goroutine-
   stack registration is unaffected by the dep-resolution choice.
+- [[0006-runtime-performance-bar]] — names the 2× perf ceiling and
+  the parity-or-better successor criterion. A custom-Ada-GC
+  successor that regresses below 2× fails this bar regardless of
+  whether it clears the four criteria above.
 - [[roadmap/02-core-runtime]] — the active phase that ratifies this
   ADR's pkg-config wiring as the GADA.GC item's implementation.

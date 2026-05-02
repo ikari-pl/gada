@@ -1,0 +1,91 @@
+{
+  "kind": "Package",
+  "name": "main",
+  "files": [
+    {
+      "kind": "File",
+      "name": "main_defer_panic.go",
+      "imports": [
+        "fmt"
+      ],
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "rescue",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "If",
+              "cond": {
+                "kind": "BinOp",
+                "op": "!=",
+                "x": {
+                  "kind": "BuiltinCall",
+                  "name": "recover",
+                  "args": null
+                },
+                "y": {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "0"
+                }
+              },
+              "then": [
+                {
+                  "kind": "Call",
+                  "fun": {
+                    "kind": "Selector",
+                    "x": {
+                      "kind": "Ident",
+                      "name": "fmt"
+                    },
+                    "sel": "Println"
+                  },
+                  "args": [
+                    {
+                      "kind": "Lit",
+                      "litKind": "string",
+                      "value": "\"rescued\""
+                    }
+                  ]
+                }
+              ],
+              "else": null
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "main",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "DeferStmt",
+              "call": {
+                "kind": "Call",
+                "fun": {
+                  "kind": "Ident",
+                  "name": "rescue"
+                },
+                "args": null
+              }
+            },
+            {
+              "kind": "BuiltinCall",
+              "name": "panic",
+              "args": [
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "42"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

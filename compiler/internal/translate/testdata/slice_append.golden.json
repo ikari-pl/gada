@@ -1,0 +1,69 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "slice_append.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "push",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "s",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            },
+            {
+              "kind": "Param",
+              "name": "x",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "SliceType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "BuiltinCall",
+                  "name": "append",
+                  "args": [
+                    {
+                      "kind": "Ident",
+                      "name": "s"
+                    },
+                    {
+                      "kind": "Ident",
+                      "name": "x"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "map_type_param.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "f",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "m",
+              "type": {
+                "kind": "MapType",
+                "key": {
+                  "kind": "IntType"
+                },
+                "value": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "BuiltinCall",
+                  "name": "len",
+                  "args": [
+                    {
+                      "kind": "Ident",
+                      "name": "m"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

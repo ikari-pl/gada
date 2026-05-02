@@ -1,0 +1,50 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "map_delete.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "f",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "m",
+              "type": {
+                "kind": "MapType",
+                "key": {
+                  "kind": "IntType"
+                },
+                "value": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "BuiltinCall",
+              "name": "delete",
+              "args": [
+                {
+                  "kind": "Ident",
+                  "name": "m"
+                },
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "1"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

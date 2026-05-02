@@ -1,0 +1,129 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "map_lit.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "f",
+          "params": null,
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "m"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "MapLit",
+                  "key": {
+                    "kind": "IntType"
+                  },
+                  "value": {
+                    "kind": "IntType"
+                  },
+                  "entries": [
+                    {
+                      "kind": "MapEntry",
+                      "key": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "1"
+                      },
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "2"
+                      }
+                    },
+                    {
+                      "kind": "MapEntry",
+                      "key": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "3"
+                      },
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "4"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "e"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "MapLit",
+                  "key": {
+                    "kind": "IntType"
+                  },
+                  "value": {
+                    "kind": "IntType"
+                  },
+                  "entries": null
+                }
+              ]
+            },
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "BinOp",
+                  "op": "+",
+                  "x": {
+                    "kind": "BuiltinCall",
+                    "name": "len",
+                    "args": [
+                      {
+                        "kind": "Ident",
+                        "name": "m"
+                      }
+                    ]
+                  },
+                  "y": {
+                    "kind": "BuiltinCall",
+                    "name": "len",
+                    "args": [
+                      {
+                        "kind": "Ident",
+                        "name": "e"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

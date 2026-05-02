@@ -34,7 +34,7 @@
 #                   First failure aborts (Make's default semantics).
 #   clean         — wipe per-side build state and coverage/.
 
-.PHONY: bootstrap test coverage lint coverage-gate example ci clean
+.PHONY: bootstrap hooks test coverage lint coverage-gate bench example ci clean
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 COVERAGE_DIR := $(ROOT)/coverage
@@ -49,6 +49,30 @@ PATH := $(HOME)/src/gnatstudio/.tools/bin:$(HOME)/.local/share/alire/bin:$(HOME)
 export PATH
 
 bootstrap:
+	@echo "=== bootstrap: bdw-gc system library (Phase 2+) ==="
+	@# Per docs/adr/0005-libgc-binding-via-pkgconfig.md, the runtime
+	@# resolves Boehm-Demers-Weiser (libgc) via `pkg-config bdw-gc`.
+	@# Surface a missing dep here as a first-class error with the
+	@# actionable per-platform install hint, rather than letting it
+	@# leak through to a cryptic linker failure during the Ada build.
+	@if ! command -v pkg-config >/dev/null 2>&1; then \
+	    echo "Makefile: 'pkg-config' not on PATH." >&2 ; \
+	    echo "  Install pkg-config: brew install pkg-config / sudo apt install pkg-config / etc." >&2 ; \
+	    exit 1 ; \
+	fi
+	@if ! pkg-config --exists bdw-gc; then \
+	    echo "Makefile: bdw-gc.pc not discoverable by pkg-config." >&2 ; \
+	    echo "  GADA's runtime depends on Boehm-Demers-Weiser (ADR-0003 + ADR-0005)." >&2 ; \
+	    echo "  Install the libgc system package:" >&2 ; \
+	    echo "    macOS:           brew install bdw-gc" >&2 ; \
+	    echo "    Debian/Ubuntu:   sudo apt install libgc-dev" >&2 ; \
+	    echo "    Fedora:          sudo dnf install gc-devel" >&2 ; \
+	    echo "    FreeBSD:         sudo pkg install boehm-gc" >&2 ; \
+	    echo "    Alpine:          sudo apk add gc-dev" >&2 ; \
+	    exit 1 ; \
+	fi
+	@echo "bootstrap: bdw-gc OK (`pkg-config --modversion bdw-gc`)"
+	@echo
 	@echo "=== bootstrap: Go module deps (compiler/) ==="
 	@if command -v go >/dev/null 2>&1; then \
 	    cd $(ROOT)/compiler && go mod download ; \
@@ -63,9 +87,34 @@ bootstrap:
 	    echo "Makefile: 'alr' not on PATH — install Alire from https://alire.ada.dev to bootstrap the runtime crate" >&2 ; \
 	fi
 
+#  hooks — point this clone's git at the versioned hook directory.
+#  We deliberately do NOT auto-install on `make bootstrap`: hooks are
+#  developer tooling, opt-in per clone, and forcing them on someone
+#  who only wants to read the source is bad form. Run `make hooks`
+#  once after first checkout (or `git config core.hooksPath .githooks`
+#  by hand) to enable. Skip a single commit with `git commit
+#  --no-verify` if a hook fires incorrectly — but please file an
+#  issue so the hook can be fixed for everyone.
+hooks:
+	@if [ ! -d $(ROOT)/.githooks ]; then \
+	    echo "Makefile: .githooks/ directory missing — clone may be incomplete" >&2 ; \
+	    exit 1 ; \
+	fi
+	@git -C $(ROOT) config core.hooksPath .githooks
+	@echo "hooks: core.hooksPath = .githooks"
+	@echo "hooks: pre-commit will run go vet + compiler unit tests on Go-side commits"
+	@echo "hooks: skip a single commit with 'git commit --no-verify' (use sparingly)"
+
 test:
 	$(MAKE) -C $(ROOT)/compiler test
 	$(MAKE) -C $(ROOT)/runtime test
+
+# bench — runs the runtime micro-benchmark suite. Output is benchstat-
+# compatible (one row per benchmark on stdout). Copy rows into
+# runtime/PERF.md. Per docs/adr/0006-runtime-performance-bar.md, NOT a
+# `make ci` dependency — the 2x bar is enforced at phase exit.
+bench:
+	$(MAKE) -C $(ROOT)/runtime bench
 
 coverage:
 	@mkdir -p $(COVERAGE_DIR)

@@ -1,0 +1,32 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "defer_simple.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "f",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "DeferStmt",
+              "call": {
+                "kind": "Call",
+                "fun": {
+                  "kind": "Ident",
+                  "name": "cleanup"
+                },
+                "args": null
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

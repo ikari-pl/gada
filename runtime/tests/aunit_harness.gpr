@@ -50,12 +50,19 @@ project Aunit_Harness is
       end case;
    end Compiler;
 
+   --  Mirror gada_core.gpr's GC_Switches: GNAT does not propagate
+   --  Linker.Default_Switches from imported library projects to the
+   --  importing executable's link command, so the libgc switches
+   --  must be redeclared here to land on test_runner's link line.
+   --  See docs/adr/0005-libgc-binding-via-pkgconfig.md.
+   GC_Switches := external_as_list ("GADA_GC_LDFLAGS", " ") & ("-lgc");
+
    package Linker is
       case Build_Mode is
          when "normal" =>
-            null;
+            for Default_Switches ("Ada") use GC_Switches;
          when "coverage" =>
-            for Default_Switches ("Ada") use ("-lgcov");
+            for Default_Switches ("Ada") use GC_Switches & ("-lgcov");
       end case;
    end Linker;
 

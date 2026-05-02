@@ -583,14 +583,24 @@ func (e *emitter) emitMainProcedure() {
 
 	var mainDecls []*ir.Assign
 	var mainBody []ir.Stmt
+	var mainDefers []*ir.DeferStmt
+	var mainUsesPanic bool
 	if main != nil {
 		mainDecls, mainBody = splitDecls(main.Body)
+		mainDefers = collectDefers(main.Body)
+		mainUsesPanic = bodyUsesPanicOrRecover(main.Body)
 	}
+	// Same layering rule as emitSubprogram: when a function combines
+	// `defer` with `panic`/`recover`, the Defer_Block declarations must
+	// live inside the begin..end the exception handler wraps so they
+	// finalise (and `recover()` pops the panic) before the handler
+	// matches.
+	mainDefersInsideWrapper := len(mainDefers) > 0 && mainUsesPanic
 
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0
 	hasPanic := e.needsCorePanic
-	hasDeclSection := hasSlices || hasMaps || hasPanic || len(others) > 0 || len(mainDecls) > 0
+	hasDeclSection := hasSlices || hasMaps || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper)
 
 	e.println("procedure Main is")
 	if hasDeclSection {
@@ -631,6 +641,9 @@ func (e *emitter) emitMainProcedure() {
 	for _, a := range mainDecls {
 		e.emitVarDecl(a)
 	}
+	if len(mainDefers) > 0 && !mainDefersInsideWrapper {
+		e.emitDeferClosuresAndBlocks(mainDefers)
+	}
 	e.indent--
 
 	if hasDeclSection {
@@ -639,13 +652,51 @@ func (e *emitter) emitMainProcedure() {
 
 	e.println("begin")
 	e.indent++
-	if len(mainBody) == 0 {
-		e.println("null;")
-	} else {
+
+	if mainDefersInsideWrapper {
+		e.println("declare")
+		e.indent++
+		e.emitDeferClosuresAndBlocks(mainDefers)
+		e.indent--
+		e.println("begin")
+		e.indent++
+	}
+
+	emittedAny := false
+	if len(mainBody) > 0 {
 		for _, s := range mainBody {
+			if _, isDefer := s.(*ir.DeferStmt); !isDefer {
+				emittedAny = true
+			}
 			e.emitStmt(s)
 		}
 	}
+	if !emittedAny {
+		e.println("null;")
+	}
+
+	if mainDefersInsideWrapper {
+		e.indent--
+		e.println("end;")
+	}
+
+	if mainUsesPanic {
+		// Mirror emitSubprogram's indent dance: body is at N+1; emit
+		// `exception` at N and the when-arm contents inside it; the
+		// trailing `e.indent--` below brings us to N=0 for `end Main;`.
+		e.indent--
+		e.println("exception")
+		e.indent++
+		e.println("when Panic_Of_Integer.Panicking =>")
+		e.indent++
+		e.println("if Panic_Of_Integer.Is_Panicking then")
+		e.indent++
+		e.println("raise;")
+		e.indent--
+		e.println("end if;")
+		e.indent--
+	}
+
 	e.indent--
 	e.println("end Main;")
 }
@@ -795,39 +846,45 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	defers := collectDefers(fn.Body)
 	usesPanic := bodyUsesPanicOrRecover(fn.Body)
 
+	// When the function uses both `defer` and `panic`/`recover`, the
+	// Defer_Block declarations must live *inside* the begin..end the
+	// exception handler wraps — otherwise the handler would re-raise
+	// before the deferred call had a chance to call `recover()`. Ada's
+	// finalisation runs as the inner block is left, *before* the
+	// enclosing handler matches; `recover()` pops the panic and the
+	// handler sees `Is_Panicking = False` so it swallows.
+	defersInsideWrapper := len(defers) > 0 && usesPanic
+
+	// --- declarative region ---
 	e.indent++
 	for _, a := range decls {
 		e.emitVarDecl(a)
 	}
-	for i, d := range defers {
-		e.emitDeferClosure(i+1, d)
-	}
-	if len(defers) > 0 {
-		// Defer_Block declarations come *after* the closure procedures
-		// they reference (Ada's "declare before use" rule applies here
-		// even though the access value is taken via 'Access).
-		for i := range defers {
-			n := i + 1
-			e.println(fmt.Sprintf("Defer_%d : Gada.Core.Defer.Defer_Block (Op => Defer_Closure_%d'Access);", n, n))
-		}
+	if len(defers) > 0 && !defersInsideWrapper {
+		e.emitDeferClosuresAndBlocks(defers)
 	}
 	e.indent--
 
+	// --- body ---
 	e.println("begin")
+	e.indent++ // body level
 
-	e.indent++
-	if usesPanic {
-		// One extra level of nesting for the begin/exception block so
-		// the handler's `raise` propagates out of the wrapper without
-		// dragging the whole function with it on a successful return.
+	// When defers and panic/recover combine, an inner declare scope
+	// puts Defer_Block declarations *outside* the inner begin..end,
+	// so they finalise as the inner block is left during unwind. The
+	// function-level exception handler then sees `Is_Panicking = False`
+	// (because the deferred call's `recover()` popped the panic during
+	// finalisation) and swallows. Without this layering, the handler
+	// would re-raise before defers had a chance to recover.
+	if defersInsideWrapper {
+		e.println("declare")
+		e.indent++
+		e.emitDeferClosuresAndBlocks(defers)
+		e.indent--
 		e.println("begin")
 		e.indent++
 	}
-	// `null;` filler when the body would otherwise emit nothing — Ada
-	// requires at least one statement between `begin` and `end`. The
-	// emit-stmt path for DeferStmt is silent (defers are hoisted to
-	// the declarative region), so a function whose only statements are
-	// defers also lands here.
+
 	emittedAny := false
 	if len(body) > 0 {
 		for _, s := range body {
@@ -838,9 +895,25 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 		}
 	}
 	if !emittedAny {
+		// Ada requires at least one statement between `begin` and
+		// `end`. DeferStmt is silent at emit time (hoisted), so a
+		// function whose only statements are defers also lands here.
 		e.println("null;")
 	}
+
+	if defersInsideWrapper {
+		// Close the inner declare's begin..end so its Defer_Blocks
+		// finalise before the function-level handler matches.
+		e.indent--
+		e.println("end;")
+	}
+
 	if usesPanic {
+		// Function-level exception handler at one less indent than the
+		// body, paired with the function's `begin`. The body is at
+		// indent N+1 right now; emit `exception` at N, then everything
+		// inside it at N+1 / N+2 / N+3, returning to N+1 at the end so
+		// the final `e.indent--` lines up `end f;` with `begin`.
 		e.indent--
 		e.println("exception")
 		e.indent++
@@ -851,19 +924,34 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 		e.println("raise;")
 		e.indent--
 		e.println("end if;")
-		// For functions that return a value, the exception path also
-		// has to terminate with a return; emit a default return of the
-		// result type's zero value. Procedures fall through to `end;`.
 		if len(fn.Results) == 1 {
 			zero := zeroLiteralOf(fn.Results[0].Type)
 			e.println("return " + zero + ";")
 		}
-		e.indent -= 2
-		e.println("end;")
+		e.indent--
 	}
-	e.indent--
 
+	e.indent--
 	e.println("end " + name + ";")
+}
+
+// emitDeferClosuresAndBlocks writes the closure procedures + matching
+// Defer_Block declarations for `defers` in source order, at the
+// current indent. Used in two places: the function declarative region
+// (no-panic case) and the inner declare scope (defer + panic case).
+func (e *emitter) emitDeferClosuresAndBlocks(defers []*ir.DeferStmt) {
+	for i, d := range defers {
+		e.emitDeferClosure(i+1, d)
+	}
+	for i := range defers {
+		n := i + 1
+		// 'Unrestricted_Access (GNAT extension) bypasses Ada's
+		// "subprogram must not be deeper than access type" check. The
+		// closure is guaranteed to outlive the Defer_Block (both live
+		// in the same declarative region; the block's Finalize fires
+		// *before* the closure goes out of scope).
+		e.println(fmt.Sprintf("Defer_%d : Gada.Core.Defer.Defer_Block (Op => Defer_Closure_%d'Unrestricted_Access);", n, n))
+	}
 }
 
 // collectDefers returns every DeferStmt under body in source order

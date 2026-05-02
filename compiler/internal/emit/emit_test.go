@@ -38,6 +38,8 @@ var corpusFixtures = []string{
 	"map_insert", "map_range", "map_delete",
 	// Phase 2 — defer / panic / recover (Item 8).
 	"defer_simple", "panic_simple", "recover_simple",
+	// Phase 2 — main-side defer / panic (Item 9 emitMain wiring).
+	"main_defer", "main_panic", "main_defer_panic",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs

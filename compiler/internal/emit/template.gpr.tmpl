@@ -26,4 +26,15 @@ project {{.ProjectName}} is
       for Default_Switches ("Ada") use ("-gnat2022", "-O0", "-g");
    end Compiler;
 
+   --  Mirror gada_core.gpr's GC_Switches: GNAT does not propagate
+   --  Linker.Default_Switches from imported library projects to the
+   --  importing executable's link command, so libgc switches must
+   --  be redeclared here to land on the produced binary's link line.
+   --  See docs/adr/0005-libgc-binding-via-pkgconfig.md.
+   GC_Switches := external_as_list ("GADA_GC_LDFLAGS", " ") & ("-lgc");
+
+   package Linker is
+      for Default_Switches ("Ada") use GC_Switches;
+   end Linker;
+
 end {{.ProjectName}};

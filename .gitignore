@@ -43,3 +43,4 @@ coverage/
 
 # Example binaries (Mach-O / ELF; list known binaries explicitly)
 examples/hello/hello
+examples/collections/collections

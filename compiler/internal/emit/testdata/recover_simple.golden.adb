@@ -8,15 +8,13 @@ package body P is
 
    function F return Integer is
    begin
-      begin
-         return Panic_Of_Integer.Recover;
-      exception
-         when Panic_Of_Integer.Panicking =>
-            if Panic_Of_Integer.Is_Panicking then
-               raise;
-            end if;
-            return 0;
-      end;
+      return Panic_Of_Integer.Recover;
+   exception
+      when Panic_Of_Integer.Panicking =>
+         if Panic_Of_Integer.Is_Panicking then
+            raise;
+         end if;
+         return 0;
    end F;
 
 end P;

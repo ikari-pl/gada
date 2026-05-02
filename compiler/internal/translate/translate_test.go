@@ -48,6 +48,8 @@ func TestCorpus(t *testing.T) {
 		"map_insert.go", "map_range.go", "map_delete.go",
 		// Phase 2 — defer / panic / recover fixtures (compiler-emit Item 8).
 		"defer_simple.go", "panic_simple.go", "recover_simple.go",
+		// Phase 2 — main-side defer/panic fixtures (Item 9 emitMain wiring).
+		"main_defer.go", "main_panic.go", "main_defer_panic.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)

@@ -1,0 +1,32 @@
+{
+  "kind": "Package",
+  "name": "main",
+  "files": [
+    {
+      "kind": "File",
+      "name": "main_panic.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "main",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "BuiltinCall",
+              "name": "panic",
+              "args": [
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "42"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

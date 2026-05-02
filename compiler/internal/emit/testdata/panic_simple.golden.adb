@@ -8,14 +8,12 @@ package body P is
 
    procedure F is
    begin
-      begin
-         Panic_Of_Integer.Do_Panic (42);
-      exception
-         when Panic_Of_Integer.Panicking =>
-            if Panic_Of_Integer.Is_Panicking then
-               raise;
-            end if;
-      end;
+      Panic_Of_Integer.Do_Panic (42);
+   exception
+      when Panic_Of_Integer.Panicking =>
+         if Panic_Of_Integer.Is_Panicking then
+            raise;
+         end if;
    end F;
 
 end P;

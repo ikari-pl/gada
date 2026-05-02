@@ -625,6 +625,128 @@ func TestProjectTemplateExposed(t *testing.T) {
 	}
 }
 
+// TestSliceElementAssignment pins the `s[i] = v` lowering: assigning
+// to a slice element must route through the runtime's `Set_Element`
+// (1-based on the Ada side) rather than the default `lhs := rhs`
+// path, which would emit `Slices_Of_T.Element (S, I + 1) := V;` and
+// fail to compile because `Element` returns by-value. Equivalent
+// guard to the map-side `m[k] = v -> Insert (M, K, V)` lowering
+// already covered by the corpus.
+func TestSliceElementAssignment(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name:   "set_first",
+		Params: []*ir.Param{{Name: "s", Type: &ir.SliceType{Elem: &ir.IntType{}}}},
+		Body: []ir.Stmt{&ir.Assign{
+			LHS: []ir.Expr{&ir.IndexExpr{X: idn("s"), Index: litInt("0")}},
+			RHS: []ir.Expr{litInt("42")},
+		}},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	got := buf.String()
+	want := "Slices_Of_Integer.Set_Element (S, 0 + 1, 42);"
+	if !strings.Contains(got, want) {
+		t.Fatalf("missing %q in output:\n%s", want, got)
+	}
+	// Ensure we did NOT fall through to the default `:=` path,
+	// which would have emitted `:= 42;` (assignment to the
+	// `Element` function's return value).
+	if strings.Contains(got, "Element (S, 0 + 1) :=") {
+		t.Fatalf("emitter fell through to invalid `Element (...) :=` path:\n%s", got)
+	}
+}
+
+// TestRangeAssignFormRejected pins the Phase 2 emit guard that
+// rejects `for k, v = range m` (Tok=ASSIGN). Define=false would
+// otherwise silently emit an inner `K : T := …` shadow that
+// diverges from Go's "write back to outer k/v each iteration"
+// semantics. Phase 4 widens this to honour the assignment form.
+func TestRangeAssignFormRejected(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name: "f",
+		Params: []*ir.Param{{Name: "m",
+			Type: &ir.MapType{Key: &ir.IntType{}, Value: &ir.IntType{}}}},
+		Body: []ir.Stmt{&ir.RangeStmt{
+			KeyName:   "k",
+			ValueName: "v",
+			Define:    false, // `=` form, not `:=`
+			X:         idn("m"),
+		}},
+	})
+	var buf bytes.Buffer
+	err := Package(pkg, &buf)
+	if err == nil {
+		t.Fatalf("expected error, got success:\n%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "range with `=`") {
+		t.Fatalf("wrong error: %v", err)
+	}
+}
+
+// TestRangeBlankBypassesAssignGuard pins the corner case where the
+// Define=false rejection only triggers if the range actually binds
+// at least one name. `for range m` (no key, no value) is harmless
+// regardless of Tok and must continue to emit the cursor walk.
+func TestRangeBlankBypassesAssignGuard(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name: "count",
+		Params: []*ir.Param{{Name: "m",
+			Type: &ir.MapType{Key: &ir.IntType{}, Value: &ir.IntType{}}}},
+		Results: []*ir.Param{{Type: &ir.IntType{}}},
+		Body: []ir.Stmt{&ir.RangeStmt{Define: false, X: idn("m")},
+			&ir.Return{Results: []ir.Expr{litInt("0")}}},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if !strings.Contains(buf.String(), "Has_Element") {
+		t.Fatalf("expected cursor walk, got:\n%s", buf.String())
+	}
+}
+
+// TestRangeRestoresLocalTypes pins the localTypes save/restore so
+// that a range-bound `k`/`v` does not poison subsequent dispatch
+// for a same-named outer variable of a different type. Before the
+// save/restore was added, `len(k)` after the range loop would
+// route to `mapPkgFor`/`slicePkgFor` against the *map's* key type
+// rather than the outer `k`'s real type.
+func TestRangeRestoresLocalTypes(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name: "f",
+		Params: []*ir.Param{
+			{Name: "m", Type: &ir.MapType{Key: &ir.IntType{}, Value: &ir.IntType{}}},
+			{Name: "outerK", Type: &ir.SliceType{Elem: &ir.IntType{}}},
+		},
+		Results: []*ir.Param{{Type: &ir.IntType{}}},
+		Body: []ir.Stmt{
+			&ir.RangeStmt{KeyName: "outerK", ValueName: "v", Define: true, X: idn("m")},
+			// After the range, outerK must still be typed as a slice for
+			// `len(outerK)` dispatch — not as an Integer (the map's key
+			// type, which the range temporarily bound during the loop).
+			&ir.Return{Results: []ir.Expr{
+				&ir.BuiltinCall{Name: "len", Args: []ir.Expr{idn("outerK")}},
+			}},
+		},
+	})
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	got := buf.String()
+	// `len(outerK)` after the range must dispatch to the slice
+	// `Length` call, not error out as a non-determinable instantiation.
+	if !strings.Contains(got, "Slices_Of_Integer.Len (OuterK)") {
+		t.Fatalf("expected post-range len to dispatch as slice, got:\n%s", got)
+	}
+}
+
 // TestSliceEmitErrors covers every error branch reachable from the
 // new Phase 2 slice-emission paths. Each entry pins one specific
 // failure mode so a future regression surfaces at the right call

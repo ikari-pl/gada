@@ -1311,12 +1311,25 @@ func (e *emitter) emitAssign(a *ir.Assign) {
 	// `Insert (M, K, V)` call rather than a `:=` assignment to a
 	// non-existent l-value. The map's `Get` always returns by-value;
 	// you can't assign to it.
+	//
+	// `s[i] = v` on a slice has the same problem: `Element` returns
+	// by-value too, so the default `lhs := rhs` path would emit the
+	// invalid `Slices_Of_T.Element (S, I + 1) := V;`. Route through
+	// `Set_Element` (Index is 1-based on the Ada side, matching the
+	// rest of the slice dispatch in this emitter).
 	if ix, ok := a.LHS[0].(*ir.IndexExpr); ok {
 		if pkg, ok := e.mapPkgForExpr(ix.X); ok {
 			m := e.emitExpr(ix.X)
 			k := e.emitExpr(ix.Index)
 			v := e.emitExpr(a.RHS[0])
 			e.println(pkg + ".Insert (" + m + ", " + k + ", " + v + ");")
+			return
+		}
+		if pkg, ok := e.slicePkgForExpr(ix.X); ok {
+			s := e.emitExpr(ix.X)
+			i := e.emitExpr(ix.Index)
+			v := e.emitExpr(a.RHS[0])
+			e.println(pkg + ".Set_Element (" + s + ", " + i + " + 1, " + v + ");")
 			return
 		}
 	}
@@ -1449,6 +1462,18 @@ func (e *emitter) emitRangeStmt(s *ir.RangeStmt) {
 		e.fail(fmt.Errorf("emit: range supports only map values in Phase 2 (got non-Ident or non-map type)"))
 		return
 	}
+	// Phase 2 only emits the `for k, v := range m` shape. The `=`
+	// form (`for k, v = range m`) requires writing back to the
+	// caller's k/v after each iteration; that needs translator
+	// support to confirm k/v exist in the enclosing declarative
+	// region with the right types, and the necessary l-value
+	// machinery isn't wired up here yet. Reject explicitly rather
+	// than silently emitting an inner shadow that would diverge
+	// from Go semantics on mutation.
+	if !s.Define && (s.KeyName != "" || s.ValueName != "") {
+		e.fail(fmt.Errorf("emit: range with `=` (assignment to pre-declared k/v) is Phase 4; use `:=` in Phase 2"))
+		return
+	}
 	m := e.emitExpr(s.X)
 
 	mt, ok := e.localTypes[s.X.(*ir.Ident).Name].(*ir.MapType)
@@ -1466,13 +1491,37 @@ func (e *emitter) emitRangeStmt(s *ir.RangeStmt) {
 
 	// Register the loop-bound names in localTypes so any nested
 	// reference to k/v (e.g. `_ = k`, `total + v`) types correctly
-	// for downstream dispatch.
-	if s.KeyName != "" {
-		e.localTypes[s.KeyName] = mt.Key
+	// for downstream dispatch — but only for the lexical scope of
+	// the loop body. After the range completes, restore whatever
+	// type (if any) was bound to the same name in the enclosing
+	// scope; otherwise a later `len(k)`/`append(v, ...)` against a
+	// re-bound `k`/`v` of a different type would dispatch wrong.
+	saved := map[string]struct {
+		t  ir.Type
+		ok bool
+	}{}
+	bind := func(name string, t ir.Type) {
+		if name == "" {
+			return
+		}
+		prev, had := e.localTypes[name]
+		saved[name] = struct {
+			t  ir.Type
+			ok bool
+		}{prev, had}
+		e.localTypes[name] = t
 	}
-	if s.ValueName != "" {
-		e.localTypes[s.ValueName] = mt.Value
-	}
+	bind(s.KeyName, mt.Key)
+	bind(s.ValueName, mt.Value)
+	defer func() {
+		for name, prev := range saved {
+			if prev.ok {
+				e.localTypes[name] = prev.t
+			} else {
+				delete(e.localTypes, name)
+			}
+		}
+	}()
 
 	e.println("declare")
 	e.indent++
@@ -1486,12 +1535,19 @@ func (e *emitter) emitRangeStmt(s *ir.RangeStmt) {
 	if hasInnerDecls {
 		e.println("declare")
 		e.indent++
+		// Loop variables are *not* `constant`: Go allows mutating the
+		// range-bound k/v inside the body (Go 1.22+ also gives them
+		// per-iteration freshness, which the inner declare-block
+		// already provides — every iteration declares new K/V from
+		// the current cursor before running the body). Marking them
+		// `constant` would make `k := k + 1` (legal Go) fail to
+		// compile on the Ada side.
 		if s.KeyName != "" {
-			e.println(adaIdent(s.KeyName) + " : constant " + kAdaName +
+			e.println(adaIdent(s.KeyName) + " : " + kAdaName +
 				" := " + pkg + ".Key (" + m + ", " + cur + ");")
 		}
 		if s.ValueName != "" {
-			e.println(adaIdent(s.ValueName) + " : constant " + vAdaName +
+			e.println(adaIdent(s.ValueName) + " : " + vAdaName +
 				" := " + pkg + ".Value (" + m + ", " + cur + ");")
 		}
 		e.indent--

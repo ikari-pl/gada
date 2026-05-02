@@ -17,8 +17,8 @@ package body P is
       begin
          while Maps_Of_Integer_To_Integer.Has_Element (M, Cursor_1) loop
             declare
-               K : constant Integer := Maps_Of_Integer_To_Integer.Key (M, Cursor_1);
-               V : constant Integer := Maps_Of_Integer_To_Integer.Value (M, Cursor_1);
+               K : Integer := Maps_Of_Integer_To_Integer.Key (M, Cursor_1);
+               V : Integer := Maps_Of_Integer_To_Integer.Value (M, Cursor_1);
             begin
                Total := (Total + K) + V;
             end;

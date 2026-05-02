@@ -51,6 +51,9 @@ func TestNodeKind(t *testing.T) {
 		{"IndexExpr", &IndexExpr{}, "IndexExpr"},
 		{"SliceExpr", &SliceExpr{}, "SliceExpr"},
 		{"BuiltinCall", &BuiltinCall{}, "BuiltinCall"},
+		{"MapType", &MapType{}, "MapType"},
+		{"MapLit", &MapLit{}, "MapLit"},
+		{"RangeStmt", &RangeStmt{}, "RangeStmt"},
 	}
 
 	for _, tc := range cases {
@@ -80,6 +83,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Stmt = &Call{}
 	var _ Stmt = &ExprStmt{}
 	var _ Stmt = &BuiltinCall{} // panic(x) at statement position
+	var _ Stmt = &RangeStmt{}
 
 	var _ Expr = &Ident{}
 	var _ Expr = &Lit{}
@@ -90,12 +94,14 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Expr = &IndexExpr{}
 	var _ Expr = &SliceExpr{}
 	var _ Expr = &BuiltinCall{} // recover() at expression position
+	var _ Expr = &MapLit{}
 
 	var _ Type = &IntType{}
 	var _ Type = &StringType{}
 	var _ Type = &BoolType{}
 	var _ Type = &Float64Type{}
 	var _ Type = &SliceType{}
+	var _ Type = &MapType{}
 }
 
 // TestRoundTripHello marshals the canonical hello-world IR, unmarshals
@@ -181,6 +187,83 @@ func TestRoundTripSliceCorpus(t *testing.T) {
 	roundTrip(t, pkg)
 }
 
+// TestRoundTripMapCorpus exercises the new map-shaped IR nodes
+// (MapType, MapLit, MapEntry, RangeStmt) in a single round-trip.
+// Mirrors TestRoundTripSliceCorpus: keeps the regression surface
+// for the map path explicit even after the kitchen-sink test
+// eventually grows to cover it.
+func TestRoundTripMapCorpus(t *testing.T) {
+	t.Parallel()
+
+	pkg := &Package{
+		Name: "p",
+		Files: []*File{{
+			Name: "p.go",
+			Decls: []Decl{
+				&Function{
+					Name:    "demo",
+					Params:  []*Param{{Name: "m", Type: &MapType{Key: &StringType{}, Value: &IntType{}}}},
+					Results: []*Param{{Type: &IntType{}}},
+					Body: []Stmt{
+						// `m := map[string]int{"a": 1, "b": 2}`
+						&Assign{
+							LHS:    []Expr{&Ident{Name: "m"}},
+							Define: true,
+							RHS: []Expr{&MapLit{
+								Key:   &StringType{},
+								Value: &IntType{},
+								Entries: []*MapEntry{
+									{Key: &Lit{Kind: LitString, Value: `"a"`}, Value: &Lit{Kind: LitInt, Value: "1"}},
+									{Key: &Lit{Kind: LitString, Value: `"b"`}, Value: &Lit{Kind: LitInt, Value: "2"}},
+								},
+							}},
+						},
+						// `for k, v := range m { _ = k; _ = v }`
+						&RangeStmt{
+							KeyName:   "k",
+							ValueName: "v",
+							Define:    true,
+							X:         &Ident{Name: "m"},
+							Body: []Stmt{
+								&ExprStmt{X: &Ident{Name: "k"}},
+								&ExprStmt{X: &Ident{Name: "v"}},
+							},
+						},
+						// `for range m {}` — both names absent, nil X allowed by the
+						// helper but the unmarshaler still tolerates it.
+						&RangeStmt{
+							X:    &Ident{Name: "m"},
+							Body: []Stmt{},
+						},
+						// `delete(m, "a")` as a statement-position BuiltinCall.
+						&BuiltinCall{
+							Name: "delete",
+							Args: []Expr{
+								&Ident{Name: "m"},
+								&Lit{Kind: LitString, Value: `"a"`},
+							},
+						},
+						// Empty map literal: `map[string]int{}`.
+						&Assign{
+							LHS:    []Expr{&Ident{Name: "empty"}},
+							Define: true,
+							RHS: []Expr{&MapLit{
+								Key:   &StringType{},
+								Value: &IntType{},
+							}},
+						},
+						&Return{Results: []Expr{&BuiltinCall{
+							Name: "len",
+							Args: []Expr{&Ident{Name: "m"}},
+						}}},
+					},
+				},
+			},
+		}},
+	}
+	roundTrip(t, pkg)
+}
+
 // TestSliceTypeMissingElem locks the explicit-error branch in
 // SliceType.UnmarshalJSON: a `SliceType` with no `elem` field is
 // nonsensical and must not silently round-trip to an Elem-nil node.
@@ -221,6 +304,64 @@ func TestSliceLitBadElem(t *testing.T) {
 	t.Parallel()
 	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"SliceLit","elem":{"kind":"Bogus"}}`)); err == nil {
 		t.Fatal("expected error for SliceLit with bad elem kind")
+	}
+}
+
+// TestMapTypeMissingKeyOrValue locks the explicit-error guards on
+// MapType: a `MapType` without a key or value field is nonsensical
+// (the emitter needs both to pick the right Maps_Of_<K>_To_<V>
+// instantiation) and must not silently round-trip with nil fields.
+func TestMapTypeMissingKeyOrValue(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"kind":"MapType"}`,
+		`{"kind":"MapType","key":null,"value":{"kind":"IntType"}}`,
+		`{"kind":"MapType","key":{"kind":"IntType"}}`,
+		`{"kind":"MapType","key":{"kind":"IntType"},"value":null}`,
+	}
+	for _, in := range cases {
+		if _, err := unmarshalType(json.RawMessage(in)); err == nil {
+			t.Fatalf("expected error for %s, got nil", in)
+		}
+	}
+}
+
+// TestMapLitMissingKeyOrValue mirrors the MapType guard for MapLit.
+func TestMapLitMissingKeyOrValue(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"kind":"MapLit"}`,
+		`{"kind":"MapLit","key":null,"value":{"kind":"IntType"}}`,
+		`{"kind":"MapLit","key":{"kind":"IntType"}}`,
+		`{"kind":"MapLit","key":{"kind":"IntType"},"value":null}`,
+	}
+	for _, in := range cases {
+		if _, err := unmarshalExpr(json.RawMessage(in)); err == nil {
+			t.Fatalf("expected error for %s, got nil", in)
+		}
+	}
+}
+
+// TestMapEntryDirect exercises MapEntry's own UnmarshalJSON path —
+// MapEntry is not a sum-type variant, so it has its own test like
+// Param. Empty key+value is intentionally allowed (the type carries
+// the schema; entries can be nil for `map[K]V{}`).
+func TestMapEntryDirect(t *testing.T) {
+	t.Parallel()
+
+	var e MapEntry
+	if err := e.UnmarshalJSON([]byte(`not json`)); err == nil {
+		t.Fatal("expected error for malformed MapEntry JSON")
+	}
+	var e2 MapEntry
+	if err := e2.UnmarshalJSON([]byte(`{"key":{"kind":"Bogus"}}`)); err == nil {
+		t.Fatal("expected error for MapEntry with bad key kind")
+	}
+	var e3 MapEntry
+	if err := e3.UnmarshalJSON(
+		[]byte(`{"key":{"kind":"Lit","litKind":"int","value":"1"},"value":{"kind":"Bogus"}}`),
+	); err == nil {
+		t.Fatal("expected error for MapEntry with bad value kind")
 	}
 }
 
@@ -282,12 +423,15 @@ func TestSentinels(t *testing.T) {
 	(&SliceExpr{}).irExpr()
 	(&BuiltinCall{}).irExpr()
 	(&BuiltinCall{}).irStmt()
+	(&MapLit{}).irExpr()
+	(&RangeStmt{}).irStmt()
 
 	(&IntType{}).irType()
 	(&StringType{}).irType()
 	(&BoolType{}).irType()
 	(&Float64Type{}).irType()
 	(&SliceType{}).irType()
+	(&MapType{}).irType()
 }
 
 // TestNilListHelpers exercises the nil-vs-empty branch of the slice
@@ -365,6 +509,8 @@ func TestPropagatedDecodeErrors(t *testing.T) {
 		{"SliceExpr", `{"kind":"SliceExpr","x":42}`, exprErr},
 		{"BuiltinCall expr", `{"kind":"BuiltinCall","args":"not-array"}`, exprErr},
 		{"BuiltinCall stmt", `{"kind":"BuiltinCall","args":"not-array"}`, stmtErr},
+		{"MapLit", `{"kind":"MapLit","entries":"not-array"}`, exprErr},
+		{"RangeStmt", `{"kind":"RangeStmt","body":"not-array"}`, stmtErr},
 	}
 
 	for _, tc := range cases {
@@ -423,6 +569,14 @@ func TestPropagatedChildErrors(t *testing.T) {
 		{"SliceExpr.High bad child", `{"kind":"SliceExpr","x":{"kind":"Ident","name":"s"},"high":` + bad + `}`, exprErr},
 		{"BuiltinCall.Args bad child as expr", `{"kind":"BuiltinCall","name":"len","args":[` + bad + `]}`, exprErr},
 		{"BuiltinCall.Args bad child as stmt", `{"kind":"BuiltinCall","name":"panic","args":[` + bad + `]}`, stmtErr},
+		{"MapType.Key bad type", `{"kind":"MapType","key":` + bad + `,"value":{"kind":"IntType"}}`, func(b json.RawMessage) error { _, err := unmarshalType(b); return err }},
+		{"MapType.Value bad type", `{"kind":"MapType","key":{"kind":"IntType"},"value":` + bad + `}`, func(b json.RawMessage) error { _, err := unmarshalType(b); return err }},
+		{"MapLit.Key bad type", `{"kind":"MapLit","key":` + bad + `,"value":{"kind":"IntType"}}`, exprErr},
+		{"MapLit.Value bad type", `{"kind":"MapLit","key":{"kind":"IntType"},"value":` + bad + `}`, exprErr},
+		{"MapLit.Entries[0].Key bad child", `{"kind":"MapLit","key":{"kind":"IntType"},"value":{"kind":"IntType"},"entries":[{"key":` + bad + `}]}`, exprErr},
+		{"MapLit.Entries[0].Value bad child", `{"kind":"MapLit","key":{"kind":"IntType"},"value":{"kind":"IntType"},"entries":[{"value":` + bad + `}]}`, exprErr},
+		{"RangeStmt.X bad child", `{"kind":"RangeStmt","x":` + bad + `}`, stmtErr},
+		{"RangeStmt.Body bad child", `{"kind":"RangeStmt","body":[` + bad + `]}`, stmtErr},
 	}
 
 	for _, tc := range cases {

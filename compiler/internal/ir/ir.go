@@ -243,6 +243,44 @@ type SliceExpr struct {
 func (*SliceExpr) irExpr()          {}
 func (*SliceExpr) NodeKind() string { return "SliceExpr" }
 
+// MapEntry is one `K: V` pair inside a `MapLit`. Not a sum-type
+// variant — has its own MarshalJSON/UnmarshalJSON pair like *Param.
+type MapEntry struct {
+	Key   Expr
+	Value Expr
+}
+
+// MapLit is a Go map composite literal: `map[K]V{k1: v1, k2: v2}`.
+// Key and Value carry the element types so the emitter can pick the
+// right `Maps_Of_<K>_To_<V>` instantiation without re-walking the
+// entries.
+type MapLit struct {
+	Key     Type
+	Value   Type
+	Entries []*MapEntry
+}
+
+func (*MapLit) irExpr()          {}
+func (*MapLit) NodeKind() string { return "MapLit" }
+
+// RangeStmt is Go `for k, v := range x { ... }` (and the elided
+// `for k := range x` / `for range x` shapes; empty KeyName/ValueName
+// means the corresponding bound was absent or blank-identifier in
+// the source). Define discriminates `:=` (true) from `=` (false).
+//
+// Phase 2 emits range-over-map; range-over-slice arrives when the
+// emitter learns the integer-index iteration shape.
+type RangeStmt struct {
+	KeyName   string
+	ValueName string
+	Define    bool
+	X         Expr
+	Body      []Stmt
+}
+
+func (*RangeStmt) irStmt()          {}
+func (*RangeStmt) NodeKind() string { return "RangeStmt" }
+
 // BuiltinCall is a call to a Go predeclared function. Distinguished
 // from Call (which carries an arbitrary Fun expression) so the
 // emitter can dispatch by name without re-deriving builtin-ness.
@@ -304,6 +342,17 @@ type SliceType struct {
 
 func (*SliceType) irType()          {}
 func (*SliceType) NodeKind() string { return "SliceType" }
+
+// MapType is Go `map[K]V`. Translates to a generic instantiation of
+// `Gada.Core.Maps` per (K, V) pair — the emitter tracks one
+// `Maps_Of_<K>_To_<V>` per file.
+type MapType struct {
+	Key   Type
+	Value Type
+}
+
+func (*MapType) irType()          {}
+func (*MapType) NodeKind() string { return "MapType" }
 
 // ---------------------------------------------------------------------------
 // JSON marshaling and unmarshaling
@@ -385,6 +434,12 @@ func unmarshalStmt(raw json.RawMessage) (Stmt, error) {
 			return nil, err
 		}
 		return &n, nil
+	case "RangeStmt":
+		var n RangeStmt
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
 	default:
 		return nil, fmt.Errorf("ir: unknown stmt kind %q", env.Kind)
 	}
@@ -452,6 +507,12 @@ func unmarshalExpr(raw json.RawMessage) (Expr, error) {
 			return nil, err
 		}
 		return &n, nil
+	case "MapLit":
+		var n MapLit
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
 	default:
 		return nil, fmt.Errorf("ir: unknown expr kind %q", env.Kind)
 	}
@@ -475,6 +536,12 @@ func unmarshalType(raw json.RawMessage) (Type, error) {
 		return &Float64Type{}, nil
 	case "SliceType":
 		var n SliceType
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "MapType":
+		var n MapType
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1125,5 +1192,147 @@ func (e *BuiltinCall) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	e.Args = args
+	return nil
+}
+
+// --- Map type / literal / range statement ---
+
+func (t *MapType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind  string `json:"kind"`
+		Key   Type   `json:"key"`
+		Value Type   `json:"value"`
+	}{"MapType", t.Key, t.Value})
+}
+
+func (t *MapType) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Key   json.RawMessage `json:"key"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Key) == 0 || string(aux.Key) == "null" {
+		return fmt.Errorf("ir: MapType missing key")
+	}
+	if len(aux.Value) == 0 || string(aux.Value) == "null" {
+		return fmt.Errorf("ir: MapType missing value")
+	}
+	k, err := unmarshalType(aux.Key)
+	if err != nil {
+		return err
+	}
+	t.Key = k
+	v, err := unmarshalType(aux.Value)
+	if err != nil {
+		return err
+	}
+	t.Value = v
+	return nil
+}
+
+func (e *MapEntry) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind  string `json:"kind"`
+		Key   Expr   `json:"key"`
+		Value Expr   `json:"value"`
+	}{"MapEntry", e.Key, e.Value})
+}
+
+func (e *MapEntry) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Key   json.RawMessage `json:"key"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	k, err := unmarshalOptionalExpr(aux.Key)
+	if err != nil {
+		return err
+	}
+	e.Key = k
+	v, err := unmarshalOptionalExpr(aux.Value)
+	if err != nil {
+		return err
+	}
+	e.Value = v
+	return nil
+}
+
+func (e *MapLit) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind    string      `json:"kind"`
+		Key     Type        `json:"key"`
+		Value   Type        `json:"value"`
+		Entries []*MapEntry `json:"entries"`
+	}{"MapLit", e.Key, e.Value, e.Entries})
+}
+
+func (e *MapLit) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Key     json.RawMessage `json:"key"`
+		Value   json.RawMessage `json:"value"`
+		Entries []*MapEntry     `json:"entries"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Key) == 0 || string(aux.Key) == "null" {
+		return fmt.Errorf("ir: MapLit missing key")
+	}
+	if len(aux.Value) == 0 || string(aux.Value) == "null" {
+		return fmt.Errorf("ir: MapLit missing value")
+	}
+	k, err := unmarshalType(aux.Key)
+	if err != nil {
+		return err
+	}
+	e.Key = k
+	v, err := unmarshalType(aux.Value)
+	if err != nil {
+		return err
+	}
+	e.Value = v
+	e.Entries = aux.Entries
+	return nil
+}
+
+func (s *RangeStmt) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind      string `json:"kind"`
+		KeyName   string `json:"keyName"`
+		ValueName string `json:"valueName"`
+		Define    bool   `json:"define"`
+		X         Expr   `json:"x"`
+		Body      []Stmt `json:"body"`
+	}{"RangeStmt", s.KeyName, s.ValueName, s.Define, s.X, s.Body})
+}
+
+func (s *RangeStmt) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		KeyName   string            `json:"keyName"`
+		ValueName string            `json:"valueName"`
+		Define    bool              `json:"define"`
+		X         json.RawMessage   `json:"x"`
+		Body      []json.RawMessage `json:"body"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	s.KeyName = aux.KeyName
+	s.ValueName = aux.ValueName
+	s.Define = aux.Define
+	x, err := unmarshalOptionalExpr(aux.X)
+	if err != nil {
+		return err
+	}
+	s.X = x
+	body, err := unmarshalStmtList(aux.Body)
+	if err != nil {
+		return err
+	}
+	s.Body = body
 	return nil
 }

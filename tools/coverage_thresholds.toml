@@ -44,7 +44,27 @@ path = "compiler/"
 minimum_lines_pct = 90.0
 
 # --- per-file exclusions ---------------------------------------------------
-#
-# (No entries yet. Add `[[exclude]]` blocks here when, and only when, a
-# code path is genuinely untestable in CI — see the schema description
-# at the top of this file.)
+
+# libco's malloc-based co_create returns NULL only on hard allocation
+# failure; on Linux with overcommit and macOS arm64 with large-VA there
+# is no portable Stack_Size value that *deterministically* triggers it.
+# The defensive raise (Storage_Error on Null_Cothread) is one statement
+# guarded by a deterministic equality test — review of the surrounding
+# code is sufficient. Phase 3 item 3 (scheduler) will gain a fault-
+# injection seam that re-covers this branch.
+# Rationale: runtime/COVERAGE.md (gada-async-context).
+[[exclude]]
+file = "runtime/src/gada-async-context.adb"
+lines = [139, 140]
+reason = "libco co_create OOM path — see runtime/COVERAGE.md"
+
+# Implicit basic block at the bottom of Trampoline's infinite tail loop.
+# The procedure is `pragma No_Return` and the loop has no exit branch;
+# control never reaches `end loop;` under any normal flow. gcov still
+# instruments the line as a no-return basic block — exclude it so the
+# 100% gate isn't gated on unreachable code.
+# Rationale: runtime/COVERAGE.md (gada-async-context).
+[[exclude]]
+file = "runtime/src/gada-async-context.adb"
+lines = [111]
+reason = "Trampoline tail-loop end — unreachable, see runtime/COVERAGE.md"

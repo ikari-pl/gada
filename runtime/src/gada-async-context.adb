@@ -62,10 +62,30 @@ package body Gada.Async.Context is
 
    Entries : Entry_Maps.Map;
 
+   --  Per-cothread "exit context": the address that originally switched
+   --  into this cothread. Populated lazily on first Switch_To-into so
+   --  the trampoline tail-stub can yield back when the user's entry
+   --  procedure returns (rather than fall off the end of the cothread,
+   --  which is libco-undefined per its docs). The Phase 3 scheduler
+   --  will replace this with a proper "spawn-finished" notification;
+   --  here it just keeps the cothread cleanly suspended at a Switch_To.
+   package Exit_Maps is new Ada.Containers.Hashed_Maps
+     (Key_Type        => System.Address,
+      Element_Type    => System.Address,
+      Hash            => Hash_Address,
+      Equivalent_Keys => System."=",
+      "="             => System."=");
+
+   Exits : Exit_Maps.Map;
+
    --  C-convention trampoline. libco invokes this with no arguments;
    --  we rediscover ourselves via co_active() and dispatch to the
-   --  user's entry.
-   procedure Trampoline with Convention => C;
+   --  user's entry. Marked No_Return because every control-flow path
+   --  through the body terminates in an unconditional Co_Switch loop —
+   --  control never falls off the end into libco's undefined-behaviour
+   --  territory. (This also drops the implicit-return basic block that
+   --  gcov would otherwise instrument at "end Trampoline;".)
+   procedure Trampoline with Convention => C, No_Return;
 
    procedure Trampoline is
       Self : constant System.Address := Libco.Co_Active;
@@ -78,12 +98,17 @@ package body Gada.Async.Context is
       if Ep /= null then
          Ep.all;
       end if;
-      --  When Ep returns, the cothread's stack frame for Trampoline
-      --  unwinds and libco hits "fell off the end of a cothread"
-      --  territory. Behaviour is undefined per libco's contract;
-      --  the public Make spec documents the same. The Phase 3
-      --  scheduler will install a "yield to scheduler" stub at the
-      --  tail to make this safe.
+      --  Ep returned. Yield back to the cothread that switched into us
+      --  on first entry. The Exits entry is always present here:
+      --  Trampoline only runs as a libco entry, and libco only invokes
+      --  the entry the first time someone Co_Switches *to* this
+      --  cothread — and Switch_To unconditionally records the spawner.
+      --  If Exits.Element raises Constraint_Error, the invariant is
+      --  violated; that is preferable to the older "fall off the end
+      --  of a cothread" libco-undefined behaviour.
+      loop
+         Libco.Co_Switch (Exits.Element (Self));
+      end loop;
    end Trampoline;
 
    procedure Make
@@ -103,8 +128,17 @@ package body Gada.Async.Context is
          --  Storage_Error so callers can choose to recover; the
          --  Phase 3 scheduler will catch this and report goroutine-
          --  spawn failure rather than crash.
+         --
+         --  LCOV_EXCL_START — defensive OOM path. libco's malloc-based
+         --  allocator does not deterministically return NULL across the
+         --  CI fleet (overcommit on Linux, large-VA on macOS arm64), so
+         --  there is no portable test that exercises this branch. The
+         --  raise is one statement guarded by a deterministic equality
+         --  test against Null_Cothread; the Phase 3 scheduler will gain
+         --  fault-injection support that re-covers it.
          raise Storage_Error
            with "Gada.Async.Context.Make: co_create returned NULL";
+         --  LCOV_EXCL_STOP
       end if;
       Entries.Insert (Key => New_Co, New_Item => Entry_Point);
       C := Context (New_Co);
@@ -116,8 +150,17 @@ package body Gada.Async.Context is
    end Active;
 
    procedure Switch_To (Target : Context) is
+      Tgt : constant System.Address := System.Address (Target);
    begin
-      Libco.Co_Switch (System.Address (Target));
+      --  Record the first cothread that switches into Target, so the
+      --  trampoline tail-stub knows where to bounce back to once the
+      --  user's entry procedure returns. Subsequent switches don't
+      --  update the entry — the *initial* spawner owns the exit edge,
+      --  same shape Phase 3's scheduler will need.
+      if not Exits.Contains (Tgt) then
+         Exits.Insert (Tgt, Libco.Co_Active);
+      end if;
+      Libco.Co_Switch (Tgt);
    end Switch_To;
 
    procedure Free (C : in out Context) is
@@ -130,6 +173,10 @@ package body Gada.Async.Context is
       --  if the entry was already consumed by Trampoline.
       if Entries.Contains (System.Address (C)) then
          Entries.Delete (System.Address (C));
+      end if;
+      --  Same idempotent cleanup for the exit-context table.
+      if Exits.Contains (System.Address (C)) then
+         Exits.Delete (System.Address (C));
       end if;
       Libco.Co_Delete (System.Address (C));
       C := Null_Context;

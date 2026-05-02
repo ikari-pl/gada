@@ -35,6 +35,10 @@ the cycle count of Go's `gc`-emitted SSA on the same hardware.
 | `Slices_Append_Grow` | 311.0 | 1184 | ~250–350 | ~1.0× | One full Empty → 128-element growth cycle per op (7 doublings + memmove copies). Per-element cost ≈ 2.4 ns. |
 | `Slices_Element_Roundtrip` | 0.47 | 0 | ~0.3–0.5 | ~1.0× | Set + Get + XOR through volatile sink per op; address-overlay reduces to base+offset load/store at -O2. |
 | `Slices_Slice_Of` | 0.29 | 0 | ~0.3 | ~1.0× | Pure header arithmetic — three field assigns + one address add. No allocation. |
+| `Maps_Insert_Pre_Sized` | 112 | 0 | ~80–150 | ~1.0× | Insert into a Cap-pre-sized Swiss-table; Fibonacci-hashed Integer→Integer; no grow on the timed path. |
+| `Maps_Lookup_Hit` | 4.79 | 0 | ~5–15 | ~1.0× | Hit path: H1+H2 split, group-of-16 byte scan, hash + key compare on h2 match. |
+| `Maps_Lookup_Miss` | 11.5 | 0 | ~5–15 | ~1.0× | Miss path: same probe, terminates at first Empty control byte in the group (load-factor invariant). |
+| `Maps_Delete_Reinsert` | 33.2 | 0 | ~40–80 | ~1.0× | Delete then re-insert at the same key — exercises the tombstone-reuse fast path. |
 
 **Go-side reference column is currently expert-estimate**, not
 measured. Phase 11's cross-comparison harness replaces estimates

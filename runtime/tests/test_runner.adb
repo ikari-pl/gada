@@ -32,6 +32,7 @@ with Memory_Suite;
 with Slices_Suite;
 with Defer_Suite;
 with Panic_Suite;
+with Maps_Suite;
 
 procedure Test_Runner is
 
@@ -53,7 +54,8 @@ procedure Test_Runner is
       or else Pkg = "core.memory"
       or else Pkg = "core.slices"
       or else Pkg = "core.defer"
-      or else Pkg = "core.panic");
+      or else Pkg = "core.panic"
+      or else Pkg = "core.maps");
 
    function Should_Register (Pkg : String) return Boolean is
      (Selected_Pkg = "" or else Selected_Pkg = Pkg);
@@ -81,6 +83,9 @@ procedure Test_Runner is
       if Should_Register ("core.panic") then
          Add_Test (Result, new Panic_Suite.Panic_Test);
       end if;
+      if Should_Register ("core.maps") then
+         Add_Test (Result, new Maps_Suite.Maps_Test);
+      end if;
       return Result;
    end Gada_Suite;
 
@@ -94,7 +99,7 @@ begin
         (Ada.Text_IO.Standard_Error,
          "test_runner: unknown PKG filter '" & Selected_Pkg
          & "'. Known suites: core.io, core.memory, core.slices,"
-         & " core.defer, core.panic.");
+         & " core.defer, core.panic, core.maps.");
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
       return;
    end if;

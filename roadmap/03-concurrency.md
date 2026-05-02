@@ -20,9 +20,40 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
       *Done 2026-05-01:* Already shipped during Phase 0 foundation work — predates Phase 3 opening. ADR-0004 records the M:N-over-Ada-tasks-plus-libco scheduler design for hosted targets and the one-Ada-task-per-goroutine fallback for Ravenscar. Alternatives explicitly considered and rejected in the ADR: pure CPS transformation (compiler-only, no native stack — rejected for `cgo` interop and stack-trace fidelity), pure Ada-task-per-goroutine (too expensive on hosted), pure threads-on-libco (no fallback for Ravenscar). Roadmap item originally projected number 0010; the existing 0004 supersedes — ADR numbering is monotonic, not phase-aligned.
 
 - [ ] **GADA.Async.Context — userland context switching via libco**
-      *Files:* `runtime/src/gada-async-context.ads`, `runtime/src/gada-async-context.adb`, `runtime/src/gada-async-context-thin.c`, `runtime/tests/test_context.adb`
+      *Files:* (see sub-items below)
       *Verify:* `make -C runtime test PKG=async.context`
-      *Done when:* `Switch_To (Other)` round-trips between two contexts 1M times; coverage 100%.
+      *Done when:* `Switch_To (Other)` round-trips between two contexts 1M times in < 1 s wall-clock; coverage 100%.
+      *Notes:* libco is the userspace-coroutine library named in [[0004-scheduler-libco-for-v1]]. It has no Alire crate and no apt package, so it is vendored in-tree. Decomposed into the six sub-items below; the parent ticks when all sub-items tick AND the parent *Verify* passes from a clean build.
+
+  - [ ] **(a) ADR — libco bring-up (vendor in-tree, ISC licence, platform matrix)**
+        *Files:* `docs/adr/0007-libco-vendoring.md`
+        *Verify:* ADR is `accepted` with consequences enumerated and the licence text reproduced.
+        *Done when:* design records (1) why vendor vs. system package vs. submodule, (2) ISC licence reproduction + attribution, (3) supported platform matrix for v1 (amd64 + arm64 hosted, others as future work), (4) which upstream commit/tag is pinned and how to update.
+
+  - [ ] **(b) Vendor libco source (header + per-arch implementations)**
+        *Files:* `runtime/src/vendor/libco/libco.h`, `…/libco.c`, `…/amd64.c`, `…/arm64.c`, `…/LICENSE`, `…/README.md`
+        *Verify:* `clang -c runtime/src/vendor/libco/libco.c -o /tmp/libco.o` exits 0 on macOS/arm64; `gcc -c …` exits 0 on Linux/x86_64.
+        *Done when:* Verbatim copy of the upstream source pinned to the commit named in (a); README points at the upstream and the ADR; LICENSE preserves the ISC notice.
+
+  - [ ] **(c) Build wiring — gada_core.gpr + runtime/Makefile compile the C side**
+        *Files:* `runtime/gada_core.gpr`, `runtime/Makefile`, `runtime/tests/aunit_harness.gpr` (if needed)
+        *Verify:* `cd runtime && alr build` exits 0; `nm runtime/lib/libgada_core.a | grep co_create` reports the libco symbols are *defined*, not undefined externals.
+        *Done when:* Languages = ("Ada", "C") in the gpr; libco's source dir on the C side; per-arch source selection (amd64.c on x86_64, arm64.c on aarch64) so a fat binary doesn't try to link both implementations.
+
+  - [ ] **(d) Gada.Async.Context.Libco — thin Ada bindings**
+        *Files:* `runtime/src/gada-async-context-libco.ads` (no body — pragma Imports stand in)
+        *Verify:* `cd runtime && alr build` exits 0; private-child rule rejects external `with`-ing.
+        *Done when:* `co_create`, `co_active`, `co_switch`, `co_delete` imported via `pragma Import (C, …)` from a private-child package, mirroring the `Gada.Core.Memory.Libgc` pattern from Phase 2.
+
+  - [ ] **(e) Gada.Async.Context — public spec + body**
+        *Files:* `runtime/src/gada-async-context.ads`, `runtime/src/gada-async-context.adb`
+        *Verify:* `cd runtime && alr build` exits 0; `grep -rn 'Async\.Context\.Libco' runtime/src | grep -v 'gada-async-context'` is empty.
+        *Done when:* `Context`, `Make`, `Switch_To`, `Active`, `Free` exposed at the public layer; body delegates to the Libco child per [[0002-runtime-layered]].
+
+  - [ ] **(f) AUnit suite — round-trip test, 1M iterations**
+        *Files:* `runtime/tests/context_suite.{ads,adb}`, `runtime/tests/test_runner.adb` (registration), `roadmap/03-concurrency.md` (tick item)
+        *Verify:* `make -C runtime test PKG=async.context`
+        *Done when:* Suite has at least three tests — Make/Free round-trip without leaks, two-context ping-pong (basic), 1M-iter ping-pong asserting wall-clock < 1 s. Per-arch coverage 100% on `gada-async-context.adb` (the .ads has no executable lines).
 
 - [ ] **GADA.Async.Scheduler — M:N over a fixed pool of Ada tasks**
       *Files:* `runtime/src/gada-async-scheduler.ads`, `runtime/src/gada-async-scheduler.adb`, `runtime/tests/test_scheduler.adb`

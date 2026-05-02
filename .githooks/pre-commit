@@ -3,27 +3,42 @@
 #  pre-commit — fast quality gate for `git commit`.
 #
 #  Goal: catch the cheap, common regressions (compile errors, lint
-#  drift, broken Go unit tests, golden mismatches) before a commit
-#  lands, so a contributor doesn't push a series of red commits and
-#  re-discover the same problem in CI five minutes later.
+#  drift, broken unit tests, golden mismatches) before a commit lands,
+#  so a contributor doesn't push a series of red commits and re-discover
+#  the same problem in CI five minutes later.
 #
-#  We deliberately do NOT run the full `make ci` here:
-#    - Ada AUnit suite + lcov pass require an Alire build, which
-#      adds 60-90s on a fresh tree -- too slow for an interactive
-#      hook.
-#    - Coverage gate requires the full test pass first; if you've
-#      broken coverage you've also broken something cheaper.
-#  The full gate runs in CI (.github/workflows/ci.yml) and locally
-#  via `make ci`. The precommit hook's contract: green precommit
-#  does NOT promise green CI; red precommit DOES promise red CI.
+#  Two independent sweeps run conditionally on what's staged:
+#
+#    Go side  (~3-4s warm, ~10s cold):
+#      Triggered when any compiler/, examples/**/*.go, go.mod, or go.sum
+#      file is staged. Runs `go vet` + `go test -race -count=1` over
+#      compiler/internal/{ir,translate,emit}.
+#
+#    Ada side (~10-20s warm, ~60-90s cold the first time after a
+#              `make clean`):
+#      Triggered when any runtime/ file is staged. Runs `make -C
+#      runtime test` (the AUnit suite). Skips coverage + lcov — those
+#      stay in CI because they need ~30s+ extra per pass and the
+#      precommit's contract is "fast feedback", not full enforcement.
+#
+#  We deliberately do NOT run the full `make ci`:
+#    - Coverage gate adds ~30s on top of the test pass; CI is the
+#      authoritative enforcement point.
+#    - Lint passes (golangci-lint, gnatcheck) belong in CI for
+#      similar reasons; `go vet` covers the cheapest Go subset.
+#  Contract: green precommit does NOT promise green CI; red precommit
+#  DOES promise red CI.
 #
 #  Enable once per clone:
 #    git config core.hooksPath .githooks
 #  Or via the convenience target:
 #    make hooks
 #
-#  Skip in an emergency (NOT for normal use, hooks exist for a
-#  reason): commit with --no-verify.
+#  Escape hatches:
+#    GADA_SKIP_GO_TESTS=1   skip the Go sweep
+#    GADA_SKIP_ADA_TESTS=1  skip the Ada sweep
+#    git commit --no-verify skip the entire hook
+#  Use sparingly. The hook exists for a reason.
 
 set -euo pipefail
 
@@ -33,45 +48,96 @@ cd "$REPO_ROOT"
 red()    { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 green()  { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
+blue()   { printf '\033[34m%s\033[0m\n' "$*"; }
 
-# Only run Go-side checks when something the Go side cares about
-# changed. A pure-Ada commit (runtime/, docs/, roadmap/) shouldn't
-# pay the Go test bill.
-GO_TOUCHED="$(git diff --cached --name-only --diff-filter=ACMR \
+STAGED="$(git diff --cached --name-only --diff-filter=ACMR || true)"
+
+# --- Go side --------------------------------------------------------
+
+GO_TOUCHED="$(echo "$STAGED" \
               | grep -E '^(compiler/|examples/.*\.go$|.+\.go$|go\.mod$|go\.sum$)' \
               || true)"
 
 if [[ -z "$GO_TOUCHED" ]]; then
   yellow "pre-commit: no Go-side changes staged, skipping compiler tests."
-  exit 0
+elif [[ "${GADA_SKIP_GO_TESTS:-0}" = "1" ]]; then
+  yellow "pre-commit: GADA_SKIP_GO_TESTS=1 set, skipping compiler tests."
+else
+  blue "pre-commit: Go sweep — vet + emit/translate/ir unit tests..."
+
+  pushd "$REPO_ROOT/compiler" >/dev/null
+
+  # 1. go vet — catches "obviously wrong" code (Printf format strings,
+  # unreachable returns, nil context, etc.) in milliseconds.
+  if ! go vet ./... ; then
+    red "pre-commit: go vet failed"
+    exit 1
+  fi
+
+  # 2. Unit tests for the three layers that produce the bulk of the
+  # emit-side regressions: ir/, translate/, emit/. The emit corpus
+  # also auto-validates every fixture's golden against re-emission.
+  # `-race` catches data races introduced via concurrent code; cheap
+  # at this scale.
+  if ! go test -race -count=1 \
+         ./internal/ir/ \
+         ./internal/translate/ \
+         ./internal/emit/ ; then
+    red "pre-commit: compiler unit tests failed"
+    red "  Hint: if a golden drifted intentionally, run:"
+    red "    cd compiler && go test ./internal/translate/... -run TestCorpus -update"
+    red "    cd compiler && go test ./internal/emit/...      -run '^TestCorpus\$' -update"
+    red "  ...inspect the diff, then re-stage the golden(s)."
+    exit 1
+  fi
+
+  popd >/dev/null
 fi
 
-yellow "pre-commit: compiler test sweep (vet + emit/translate/ir unit tests)..."
+# --- Ada side -------------------------------------------------------
 
-cd "$REPO_ROOT/compiler"
+ADA_TOUCHED="$(echo "$STAGED" \
+               | grep -E '^runtime/' \
+               || true)"
 
-# 1. go vet — catches "obviously wrong" code (Printf format strings,
-# unreachable returns, nil context, etc.) in milliseconds.
-if ! go vet ./... ; then
-  red "pre-commit: go vet failed"
-  exit 1
-fi
+if [[ -z "$ADA_TOUCHED" ]]; then
+  yellow "pre-commit: no Ada-side changes staged, skipping runtime tests."
+elif [[ "${GADA_SKIP_ADA_TESTS:-0}" = "1" ]]; then
+  yellow "pre-commit: GADA_SKIP_ADA_TESTS=1 set, skipping runtime tests."
+else
+  blue "pre-commit: Ada sweep — runtime AUnit suite..."
 
-# 2. Unit tests for the three layers that produce the bulk of the
-# emit-side regressions: ir/, translate/, emit/. The emit corpus
-# also auto-validates every fixture's golden against re-emission.
-# `-race` catches data races introduced via concurrent code; cheap
-# at this scale.
-if ! go test -race -count=1 \
-       ./internal/ir/ \
-       ./internal/translate/ \
-       ./internal/emit/ ; then
-  red "pre-commit: compiler unit tests failed"
-  red "  Hint: if a golden drifted intentionally, run:"
-  red "    cd compiler && go test ./internal/translate/... -run TestCorpus -update"
-  red "    cd compiler && go test ./internal/emit/...      -run '^TestCorpus\$' -update"
-  red "  ...inspect the diff, then re-stage the golden(s)."
-  exit 1
+  # Surface alr if it's not on the caller's PATH. runtime/Makefile does
+  # the same augmentation; mirror it so the hook works under bare `git
+  # commit` invocations too.
+  if ! command -v alr >/dev/null 2>&1; then
+    for d in \
+        "$HOME/.local/share/alire/bin" \
+        "$HOME/src/gnatstudio/.tools/bin"; do
+      if [[ -x "$d/alr" ]]; then
+        export PATH="$d:$PATH"
+        break
+      fi
+    done
+  fi
+
+  if ! command -v alr >/dev/null 2>&1; then
+    red "pre-commit: alr (Alire) not found on PATH"
+    red "  Either install Alire (https://alire.ada.dev) or set"
+    red "  GADA_SKIP_ADA_TESTS=1 to bypass the Ada sweep."
+    exit 1
+  fi
+
+  if ! make -C runtime test >/tmp/gada-precommit-runtime.log 2>&1 ; then
+    red "pre-commit: runtime AUnit suite failed"
+    red "  Last 20 lines of /tmp/gada-precommit-runtime.log:"
+    tail -20 /tmp/gada-precommit-runtime.log >&2
+    red "  Full log: /tmp/gada-precommit-runtime.log"
+    exit 1
+  fi
+  # Show the test totals so the user knows what passed.
+  grep -E "Total Tests Run|Successful Tests|Failed Assertions" \
+       /tmp/gada-precommit-runtime.log | sed 's/^/  /'
 fi
 
 green "pre-commit: OK"

@@ -30,6 +30,7 @@ with AUnit.Test_Suites; use AUnit.Test_Suites;
 with IO_Suite;
 with Memory_Suite;
 with Slices_Suite;
+with Defer_Suite;
 
 procedure Test_Runner is
 
@@ -49,7 +50,8 @@ procedure Test_Runner is
      (Pkg = ""
       or else Pkg = "core.io"
       or else Pkg = "core.memory"
-      or else Pkg = "core.slices");
+      or else Pkg = "core.slices"
+      or else Pkg = "core.defer");
 
    function Should_Register (Pkg : String) return Boolean is
      (Selected_Pkg = "" or else Selected_Pkg = Pkg);
@@ -71,6 +73,9 @@ procedure Test_Runner is
       if Should_Register ("core.slices") then
          Add_Test (Result, new Slices_Suite.Slices_Test);
       end if;
+      if Should_Register ("core.defer") then
+         Add_Test (Result, new Defer_Suite.Defer_Test);
+      end if;
       return Result;
    end Gada_Suite;
 
@@ -83,7 +88,8 @@ begin
       Ada.Text_IO.Put_Line
         (Ada.Text_IO.Standard_Error,
          "test_runner: unknown PKG filter '" & Selected_Pkg
-         & "'. Known suites: core.io, core.memory, core.slices.");
+         & "'. Known suites: core.io, core.memory, core.slices,"
+         & " core.defer.");
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
       return;
    end if;

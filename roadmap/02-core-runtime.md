@@ -60,10 +60,11 @@ exercising slices, maps, append, len, cap, defer, panic, recover.
       *Verify:* `make -C runtime test PKG=core.maps`
       *Done when:* insertion, lookup, deletion, iteration with Go-compatible randomization, and growth-on-load-factor all pass; coverage 100%.
 
-- [ ] **GADA.Core.Defer — deferred call stack**
-      *Files:* `runtime/src/gada-core-defer.ads`, `runtime/src/gada-core-defer.adb`, `runtime/tests/test_defer.adb`
+- [x] **GADA.Core.Defer — deferred call stack**
+      *Files:* `runtime/src/gada-core-defer.{ads,adb}`, `runtime/tests/defer_suite.{ads,adb}`
       *Verify:* `make -C runtime test PKG=core.defer`
       *Done when:* `defer` calls execute in LIFO order at scope exit, including under panic; coverage 100%.
+      *Done 2026-05-02:* `Defer_Block` is a discriminated `Limited_Controlled` whose `Op : not null Action` (parameterless procedure access) fires on `Finalize`. Ada finalises in reverse declaration order at block exit *including under exception unwind* — that is exactly Go's LIFO `defer` semantics with no defer-chain bookkeeping. Whole runtime body is one line: `D.Op.all;`. The `not null` discriminant pushes the null-check to declaration time so a buggy compiler-emit can't produce a runtime crash on unwind. Suite (4 tests) covers: single-defer fire, sibling LIFO ordering (3-element sequence buffer asserts the 3→2→1 fire order), exception unwind via `raise Constraint_Error` (Gada.Core.Panic integration test lands with that item), and the *zero-alloc* property — `Total_Bytes_Allocated` must not move across declaration + finalisation of a `Defer_Block`. Coverage on `runtime/src/gada-core-defer.adb`: 3/3 lines (100%); runtime/ gate held at 100/100. No bench row — the operation is one indirect call and the per-defer cost is whatever the user's deferred procedure does.
 
 - [ ] **GADA.Core.Panic — panic/recover**
       *Files:* `runtime/src/gada-core-panic.ads`, `runtime/src/gada-core-panic.adb`, `runtime/tests/test_panic.adb`

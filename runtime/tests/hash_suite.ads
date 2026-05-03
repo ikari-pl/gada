@@ -19,6 +19,8 @@ package Hash_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Hash_Integer_Stable
      (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Hash_Integer_Negative_Keys
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Hash_Boolean_Distinct
      (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Hash_Long_Float_Distinct

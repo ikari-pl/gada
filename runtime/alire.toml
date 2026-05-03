@@ -17,3 +17,15 @@ project-files = ["gada_core.gpr"]
 # `[[depends-on]]` until we move tests into a sub-crate.
 [[depends-on]]
 aunit = "^26.0.0"
+
+# gnatprove is the SPARK formal-verification toolchain. Pinned per
+# docs/adr/0008-spark-policy.md so `cd runtime && alr build` materialises
+# the binary into the Alire-managed PATH, after which `tools/prove.sh`
+# discharges every VC on every SPARK opt-in unit (currently just
+# Gada.Core.Hash). Listed under [[depends-on]] because Alire 2.x has no
+# first-class test/dev-dependencies table; the `Auto_Gpr_With = false`
+# in the gnatprove crate metadata means it does not auto-import as a
+# library, only puts the binary on PATH via the crate's environment
+# entry. See `alr show gnatprove` for details.
+[[depends-on]]
+gnatprove = "^15.1.0"

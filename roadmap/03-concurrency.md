@@ -76,6 +76,7 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
 
   - [ ] **(b) GOMAXPROCS worker pool**
         *Files:* `runtime/src/gada-async-scheduler.adb` (extend), `runtime/src/gada-async-scheduler.ads` (Init signature)
+        *Prereq:* Add `pragma Atomic` (or equivalent fence — see [[docs/incidents/2026-05-03-scheduler-3a-concurrency-bugs]] item #6) to `Goroutine_Record.State` *before* growing the worker count past 1. Today the protected-object barrier on `Run_Queue` is the implicit happens-before chain that makes the State writes visible across cores; that argument fails the moment N workers can simultaneously read/write State for goroutines they're handing off via Park/Unpark in (d). The fence is one line of code but a load-bearing line — landing it as the first commit of (b) keeps the failure mode a clean compile-time decision rather than a Heisenbug under load. (Also reconsider `Worker_Ctx` and `Body_Proc` for the same fence treatment if they become cross-worker-mutated.)
         *Verify:* `make -C runtime test PKG=async.scheduler` — multi-spawn test schedules N goroutines and confirms they ran on at least 2 distinct worker tasks.
         *Done when:* Pool of `Worker` tasks sized by `System.Multiprocessors.Number_Of_CPUs` (overridable via `Init (Workers => N)`). All workers share the same protected-object FIFO queue (work-stealing arrives in (c)). Workers exit cleanly when `Shutdown` signals the queue is permanently drained.
 

@@ -24,6 +24,8 @@
 --  per-worker structure once cross-thread routing is needed.
 
 with Ada.Containers.Hashed_Maps;
+with Ada.Exceptions;
+with Ada.Text_IO;
 with Ada.Unchecked_Conversion;
 with Interfaces.C;
 with System.Storage_Elements;
@@ -45,11 +47,22 @@ package body Gada.Async.Context is
       function To_Int is new Ada.Unchecked_Conversion
         (Source => System.Address,
          Target => System.Storage_Elements.Integer_Address);
+      use type System.Storage_Elements.Integer_Address;
    begin
-      --  Hash_Type is a modular type ('Mod is the modular-reduction
-      --  attribute), so 'Mod does the right thing across the
-      --  truncation from a wider unsigned integer.
-      return Ada.Containers.Hash_Type'Mod (To_Int (A));
+      --  Shift off the bottom 4 bits before truncation: libco's
+      --  cothread allocations come from malloc, which on every libco-
+      --  supported platform returns 16-byte-aligned pointers. Without
+      --  the shift, the four low bits are always zero, and a power-of-
+      --  two-bucketed Hashed_Maps would then collide all keys onto a
+      --  16-bucket-strided subset — the bucket-collision rate would
+      --  scale with goroutine count rather than stay flat. Hash_Type
+      --  is a modular type ('Mod = modular-reduction attribute), so
+      --  the post-shift truncation across a wider unsigned integer
+      --  is well-defined. The `use type` clause makes Integer_Address's
+      --  "/" operator visible without polluting the rest of the body
+      --  with Storage_Elements names. (PR #3 review feedback,
+      --  gemini-code-assist.)
+      return Ada.Containers.Hash_Type'Mod (To_Int (A) / 16);
    end Hash_Address;
 
    --  Note: Address equality is "=" by default, which compares bit
@@ -166,7 +179,28 @@ package body Gada.Async.Context is
    begin
       State.Take_Entry (Self, Ep);
       if Ep /= null then
-         Ep.all;
+         --  Convention => C subprograms must NOT propagate Ada
+         --  exceptions across the C ABI boundary — libco invokes us via
+         --  a `void(*)(void)` C function pointer, and the Itanium /
+         --  AArch64 unwinders can't safely cross that frame. Catch
+         --  everything the user's entry can raise, log to stderr (the
+         --  conventional Ada diagnostic channel for runtime-internal
+         --  faults), and fall through to the tail-loop which yields
+         --  control back to the spawner. Swallowing here is the lesser
+         --  evil vs UB; the Phase 3 scheduler's Goroutine_Trampoline
+         --  will install its own State => DONE handler so panics
+         --  surface as the right thing one layer up.
+         --  (PR #3 review feedback, gemini-code-assist.)
+         begin
+            Ep.all;
+         exception
+            when E : others =>
+               Ada.Text_IO.Put_Line
+                 (Ada.Text_IO.Standard_Error,
+                  "Gada.Async.Context.Trampoline: unhandled "
+                  & "exception from cothread entry: "
+                  & Ada.Exceptions.Exception_Information (E));
+         end;
       end if;
       --  Ep returned. Yield back to the cothread that switched into us
       --  on first entry. The Exits entry is always present here:

@@ -338,20 +338,47 @@ package body Gada.Async.Scheduler is
       --  let the guard fire prematurely. Worker_Stopped runs at the
       --  tail of Worker_Task and balances this bump.
       Run_Queue.Worker_Started;
-      The_Worker := new Worker_Task;
+      --  Roll back the lifecycle counters if the task allocation
+      --  itself raises (Storage_Error on a tight task-storage budget,
+      --  Tasking_Error on policy mismatch). Without this, the next
+      --  Init would see Initialised => True and raise "called twice",
+      --  and a Shutdown would Drain forever waiting for a worker that
+      --  was never spawned. (PR #3 review feedback, gemini-code-assist.)
+      begin
+         The_Worker := new Worker_Task;
+      exception
+         when others =>
+            Run_Queue.Worker_Stopped;
+            Run_Queue.Set_Initialised (False);
+            raise;
+      end;
    end Init;
 
    function Spawn (Body_Proc : Goroutine_Body) return Goroutine_Id is
-      G : constant Goroutine_Access := new Goroutine_Record;
+      G : Goroutine_Access := new Goroutine_Record;
    begin
+      --  Both failure paths below — Init not called, or libco's
+      --  co_create raising Storage_Error inside Make — would otherwise
+      --  leak the just-allocated Goroutine_Record. Free it explicitly
+      --  before re-raising; the Boehm GC would eventually reclaim it,
+      --  but a deterministic free narrows the failure-mode surface for
+      --  scheduler stress tests. (PR #3 review feedback, gemini-code-
+      --  assist.) G is mutable so Free_Goroutine can null it.
       if not Run_Queue.Is_Initialised then
+         Free_Goroutine (G);
          raise Program_Error
            with "Gada.Async.Scheduler.Spawn called before Init";
       end if;
       G.Body_Proc := Body_Proc;
       G.State := READY;
-      Gada.Async.Context.Make
-        (G.Ctx, Goroutine_Trampoline'Access);
+      begin
+         Gada.Async.Context.Make
+           (G.Ctx, Goroutine_Trampoline'Access);
+      exception
+         when others =>
+            Free_Goroutine (G);
+            raise;
+      end;
       Run_Queue.Inject (G);
       return (Ref => G);
    end Spawn;

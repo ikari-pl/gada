@@ -36,6 +36,7 @@ with Maps_Suite;
 with Hash_Suite;
 with Stress_Gc_Suite;
 with Context_Suite;
+with Scheduler_Suite;
 
 procedure Test_Runner is
 
@@ -61,6 +62,7 @@ procedure Test_Runner is
       or else Pkg = "core.maps"
       or else Pkg = "core.hash"
       or else Pkg = "async.context"
+      or else Pkg = "async.scheduler"
       or else Pkg = "stress.gc");
 
    --  Suites under the `stress.*` namespace are *opt-in*: an
@@ -107,6 +109,9 @@ procedure Test_Runner is
       if Should_Register ("async.context") then
          Add_Test (Result, new Context_Suite.Context_Test);
       end if;
+      if Should_Register ("async.scheduler") then
+         Add_Test (Result, new Scheduler_Suite.Scheduler_Test);
+      end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);
       end if;
@@ -124,7 +129,7 @@ begin
          "test_runner: unknown PKG filter '" & Selected_Pkg
          & "'. Known suites: core.io, core.memory, core.slices,"
          & " core.defer, core.panic, core.maps, core.hash,"
-         & " async.context, stress.gc.");
+         & " async.context, async.scheduler, stress.gc.");
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
       return;
    end if;

@@ -62,3 +62,138 @@ If the package cannot reach 0 unproven VCs without `pragma
 Annotate (GNATprove, ...)` justifications, add a sub-section
 explaining each justification — undocumented justifications are
 rejected at PR review.
+
+## Mixed posture: spec-level contracts when the body must stay Off
+
+Some packages cannot be fully `SPARK_Mode => On` (the body touches C
+bindings, raw addresses, finalisation, or non-Ravenscar tasking) but
+*can* express SPARK-checkable invariants at the **spec** level. The
+canonical examples come from
+[[../docs/journal/2026-05-03-async-context-concurrency.md]] hazards
+#3 (lifecycle state machine) and #5 (`Yield` outside goroutine
+context). For these, the recipe is:
+
+- Mark the spec `with SPARK_Mode => On` and add `Pre`/`Post`
+  contracts on the public subprograms.
+- Mark the body `with SPARK_Mode => Off` so gnatprove only checks
+  caller-side preconditions, not the body's implementation.
+- Add the unit name to `OPT_IN_UNITS` in `tools/prove.sh` exactly
+  as for full opt-ins; gnatprove correctly handles the spec-only
+  case.
+
+The proof obligation transfers to *callers*: every call site must
+prove it satisfies the precondition. That alone catches the "future
+generated-code emit accidentally calls `Yield` outside a goroutine"
+class of hazard at compile time.
+
+### Recipe 1: lifecycle state machine (hazard #3)
+
+Use a `Ghost` enum to model the lifecycle externally; mark
+state-changing subprograms with the legal transitions.
+
+```ada
+--  gada-async-scheduler.ads
+package Gada.Async.Scheduler with SPARK_Mode => On is
+
+   --  Ghost type — exists only for proof, never at runtime.
+   type Lifecycle_State is (Fresh, Running, Draining, Stopped)
+     with Ghost;
+
+   function Current_Lifecycle return Lifecycle_State with Ghost;
+
+   procedure Init
+     with Pre  => Current_Lifecycle = Fresh
+                  or else Current_Lifecycle = Stopped,
+          Post => Current_Lifecycle = Running;
+
+   procedure Shutdown
+     with Pre  => Current_Lifecycle = Running
+                  or else Current_Lifecycle = Draining,
+          Post => Current_Lifecycle = Stopped;
+
+   --  ... other operations carry Pre => Current_Lifecycle = Running
+   --  to forbid Spawn-after-Shutdown without an Init in between.
+
+end Gada.Async.Scheduler;
+```
+
+```ada
+--  gada-async-scheduler.adb
+package body Gada.Async.Scheduler with SPARK_Mode => Off is
+   --  ... regular Ada implementation, free to use libco, Ada tasks,
+   --  raw addresses, finalisation, etc. The spec contracts above
+   --  bind callers; the body's correctness is regression-tested via
+   --  AUnit, not proven.
+end Gada.Async.Scheduler;
+```
+
+The body aspect (`with SPARK_Mode => Off`) is **load-bearing**. A
+spec marked `On` does **not** automatically force the body to `Off`
+— in fact, a body with no annotation **inherits On** from the spec
+and gnatprove will then attempt to verify the (unprovable) libco
+calls inside it. `pragma SPARK_Mode (Off)` in the spec's `private`
+part affects only private declarations of the spec; it does **not**
+cascade to the body. The body file's own `with SPARK_Mode => Off`
+aspect is the only mechanism that opts the body out.
+
+What this catches: re-entrant `Init` after a half-Shutdown, `Spawn`
+after `Shutdown`, double `Init` without intervening `Shutdown`. All
+the shapes of hazard #3, by construction, at compile time. The
+sticky `Shutting_Down` flag bug in the retro becomes impossible to
+write because the precondition forbids the transition.
+
+### Recipe 2: context-restricted operations (hazard #5)
+
+Use a `Ghost` boolean function to track "are we in a goroutine
+context"; require it as a precondition on operations that demand
+it.
+
+```ada
+--  gada-async-scheduler.ads (extends Recipe 1's spec)
+package Gada.Async.Scheduler with SPARK_Mode => On is
+
+   function In_Goroutine_Context return Boolean with Ghost;
+
+   procedure Yield
+     with Pre => In_Goroutine_Context;
+
+   --  ... other goroutine-only operations get the same Pre.
+end Gada.Async.Scheduler;
+```
+
+The corresponding body file (`gada-async-scheduler.adb`) opens with
+`package body Gada.Async.Scheduler with SPARK_Mode => Off is` for
+the same reason as in Recipe 1.
+
+What this catches: any future code path that calls `Yield` from
+elaboration-time, from a non-goroutine task, or from the main
+thread, fails to verify until the caller proves `In_Goroutine_Context`.
+The "Yield is currently a no-op outside a goroutine" trap becomes a
+compile-time error rather than silent dead code.
+
+### Why "Mixed" is not just "Off"
+
+A spec marked `SPARK_Mode => On` with body `Off` is **not** the
+same as a fully-Off package: gnatprove still verifies that **callers
+satisfy preconditions**. That is most of the value for packages whose
+body legitimately can't be SPARK (libco bindings, controlled types,
+non-Ravenscar tasking) but whose contract surface is the actual
+hazard locus. The body's correctness is regression-tested via AUnit;
+the call-site discipline is proven.
+
+The trade-off: contracts on the spec must be **provable from the
+caller's perspective alone**. They cannot reference the body's
+internal state directly. `Ghost` functions and `Ghost` types are the
+escape hatch — they can be redefined privately in the body to
+return a useful value at proof time without leaking implementation
+details.
+
+### When a Mixed posture is *not* worth it
+
+- The package has no public subprograms (utility-only with
+  `private` API) — no caller surface to gate.
+- The hazard is purely internal (race between two private
+  threads of the same package) — Ravenscar is the only tool.
+  See [[../docs/adr/0009-ravenscar-conditional-spark.md]].
+- The contract would need to reference body state that has no
+  meaningful Ghost shadow (e.g., a libgc-managed pointer table).

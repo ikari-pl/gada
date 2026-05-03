@@ -92,6 +92,7 @@ Use a `Ghost` enum to model the lifecycle externally; mark
 state-changing subprograms with the legal transitions.
 
 ```ada
+--  gada-async-scheduler.ads
 package Gada.Async.Scheduler with SPARK_Mode => On is
 
    --  Ghost type — exists only for proof, never at runtime.
@@ -113,11 +114,27 @@ package Gada.Async.Scheduler with SPARK_Mode => On is
    --  ... other operations carry Pre => Current_Lifecycle = Running
    --  to forbid Spawn-after-Shutdown without an Init in between.
 
-private
-   pragma SPARK_Mode (Off);  -- body uses libco / Ada tasks
-   --  ... regular Ada implementation here ...
 end Gada.Async.Scheduler;
 ```
+
+```ada
+--  gada-async-scheduler.adb
+package body Gada.Async.Scheduler with SPARK_Mode => Off is
+   --  ... regular Ada implementation, free to use libco, Ada tasks,
+   --  raw addresses, finalisation, etc. The spec contracts above
+   --  bind callers; the body's correctness is regression-tested via
+   --  AUnit, not proven.
+end Gada.Async.Scheduler;
+```
+
+The body aspect (`with SPARK_Mode => Off`) is **load-bearing**. A
+spec marked `On` does **not** automatically force the body to `Off`
+— in fact, a body with no annotation **inherits On** from the spec
+and gnatprove will then attempt to verify the (unprovable) libco
+calls inside it. `pragma SPARK_Mode (Off)` in the spec's `private`
+part affects only private declarations of the spec; it does **not**
+cascade to the body. The body file's own `with SPARK_Mode => Off`
+aspect is the only mechanism that opts the body out.
 
 What this catches: re-entrant `Init` after a half-Shutdown, `Spawn`
 after `Shutdown`, double `Init` without intervening `Shutdown`. All
@@ -132,6 +149,7 @@ context"; require it as a precondition on operations that demand
 it.
 
 ```ada
+--  gada-async-scheduler.ads (extends Recipe 1's spec)
 package Gada.Async.Scheduler with SPARK_Mode => On is
 
    function In_Goroutine_Context return Boolean with Ghost;
@@ -142,6 +160,10 @@ package Gada.Async.Scheduler with SPARK_Mode => On is
    --  ... other goroutine-only operations get the same Pre.
 end Gada.Async.Scheduler;
 ```
+
+The corresponding body file (`gada-async-scheduler.adb`) opens with
+`package body Gada.Async.Scheduler with SPARK_Mode => Off is` for
+the same reason as in Recipe 1.
 
 What this catches: any future code path that calls `Yield` from
 elaboration-time, from a non-goroutine task, or from the main

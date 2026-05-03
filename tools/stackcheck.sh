@@ -50,7 +50,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNTIME="$ROOT/runtime"
 
-PATH="$HOME/src/gnatstudio/.tools/bin:$HOME/.local/share/alire/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+# Standard Alire install locations only -- no dev-host-specific paths
+# (the gnatstudio toolchain layout is unique to one developer's
+# machine, was a Gemini-flagged review issue on PR #4). Caller's
+# existing PATH is preserved (appended at the end).
+PATH="$HOME/.local/share/alire/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 export PATH
 
 THRESHOLD=8192
@@ -87,12 +91,17 @@ cd "$RUNTIME"
 # since the goroutine bodies that matter for hazard #8 are runtime-
 # library code, not AUnit harness code.
 echo "=== stackcheck.sh: compile with -fstack-usage ==="
-alr exec -- gprbuild -P gada_core.gpr -f -cargs -fstack-usage 2>&1 \
-    | tail -10
+# No `| tail -10` here: piping to tail would hide the actual
+# compiler error if gprbuild fails midway, and pipefail alone
+# can't recover the truncated lines. On a successful build the
+# output is short anyway (one line per touched unit).
+alr exec -- gprbuild -P gada_core.gpr -f -cargs -fstack-usage
 
-# Find every .su file under obj/. The shell glob handles per-arch
-# subdirs; the Python aggregator below is platform-independent.
-SU_COUNT=$(find obj -name '*.su' 2>/dev/null | wc -l | tr -d ' ')
+# Find every .su file directly under obj/ (-maxdepth 1) -- our
+# Object_Dir setup puts them flat. Recursing would pick up stale
+# files from any future per-profile object subdir (e.g. obj/cov/
+# from a coverage build) and double-count.
+SU_COUNT=$(find obj -maxdepth 1 -name '*.su' 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$SU_COUNT" -eq 0 ]]; then
     echo "stackcheck.sh: no .su files emitted under runtime/obj/." >&2
     echo "  -fstack-usage may have been silently ignored (check gprbuild output above)." >&2
@@ -123,7 +132,7 @@ REPORT_ONLY = os.environ['GADA_STACK_REPORT_ONLY'] == '1'
 # "bytes used in the worst case" — dynamic is alloca-shaped, bounded
 # is VLA with a known max; both can land on the libco stack.
 rows = []
-for su in (RUNTIME / 'obj').rglob('*.su'):
+for su in (RUNTIME / 'obj').glob('*.su'):  # non-recursive: see find -maxdepth 1 above
     for raw in su.read_text().splitlines():
         if not raw.strip():
             continue

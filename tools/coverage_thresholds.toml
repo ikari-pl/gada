@@ -55,7 +55,7 @@ minimum_lines_pct = 90.0
 # Rationale: runtime/COVERAGE.md (gada-async-context).
 [[exclude]]
 file = "runtime/src/gada-async-context.adb"
-lines = [139, 140]
+lines = [209, 210]
 reason = "libco co_create OOM path — see runtime/COVERAGE.md"
 
 # Implicit basic block at the bottom of Trampoline's infinite tail loop.
@@ -66,5 +66,5 @@ reason = "libco co_create OOM path — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-async-context).
 [[exclude]]
 file = "runtime/src/gada-async-context.adb"
-lines = [111]
+lines = [181]
 reason = "Trampoline tail-loop end — unreachable, see runtime/COVERAGE.md"

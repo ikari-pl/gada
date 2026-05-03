@@ -60,8 +60,6 @@ package body Gada.Async.Context is
       Hash            => Hash_Address,
       Equivalent_Keys => System."=");
 
-   Entries : Entry_Maps.Map;
-
    --  Per-cothread "exit context": the address that originally switched
    --  into this cothread. Populated lazily on first Switch_To-into so
    --  the trampoline tail-stub can yield back when the user's entry
@@ -76,7 +74,82 @@ package body Gada.Async.Context is
       Equivalent_Keys => System."=",
       "="             => System."=");
 
-   Exits : Exit_Maps.Map;
+   --  Both maps are guarded by a single protected object. Phase 3's
+   --  scheduler (item 3, sub-item a onwards) drives Make from the
+   --  spawning task and the trampoline's Take/Lookup/Free from worker
+   --  tasks — Hashed_Maps is not thread-safe, so concurrent operations
+   --  would surface as "tampering with cursors" runtime checks (or
+   --  worse, silent corruption). The protected object is single-mutex
+   --  serialisation; the per-call hold time is microseconds, so this
+   --  doesn't show up on the ping-pong benchmark. If we ever need
+   --  finer granularity (per-bucket striping), this is the seam to
+   --  refactor.
+   --
+   --  Lock is released across Co_Switch calls — every public op in
+   --  this body takes the lock, mutates the maps, releases, and only
+   --  then calls libco. Holding the lock across a Co_Switch would
+   --  freeze every other thread's access to the maps for as long as
+   --  the resumed cothread runs.
+   protected State is
+      procedure Register_Entry (Key : System.Address;
+                                Ep  : Entry_Procedure);
+      procedure Take_Entry (Key : System.Address;
+                            Ep  : out Entry_Procedure);
+      procedure Drop_Entry (Key : System.Address);
+
+      procedure Record_Exit_If_Absent (Key   : System.Address;
+                                       Value : System.Address);
+      function  Lookup_Exit (Key : System.Address) return System.Address;
+      procedure Drop_Exit (Key : System.Address);
+   private
+      Entries : Entry_Maps.Map;
+      Exits   : Exit_Maps.Map;
+   end State;
+
+   protected body State is
+
+      procedure Register_Entry (Key : System.Address;
+                                Ep  : Entry_Procedure) is
+      begin
+         Entries.Insert (Key, Ep);
+      end Register_Entry;
+
+      procedure Take_Entry (Key : System.Address;
+                            Ep  : out Entry_Procedure) is
+      begin
+         Ep := null;
+         if Entries.Contains (Key) then
+            Ep := Entries.Element (Key);
+            Entries.Delete (Key);
+         end if;
+      end Take_Entry;
+
+      procedure Drop_Entry (Key : System.Address) is
+      begin
+         if Entries.Contains (Key) then
+            Entries.Delete (Key);
+         end if;
+      end Drop_Entry;
+
+      procedure Record_Exit_If_Absent (Key   : System.Address;
+                                       Value : System.Address) is
+      begin
+         if not Exits.Contains (Key) then
+            Exits.Insert (Key, Value);
+         end if;
+      end Record_Exit_If_Absent;
+
+      function Lookup_Exit (Key : System.Address) return System.Address is
+        (Exits.Element (Key));
+
+      procedure Drop_Exit (Key : System.Address) is
+      begin
+         if Exits.Contains (Key) then
+            Exits.Delete (Key);
+         end if;
+      end Drop_Exit;
+
+   end State;
 
    --  C-convention trampoline. libco invokes this with no arguments;
    --  we rediscover ourselves via co_active() and dispatch to the
@@ -89,12 +162,9 @@ package body Gada.Async.Context is
 
    procedure Trampoline is
       Self : constant System.Address := Libco.Co_Active;
-      Ep   : Entry_Procedure := null;
+      Ep   : Entry_Procedure;
    begin
-      if Entries.Contains (Self) then
-         Ep := Entries.Element (Self);
-         Entries.Delete (Self);
-      end if;
+      State.Take_Entry (Self, Ep);
       if Ep /= null then
          Ep.all;
       end if;
@@ -103,11 +173,11 @@ package body Gada.Async.Context is
       --  Trampoline only runs as a libco entry, and libco only invokes
       --  the entry the first time someone Co_Switches *to* this
       --  cothread — and Switch_To unconditionally records the spawner.
-      --  If Exits.Element raises Constraint_Error, the invariant is
+      --  If Lookup_Exit raises Constraint_Error, the invariant is
       --  violated; that is preferable to the older "fall off the end
       --  of a cothread" libco-undefined behaviour.
       loop
-         Libco.Co_Switch (Exits.Element (Self));
+         Libco.Co_Switch (State.Lookup_Exit (Self));
       end loop;
    end Trampoline;
 
@@ -140,7 +210,7 @@ package body Gada.Async.Context is
            with "Gada.Async.Context.Make: co_create returned NULL";
          --  LCOV_EXCL_STOP
       end if;
-      Entries.Insert (Key => New_Co, New_Item => Entry_Point);
+      State.Register_Entry (Key => New_Co, Ep => Entry_Point);
       C := Context (New_Co);
    end Make;
 
@@ -156,10 +226,9 @@ package body Gada.Async.Context is
       --  trampoline tail-stub knows where to bounce back to once the
       --  user's entry procedure returns. Subsequent switches don't
       --  update the entry — the *initial* spawner owns the exit edge,
-      --  same shape Phase 3's scheduler will need.
-      if not Exits.Contains (Tgt) then
-         Exits.Insert (Tgt, Libco.Co_Active);
-      end if;
+      --  same shape Phase 3's scheduler needs. Lock is released
+      --  before Co_Switch so the resumed cothread isn't holding it.
+      State.Record_Exit_If_Absent (Tgt, Libco.Co_Active);
       Libco.Co_Switch (Tgt);
    end Switch_To;
 
@@ -170,14 +239,10 @@ package body Gada.Async.Context is
       end if;
       --  Drop any pending entry for this cothread (cothread freed
       --  before its first switch — uncommon but legal). Idempotent
-      --  if the entry was already consumed by Trampoline.
-      if Entries.Contains (System.Address (C)) then
-         Entries.Delete (System.Address (C));
-      end if;
-      --  Same idempotent cleanup for the exit-context table.
-      if Exits.Contains (System.Address (C)) then
-         Exits.Delete (System.Address (C));
-      end if;
+      --  if the entry was already consumed by Trampoline. Same
+      --  idempotent cleanup for the exit-context table.
+      State.Drop_Entry (System.Address (C));
+      State.Drop_Exit  (System.Address (C));
       Libco.Co_Delete (System.Address (C));
       C := Null_Context;
    end Free;

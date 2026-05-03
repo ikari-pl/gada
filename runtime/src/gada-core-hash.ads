@@ -24,10 +24,18 @@
 --  unit`); the per-function Pure_Function aspect is unavailable on
 --  imported subprograms but the bodies here are stateless and
 --  treat the inputs as pure mathematical functions in practice.
+--
+--  SPARK posture: `SPARK_Mode => On` per docs/adr/0008-spark-policy.md.
+--  This package is the project's first SPARK opt-in: pure modular
+--  arithmetic over Interfaces.Unsigned_64, no globals, no exceptions,
+--  no aliasing. `tools/prove.sh` discharges every VC at level=2 with
+--  no human-written contracts. The Hash_Long_Float body uses
+--  Ada.Unchecked_Conversion between two same-sized 64-bit scalars;
+--  SPARK accepts this because Unsigned_64 has no invalid bit patterns.
 
 with Interfaces;
 
-package Gada.Core.Hash is
+package Gada.Core.Hash with SPARK_Mode => On is
 
    --  Knuth's golden-ratio multiplicative constant (= 2^64 / phi).
    --  Public so user-defined hashes that want the same distribution

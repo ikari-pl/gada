@@ -23,6 +23,11 @@ package body Hash_Suite is
         (T, Test_Hash_Integer_Stable'Access,
          "Hash_Integer is deterministic");
       Register_Routine
+        (T, Test_Hash_Integer_Negative_Keys'Access,
+         "Hash_Integer accepts negative keys without raising"
+         & " (regression: Unsigned_64 (K) raised Constraint_Error;"
+         & " caught by gnatprove on first SPARK pass)");
+      Register_Routine
         (T, Test_Hash_Boolean_Distinct'Access,
          "Hash_Boolean (False) /= Hash_Boolean (True)");
       Register_Routine
@@ -57,6 +62,39 @@ package body Hash_Suite is
               = Gada.Core.Hash.Hash_Integer (42),
               "Hash_Integer must be deterministic");
    end Test_Hash_Integer_Stable;
+
+   --  Regression: prior to docs/adr/0008-spark-policy.md, the body did
+   --  `Unsigned_64 (K) * Fibonacci_Constant`. The plain Ada conversion
+   --  `Unsigned_64 (-1)` raises Constraint_Error in GNAT (RM 4.6's
+   --  modular-conversion rule does not apply to value-conversions from
+   --  a signed integer; that's a known GNAT trap). gnatprove flagged
+   --  the missing range-check on the first SPARK pass; the body now
+   --  uses `Unsigned_64'Mod (K)` which wraps deterministically. This
+   --  test exercises the fix end-to-end so a future "simplify back to
+   --  plain conversion" refactor fails red instead of crashing on the
+   --  first negative map key.
+   procedure Test_Hash_Integer_Negative_Keys
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      H_Neg_1   : Unsigned_64;
+      H_Neg_Big : Unsigned_64;
+      H_Pos_1   : constant Unsigned_64 := Gada.Core.Hash.Hash_Integer (1);
+   begin
+      H_Neg_1 := Gada.Core.Hash.Hash_Integer (-1);
+      H_Neg_Big := Gada.Core.Hash.Hash_Integer (Integer'First);
+
+      Assert (H_Neg_1 /= 0,
+              "Hash_Integer (-1) should be nonzero (Unsigned_64'Mod"
+              & " of -1 wraps to 2**64 - 1, * Fibonacci_Constant)");
+      Assert (H_Neg_1 /= H_Pos_1,
+              "Hash_Integer (-1) must differ from Hash_Integer (1) —"
+              & " sign matters for the bucket index");
+      Assert (H_Neg_Big /= 0,
+              "Hash_Integer (Integer'First) should be nonzero —"
+              & " specifically protect the Integer'First edge case"
+              & " against partial-bound regressions");
+   end Test_Hash_Integer_Negative_Keys;
 
    procedure Test_Hash_Boolean_Distinct
      (T : in out AUnit.Test_Cases.Test_Case'Class)

@@ -1,0 +1,284 @@
+--  Gada.Async.Context body — registry + trampoline pattern.
+--
+--  libco's `co_create` takes a parameterless C function pointer as the
+--  entry. It does not give us a way to pass per-cothread state to that
+--  entry, so the standard pattern (used by libco consumers including
+--  Lua coroutines, mednafen, etc.) is:
+--
+--    1. Maintain a side table mapping cothread → user-supplied entry.
+--    2. Install a static C-convention trampoline as the libco entry.
+--    3. The trampoline calls co_active() to identify itself, looks up
+--       its entry in the side table, and dispatches.
+--
+--  The table is one-shot per cothread: the trampoline removes its
+--  entry on first run so a stack-recycled cothread address can't pick
+--  up a stale procedure. (libco does not recycle cothread addresses
+--  during a single OS thread's lifetime today, but the one-shot
+--  behaviour is cheap insurance against a future libco that does.)
+--
+--  Concurrency: per Gada.Async.Context.Libco's caveat, libco itself is
+--  single-thread-context — cothreads cannot be switched between OS
+--  threads. The registry mirrors that constraint: it is a plain
+--  thread-local-shaped global (one OS thread per Ada task in the
+--  current runtime). The Phase 3 scheduler will replace this with a
+--  per-worker structure once cross-thread routing is needed.
+
+with Ada.Containers.Hashed_Maps;
+with Ada.Exceptions;
+with Ada.Text_IO;
+with Ada.Unchecked_Conversion;
+with Interfaces.C;
+with System.Storage_Elements;
+
+with Gada.Async.Context.Libco;
+
+package body Gada.Async.Context is
+
+   --  Hash an Address by treating it as an unsigned integer. libco's
+   --  cothread allocations are page-aligned; using the raw bits is
+   --  fine for the load factors we care about (entry-table size <=
+   --  number of live goroutines, which is bounded by the scheduler).
+   function Hash_Address
+     (A : System.Address) return Ada.Containers.Hash_Type;
+
+   function Hash_Address
+     (A : System.Address) return Ada.Containers.Hash_Type
+   is
+      function To_Int is new Ada.Unchecked_Conversion
+        (Source => System.Address,
+         Target => System.Storage_Elements.Integer_Address);
+      use type System.Storage_Elements.Integer_Address;
+   begin
+      --  Shift off the bottom 4 bits before truncation: libco's
+      --  cothread allocations come from malloc, which on every libco-
+      --  supported platform returns 16-byte-aligned pointers. Without
+      --  the shift, the four low bits are always zero, and a power-of-
+      --  two-bucketed Hashed_Maps would then collide all keys onto a
+      --  16-bucket-strided subset — the bucket-collision rate would
+      --  scale with goroutine count rather than stay flat. Hash_Type
+      --  is a modular type ('Mod = modular-reduction attribute), so
+      --  the post-shift truncation across a wider unsigned integer
+      --  is well-defined. The `use type` clause makes Integer_Address's
+      --  "/" operator visible without polluting the rest of the body
+      --  with Storage_Elements names. (PR #3 review feedback,
+      --  gemini-code-assist.)
+      return Ada.Containers.Hash_Type'Mod (To_Int (A) / 16);
+   end Hash_Address;
+
+   --  Note: Address equality is "=" by default, which compares bit
+   --  patterns — exactly what we want here.
+   package Entry_Maps is new Ada.Containers.Hashed_Maps
+     (Key_Type        => System.Address,
+      Element_Type    => Entry_Procedure,
+      Hash            => Hash_Address,
+      Equivalent_Keys => System."=");
+
+   --  Per-cothread "exit context": the address that originally switched
+   --  into this cothread. Populated lazily on first Switch_To-into so
+   --  the trampoline tail-stub can yield back when the user's entry
+   --  procedure returns (rather than fall off the end of the cothread,
+   --  which is libco-undefined per its docs). The Phase 3 scheduler
+   --  will replace this with a proper "spawn-finished" notification;
+   --  here it just keeps the cothread cleanly suspended at a Switch_To.
+   package Exit_Maps is new Ada.Containers.Hashed_Maps
+     (Key_Type        => System.Address,
+      Element_Type    => System.Address,
+      Hash            => Hash_Address,
+      Equivalent_Keys => System."=",
+      "="             => System."=");
+
+   --  Both maps are guarded by a single protected object. Phase 3's
+   --  scheduler (item 3, sub-item a onwards) drives Make from the
+   --  spawning task and the trampoline's Take/Lookup/Free from worker
+   --  tasks — Hashed_Maps is not thread-safe, so concurrent operations
+   --  would surface as "tampering with cursors" runtime checks (or
+   --  worse, silent corruption). The protected object is single-mutex
+   --  serialisation; the per-call hold time is microseconds, so this
+   --  doesn't show up on the ping-pong benchmark. If we ever need
+   --  finer granularity (per-bucket striping), this is the seam to
+   --  refactor.
+   --
+   --  Lock is released across Co_Switch calls — every public op in
+   --  this body takes the lock, mutates the maps, releases, and only
+   --  then calls libco. Holding the lock across a Co_Switch would
+   --  freeze every other thread's access to the maps for as long as
+   --  the resumed cothread runs.
+   protected State is
+      procedure Register_Entry (Key : System.Address;
+                                Ep  : Entry_Procedure);
+      procedure Take_Entry (Key : System.Address;
+                            Ep  : out Entry_Procedure);
+      procedure Drop_Entry (Key : System.Address);
+
+      procedure Record_Exit_If_Absent (Key   : System.Address;
+                                       Value : System.Address);
+      function  Lookup_Exit (Key : System.Address) return System.Address;
+      procedure Drop_Exit (Key : System.Address);
+   private
+      Entries : Entry_Maps.Map;
+      Exits   : Exit_Maps.Map;
+   end State;
+
+   protected body State is
+
+      procedure Register_Entry (Key : System.Address;
+                                Ep  : Entry_Procedure) is
+      begin
+         Entries.Insert (Key, Ep);
+      end Register_Entry;
+
+      procedure Take_Entry (Key : System.Address;
+                            Ep  : out Entry_Procedure) is
+      begin
+         Ep := null;
+         if Entries.Contains (Key) then
+            Ep := Entries.Element (Key);
+            Entries.Delete (Key);
+         end if;
+      end Take_Entry;
+
+      procedure Drop_Entry (Key : System.Address) is
+      begin
+         if Entries.Contains (Key) then
+            Entries.Delete (Key);
+         end if;
+      end Drop_Entry;
+
+      procedure Record_Exit_If_Absent (Key   : System.Address;
+                                       Value : System.Address) is
+      begin
+         if not Exits.Contains (Key) then
+            Exits.Insert (Key, Value);
+         end if;
+      end Record_Exit_If_Absent;
+
+      function Lookup_Exit (Key : System.Address) return System.Address is
+        (Exits.Element (Key));
+
+      procedure Drop_Exit (Key : System.Address) is
+      begin
+         if Exits.Contains (Key) then
+            Exits.Delete (Key);
+         end if;
+      end Drop_Exit;
+
+   end State;
+
+   --  C-convention trampoline. libco invokes this with no arguments;
+   --  we rediscover ourselves via co_active() and dispatch to the
+   --  user's entry. Marked No_Return because every control-flow path
+   --  through the body terminates in an unconditional Co_Switch loop —
+   --  control never falls off the end into libco's undefined-behaviour
+   --  territory. (This also drops the implicit-return basic block that
+   --  gcov would otherwise instrument at "end Trampoline;".)
+   procedure Trampoline with Convention => C, No_Return;
+
+   procedure Trampoline is
+      Self : constant System.Address := Libco.Co_Active;
+      Ep   : Entry_Procedure;
+   begin
+      State.Take_Entry (Self, Ep);
+      if Ep /= null then
+         --  Convention => C subprograms must NOT propagate Ada
+         --  exceptions across the C ABI boundary — libco invokes us via
+         --  a `void(*)(void)` C function pointer, and the Itanium /
+         --  AArch64 unwinders can't safely cross that frame. Catch
+         --  everything the user's entry can raise, log to stderr (the
+         --  conventional Ada diagnostic channel for runtime-internal
+         --  faults), and fall through to the tail-loop which yields
+         --  control back to the spawner. Swallowing here is the lesser
+         --  evil vs UB; the Phase 3 scheduler's Goroutine_Trampoline
+         --  will install its own State => DONE handler so panics
+         --  surface as the right thing one layer up.
+         --  (PR #3 review feedback, gemini-code-assist.)
+         begin
+            Ep.all;
+         exception
+            when E : others =>
+               Ada.Text_IO.Put_Line
+                 (Ada.Text_IO.Standard_Error,
+                  "Gada.Async.Context.Trampoline: unhandled "
+                  & "exception from cothread entry: "
+                  & Ada.Exceptions.Exception_Information (E));
+         end;
+      end if;
+      --  Ep returned. Yield back to the cothread that switched into us
+      --  on first entry. The Exits entry is always present here:
+      --  Trampoline only runs as a libco entry, and libco only invokes
+      --  the entry the first time someone Co_Switches *to* this
+      --  cothread — and Switch_To unconditionally records the spawner.
+      --  If Lookup_Exit raises Constraint_Error, the invariant is
+      --  violated; that is preferable to the older "fall off the end
+      --  of a cothread" libco-undefined behaviour.
+      loop
+         Libco.Co_Switch (State.Lookup_Exit (Self));
+      end loop;
+   end Trampoline;
+
+   procedure Make
+     (C           : out Context;
+      Entry_Point : Entry_Procedure;
+      Stack_Size  : Positive := 64 * 1024)
+   is
+      use type Libco.Cothread;
+      New_Co : constant Libco.Cothread :=
+        Libco.Co_Create
+          (Stack_Size  => Interfaces.C.unsigned (Stack_Size),
+           Entry_Point => Trampoline'Access);
+   begin
+      if New_Co = Libco.Null_Cothread then
+         --  libco returns NULL on allocation failure (out of address
+         --  space for the stack mapping, primarily). Surface as a
+         --  Storage_Error so callers can choose to recover; the
+         --  Phase 3 scheduler will catch this and report goroutine-
+         --  spawn failure rather than crash.
+         --
+         --  LCOV_EXCL_START — defensive OOM path. libco's malloc-based
+         --  allocator does not deterministically return NULL across the
+         --  CI fleet (overcommit on Linux, large-VA on macOS arm64), so
+         --  there is no portable test that exercises this branch. The
+         --  raise is one statement guarded by a deterministic equality
+         --  test against Null_Cothread; the Phase 3 scheduler will gain
+         --  fault-injection support that re-covers it.
+         raise Storage_Error
+           with "Gada.Async.Context.Make: co_create returned NULL";
+         --  LCOV_EXCL_STOP
+      end if;
+      State.Register_Entry (Key => New_Co, Ep => Entry_Point);
+      C := Context (New_Co);
+   end Make;
+
+   function Active return Context is
+   begin
+      return Context (Libco.Co_Active);
+   end Active;
+
+   procedure Switch_To (Target : Context) is
+      Tgt : constant System.Address := System.Address (Target);
+   begin
+      --  Record the first cothread that switches into Target, so the
+      --  trampoline tail-stub knows where to bounce back to once the
+      --  user's entry procedure returns. Subsequent switches don't
+      --  update the entry — the *initial* spawner owns the exit edge,
+      --  same shape Phase 3's scheduler needs. Lock is released
+      --  before Co_Switch so the resumed cothread isn't holding it.
+      State.Record_Exit_If_Absent (Tgt, Libco.Co_Active);
+      Libco.Co_Switch (Tgt);
+   end Switch_To;
+
+   procedure Free (C : in out Context) is
+   begin
+      if C = Null_Context then
+         return;
+      end if;
+      --  Drop any pending entry for this cothread (cothread freed
+      --  before its first switch — uncommon but legal). Idempotent
+      --  if the entry was already consumed by Trampoline. Same
+      --  idempotent cleanup for the exit-context table.
+      State.Drop_Entry (System.Address (C));
+      State.Drop_Exit  (System.Address (C));
+      Libco.Co_Delete (System.Address (C));
+      C := Null_Context;
+   end Free;
+
+end Gada.Async.Context;

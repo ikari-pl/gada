@@ -25,14 +25,50 @@ library project Gada_Core is
    type Build_Mode_Type is ("normal", "coverage");
    Build_Mode : Build_Mode_Type := external ("Build_Mode", "normal");
 
+   --  Target architecture, used to pick the right libco
+   --  implementation under src/vendor/libco/. v1's contracted
+   --  matrix (ADR-0007 §4) is amd64 + aarch64 hosted; the runtime
+   --  Makefile derives this from `uname -m` (x86_64 -> amd64,
+   --  arm64/aarch64 -> aarch64) and exports ARCH so this `external`
+   --  call picks it up. The default ("amd64") is the most common
+   --  CI target so a fresh gprbuild without the env var still
+   --  builds something sensible — the Makefile is the
+   --  authoritative selector.
+   type Arch_Type is ("amd64", "aarch64");
+   Arch : Arch_Type := external ("ARCH", "amd64");
+
    for Library_Name use "gada_core";
    for Library_Kind use "static";
 
-   for Source_Dirs use ("src");
+   for Source_Dirs use ("src", "src/vendor/libco");
    for Object_Dir  use "obj";
    for Library_Dir use "lib";
 
-   for Languages use ("Ada");
+   for Languages use ("Ada", "C");
+
+   --  Per-architecture source selection (ADR-0007 §5).
+   --
+   --  We deliberately compile *only* the per-arch implementation
+   --  file (amd64.c or aarch64.c), never libco.c. libco.c is
+   --  upstream's dispatcher: it `#include`s the arch source via
+   --  an `#if defined(__amd64__)` cascade, which would produce a
+   --  second translation unit defining the same `co_*` symbols
+   --  the per-arch file already defines and break the link with
+   --  duplicate-symbol errors. The build system is the right
+   --  layer to know the target arch, so we route the selection
+   --  through the gpr scenario variable rather than the C
+   --  preprocessor.
+   --
+   --  libco.c stays in the vendored source set (so a `vendor:
+   --  bump libco` commit doesn't have to remember per-file
+   --  deviations from upstream) but is excluded from compilation
+   --  on every supported arch.
+   case Arch is
+      when "amd64" =>
+         for Excluded_Source_Files use ("libco.c", "aarch64.c");
+      when "aarch64" =>
+         for Excluded_Source_Files use ("libco.c", "amd64.c");
+   end case;
 
    package Compiler is
       Common_Switches := ("-gnat2022",   --  Ada 2022 by default; we want the latest standard.
@@ -47,6 +83,28 @@ library project Gada_Core is
             for Default_Switches ("Ada") use
               Common_Switches & ("-fprofile-arcs", "-ftest-coverage");
       end case;
+
+      --  C compile switches for the vendored libco.
+      --
+      --  -O2 + -g: libco's per-arch file is hand-written assembly
+      --     wrapped in C; -O0 produces noticeably worse code for the
+      --     C scaffolding (allocation, stack management). The Ada
+      --     side stays at -O0 because the runtime is still under
+      --     active development and -O0 keeps stack traces readable;
+      --     libco's C is stable upstream so a higher opt level here
+      --     does not hurt debuggability of GADA's own code.
+      --  -Wno-parentheses: libco uses bit-and inside an equality
+      --     comparison without parens; upstream is C89-pedantic so
+      --     we honour that style rather than patch the vendored
+      --     source.
+      --  Coverage switches do not propagate to C — gcov works on
+      --     C too, but the gada_core coverage gate scopes only
+      --     runtime/src/*.{adb,ads} (tools/coverage_thresholds.toml),
+      --     so libco's lines do not enter the denominator. Keeping
+      --     the C side opt'd-in to coverage instrumentation would
+      --     just add noise.
+      C_Switches := ("-O2", "-g", "-Wall", "-Wno-parentheses");
+      for Default_Switches ("C") use C_Switches;
    end Compiler;
 
    --  No `package Linker` here.

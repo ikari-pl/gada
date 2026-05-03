@@ -143,11 +143,18 @@ echo "=== capturing coverage with gcov: $GCOV_TOOL ==="
 # regions). --ignore-errors keeps lcov from aborting on benign warnings
 # emitted by gcov when a unit was excluded from this run (e.g. a body
 # with no test-driver entry point).
+#  --filter line,branch,region enables LCOV_EXCL_* comment processing.
+#  In lcov 2.x this stopped being default and must be opted in; without it
+#  the LCOV_EXCL_START / LCOV_EXCL_STOP / LCOV_EXCL_LINE markers we use to
+#  fence off genuinely-untestable defensive paths (e.g. libco OOM in
+#  Gada.Async.Context.Make) are silently ignored, leaving the runtime/
+#  100% gate failing on dead code we have no honest way to exercise.
 lcov --quiet \
      --capture \
      --directory "$COV_OBJ" \
      --directory "$COV_TEST_OBJ" \
      --gcov-tool "$GCOV_TOOL" \
+     --filter line,branch,region \
      --rc geninfo_unexecuted_blocks=1 \
      --ignore-errors inconsistent,inconsistent \
      --ignore-errors gcov,gcov \

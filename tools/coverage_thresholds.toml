@@ -16,6 +16,16 @@
 #   - >= 90% for compiler/ packages
 #   - >= 95% for AST emission and translation layers
 # Update this file (and AGENTS.md alongside) if those numbers change.
+#
+# Per-file line exclusions: `[[exclude]]` entries name a single file
+# plus a list of line numbers that the gate should drop from BOTH the
+# numerator and denominator before computing per-threshold percentages.
+# This is the documented escape valve from AGENTS.md ("Deviations are
+# documented per package in `runtime/<package>/COVERAGE.md` with
+# rationale and an explicit reviewer-approved exception"). Use sparingly
+# and *only* for code that is genuinely untestable in CI (e.g. malloc
+# OOM paths under overcommit-on Linux). Each entry MUST point at the
+# package's COVERAGE.md so a future reader can audit the rationale.
 
 [[threshold]]
 path = "runtime/"
@@ -32,3 +42,71 @@ minimum_lines_pct = 95.0
 [[threshold]]
 path = "compiler/"
 minimum_lines_pct = 90.0
+
+# --- per-file exclusions ---------------------------------------------------
+
+# libco's malloc-based co_create returns NULL only on hard allocation
+# failure; on Linux with overcommit and macOS arm64 with large-VA there
+# is no portable Stack_Size value that *deterministically* triggers it.
+# The defensive raise (Storage_Error on Null_Cothread) is one statement
+# guarded by a deterministic equality test — review of the surrounding
+# code is sufficient. Phase 3 item 3 (scheduler) will gain a fault-
+# injection seam that re-covers this branch.
+# Rationale: runtime/COVERAGE.md (gada-async-context).
+[[exclude]]
+file = "runtime/src/gada-async-context.adb"
+lines = [243, 244]
+reason = "libco co_create OOM path — see runtime/COVERAGE.md"
+
+# Implicit basic block at the bottom of Trampoline's infinite tail loop.
+# The procedure is `pragma No_Return` and the loop has no exit branch;
+# control never reaches `end loop;` under any normal flow. gcov still
+# instruments the line as a no-return basic block — exclude it so the
+# 100% gate isn't gated on unreachable code.
+# Rationale: runtime/COVERAGE.md (gada-async-context).
+[[exclude]]
+file = "runtime/src/gada-async-context.adb"
+lines = [215]
+reason = "Trampoline tail-loop end — unreachable, see runtime/COVERAGE.md"
+
+# Trampoline's `when E : others =>` arm catches Ada exceptions raised
+# from the user's entry procedure so they don't propagate across the
+# C ABI boundary (Convention => C; libco invokes us via a void(*)(void)
+# function pointer, and unwinding across that frame is undefined).
+# Triggering it from a unit test is a chicken-and-egg problem: the only
+# code that runs on a libco cothread under this body IS the trampoline,
+# so a "raising" entry would have to be installed by the same Make path
+# we're testing. Phase 3's Goroutine_Trampoline (sub-item 3a, already
+# in this PR) will introduce a panic-injection seam that re-covers
+# these lines from one layer up. (PR #3 review feedback.)
+# Rationale: runtime/COVERAGE.md (gada-async-context).
+[[exclude]]
+file = "runtime/src/gada-async-context.adb"
+lines = [197, 198, 202]
+reason = "Trampoline C-boundary exception arm — see runtime/COVERAGE.md"
+
+# Init's `new Worker_Task` rollback arm. Triggering it requires
+# Storage_Error or Tasking_Error from the Ada task allocation, which
+# the Alire FSF GNAT 15.1 runtime does not expose a portable hook for.
+# The Phase 3 sub-item (b) GOMAXPROCS expansion will add a worker-pool
+# fault-injection switch (per docs/incidents/2026-05-03-...md hazard
+# follow-ups) that re-covers this rollback. Until then, the three-
+# statement arm is straightforward enough for a code-review pass.
+# (PR #3 review feedback.) Rationale: runtime/COVERAGE.md
+# (gada-async-scheduler).
+[[exclude]]
+file = "runtime/src/gada-async-scheduler.adb"
+lines = [350, 351, 352, 353]
+reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
+
+# Spawn's `Make` failure leak guard. Same fault-injection prerequisite
+# as Init's rollback above (libco co_create OOM path is itself excluded
+# at gada-async-context.adb:243 for the same portability reason). When
+# the Phase 3 fault-injection seam lands it will re-cover both the
+# raise *and* this Free_Goroutine cleanup arm in a single test.
+# (PR #3 review feedback.) Rationale: runtime/COVERAGE.md
+# (gada-async-scheduler).
+[[exclude]]
+file = "runtime/src/gada-async-scheduler.adb"
+lines = [378, 379, 380]
+reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"

@@ -95,36 +95,47 @@ Added in PR #3 review feedback (gemini-code-assist comment #1).
 
 ### `runtime/src/gada-async-scheduler.adb`
 
-#### `Init` — `new Worker_Task` rollback  *(lines 383–386)*
+#### `Init` — per-worker `new Worker_Task` rollback  *(lines 458–464)*
 
 ```ada
 begin
-   The_Worker := new Worker_Task;
+   for I in 1 .. Effective_Workers loop
+      Run_Queue.Worker_Started;
+      The_Workers (I) := new Worker_Task;
+   end loop;
 exception
    when others =>
-      Run_Queue.Worker_Stopped;            --  line 351
-      Run_Queue.Set_Initialised (False);   --  line 352
-      raise;                                --  line 353
+      Run_Queue.Worker_Stopped;            --  line 459
+      Run_Queue.Mark_Shutdown;             --  line 460
+      Run_Queue.Drain;                     --  line 461
+      The_Workers := null;                  --  line 462
+      Run_Queue.Set_Initialised (False);   --  line 463
+      raise;                                --  line 464
 end;
 ```
 
-`Init` bumps `Workers_Active` and flips `Initialised => True` *before*
-allocating the `Worker_Task`, so a `Shutdown` racing in between sees
-a sane state. If `new Worker_Task` itself raises (Storage_Error on a
-tight task-storage budget, Tasking_Error on a policy mismatch with the
-target's runtime), the rollback arm walks both back so the next `Init`
-doesn't see "already initialised" and a `Shutdown.Drain` doesn't wait
-forever for a worker that was never spawned.
+`Init` flips `Initialised => True` and bumps `Workers_Active` once per
+allocated worker *before* the per-task `new Worker_Task` runs, so a
+`Shutdown` racing in between sees a sane state. If a `new Worker_Task`
+itself raises (Storage_Error on a tight task-storage budget,
+Tasking_Error on a policy mismatch with the target's runtime), the
+rollback arm undoes the just-bumped-but-not-allocated counter
+(`Worker_Stopped`), tells the workers that *did* succeed to drain
+(`Mark_Shutdown` + `Drain`), nulls the array (lets Boehm GC reclaim it),
+and clears the lifecycle flag so the next `Init` doesn't see "already
+initialised" and a future `Shutdown.Drain` doesn't wait forever for a
+worker that was never spawned.
 
 Triggering it requires Storage_Error or Tasking_Error from the Ada
 task allocation path, which the Alire FSF GNAT 15.1 runtime does not
-expose a portable hook for. The Phase 3 sub-item (b) GOMAXPROCS
+expose a portable hook for. The Phase 3 sub-item (c) work-stealing
 expansion will add a worker-pool fault-injection switch that
 re-covers this rollback.
 
-Added in PR #3 review feedback (gemini-code-assist comment #2).
+Added in PR #3 review feedback (gemini-code-assist comment #2),
+lifted to the multi-worker rollback shape in sub-item 3b.
 
-#### `Spawn` — `Make` failure leak guard  *(lines 411–413)*
+#### `Spawn` — `Make` failure leak guard  *(lines 489–491)*
 
 ```ada
 begin
@@ -132,8 +143,8 @@ begin
      (G.Ctx, Goroutine_Trampoline'Access);
 exception
    when others =>
-      Free_Goroutine (G);   --  line 379
-      raise;                 --  line 380
+      Free_Goroutine (G);   --  line 490
+      raise;                 --  line 491
 end;
 ```
 

@@ -1,14 +1,14 @@
---  Gada.Async.Scheduler body — minimal single-worker scheduler.
+--  Gada.Async.Scheduler body — M:N over a fixed pool of Ada tasks.
 --
---  Sub-item 3a of Phase 3. Ships the smallest viable shape that lets
---  the rest of Phase 3 build (channels, select, `go`-statement emit)
---  on a real, testable primitive: one Worker Ada task draining a
---  shared FIFO queue, libco-backed goroutines yielding cooperatively.
+--  Sub-items 3a + 3b of Phase 3. Ships the multi-worker shape: a pool
+--  of Worker Ada tasks sized by System.Multiprocessors.Number_Of_CPUs
+--  (overridable via Init (Workers => N)), each draining a shared FIFO
+--  queue of fresh spawns plus a *private* yielded-goroutines queue.
 --
---  Sub-items (b)-(e) extend this body without breaking the public
---  spec: (b) bumps the worker count to GOMAXPROCS, (c) replaces the
---  shared queue with per-worker deques + work-stealing, (d) adds
---  Park/Unpark, (e) adds the syscall-handoff API.
+--  Subsequent sub-items extend this body without breaking the public
+--  spec: (c) replaces the per-worker Local list with a Chase-Lev
+--  deque + work-stealing across siblings, (d) adds Park/Unpark, (e)
+--  adds the syscall-handoff API.
 --
 --  ## State-machine contract (the load-bearing invariant)
 --
@@ -28,18 +28,69 @@
 --  Without the State write the worker would have no way to tell
 --  "park me, I want to run again" from "free my stack, I'm done".
 --
+--  ## Goroutine pinning (sub-item 3b)
+--
+--  libco's per-arch context save/restore is per-OS-thread (per
+--  ADR-0007 §4 and the vendored README): once a cothread has been
+--  switched into on OS thread T, it cannot be resumed on any other
+--  thread without UB. The earlier multi-worker attempt (incident
+--  retro 2026-05-03-scheduler-3b-multi-worker-race) re-pushed yielded
+--  goroutines onto the shared queue and surfaced flakes from this
+--  exact UB.
+--
+--  This sub-item pins yielded goroutines to the worker that first
+--  popped them: each Worker_Task owns a *private* Doubly_Linked_Lists
+--  Local queue, and the YIELDED arm of the worker loop pushes onto
+--  Local rather than Re_Push'ing onto the shared queue. The worker
+--  loop checks Local before going back to the shared Run_Queue's Pop
+--  entry, so a goroutine that yields a million times runs all million
+--  iterations on the same OS thread — exactly what libco requires.
+--
+--  Sub-item (c) replaces this with a Chase-Lev deque + work-stealing
+--  across siblings — but stealing-from-sibling is fundamentally a
+--  cothread-migration concern that the deque alone cannot solve;
+--  (c) will need to track which goroutines are libco-bound to which
+--  worker and only steal *unbound* (never-yet-run) ones.
+--
+--  ## TLS for Current_Goroutine (sub-item 3b Prereq B)
+--
+--  The earlier sub-item 3a body used Ada.Task_Attributes for the
+--  per-worker "currently running goroutine" pointer. That facility's
+--  thread-safety contract under concurrent Set_Value from N tasks is
+--  weaker than it looks: RM C.7.2 doesn't require it to be task-safe,
+--  and GNAT FSF's implementation uses a global-hash-keyed-on-Task_Id
+--  that races on its internal table when N workers concurrently
+--  Set_Value their own task-attribute. The race manifests downstream
+--  as either a Constraint_Error in Gada.Async.Context.Lookup_Exit
+--  (worker A's `Self` not in the Exits map because the recorded
+--  Task_Id was misidentified) or a hang in Drain (a goroutine reads
+--  Current_Goroutine = null on its own stack and the worker waits
+--  forever for a Switch_To that never comes).
+--
+--  pragma Thread_Local_Storage is the GNAT-specific facility that
+--  compiles to an OS-level TLS slot (pthread_key on Linux/macOS) per
+--  thread — no global hash, no concurrent-write race, no Task_Id
+--  lookup. Each Ada task on hosted GNAT is its own OS thread, so
+--  each worker reads/writes its own private slot. Trampolined
+--  goroutine code reads this slot on the goroutine's libco stack:
+--  per the pinning invariant above, the goroutine runs on the same
+--  OS thread as the worker that switched in, so the slot the
+--  goroutine sees is exactly the one the worker just wrote.
+--
+--  The full investigation: docs/incidents/2026-05-03-scheduler-3b-
+--  multi-worker-race.md.
+--
 --  ## Layering
 --
 --  This body imports Gada.Async.Context (its peer in Gada.Async,
 --  permitted by ADR-0002's runtime layering), System.Multiprocessors
---  for CPU count introspection, and Ada.Containers / Ada.Task_Attributes
---  for the queue and per-worker "current goroutine" pointer. It does
---  NOT import Gada.Async.Channels / Gada.Async.Select / Gada.Async.Std
---  — they don't exist yet, and the dependency direction in the layer
---  graph forbids them anyway.
+--  for CPU count introspection, and Ada.Containers for the queue. It
+--  does NOT import Ada.Task_Attributes (see Prereq B above), nor
+--  Gada.Async.Channels / Gada.Async.Select / Gada.Async.Std — they
+--  don't exist yet, and the dependency direction in the layer graph
+--  forbids them anyway.
 
 with Ada.Containers.Doubly_Linked_Lists;
-with Ada.Task_Attributes;
 with Ada.Unchecked_Deallocation;
 with System.Multiprocessors;
 
@@ -51,13 +102,14 @@ package body Gada.Async.Scheduler is
    --
    --  Heap-allocated, owned by the scheduler. Lifetime: from Spawn to
    --  the worker reaping it (after the body returned and State => DONE).
-   --  Multi-worker (3b+) means N OS threads can read/write State for
-   --  goroutines being handed off through Park/Unpark, work-stealing,
-   --  and syscall handoff. The protected `Run_Queue` mediates *queue*
-   --  membership, but the field itself is touched directly between
-   --  goroutine-side writes (Yield → YIELDED, Trampoline-tail → DONE)
-   --  and worker-side reads (post-Switch_To classification) — the
-   --  protected object is no longer in the chain.
+   --
+   --  Multi-worker means N OS threads can read/write State for goroutines
+   --  being handed off through Park/Unpark, work-stealing, and syscall
+   --  handoff (sub-items 3c-3e). The protected `Run_Queue` mediates
+   --  *queue* membership for fresh spawns, but the field itself is touched
+   --  directly between goroutine-side writes (Yield → YIELDED, Trampoline-
+   --  tail → DONE) and worker-side reads (post-Switch_To classification)
+   --  — the protected object is no longer in the chain.
    --
    --  `pragma Atomic` is the right size of fence here:
    --    - Goroutine_State is 4 values → 1 byte → trivially atomic on
@@ -100,31 +152,33 @@ package body Gada.Async.Scheduler is
       --  Worker_Ctx is the address of the worker's own libco context.
       --  Yield reads it to know who to Switch_To back to. Recorded by
       --  the worker right before each Switch_To-into the goroutine —
-      --  pinning the *most recent* worker that ran us, which under
-      --  one-worker (a) is always the same task but under multi-worker
-      --  (b)+ can change between yields.
+      --  pinning the *most recent* worker that ran us. Under the
+      --  pinning rule (above), once a goroutine has yielded once, it
+      --  always resumes on the same worker and Worker_Ctx is stable.
    end record;
 
    procedure Free_Goroutine is
      new Ada.Unchecked_Deallocation
        (Object => Goroutine_Record, Name => Goroutine_Access);
 
-   --  Per-task pointer to "the goroutine I am currently running" so
-   --  Yield can find it without a parameter. Ada.Task_Attributes is the
-   --  Ada-standard task-local-storage facility; on hosted targets where
-   --  Ada tasks map 1:1 to OS threads, this is effectively pthread_key
-   --  -based TLS. Initialised to null so a non-worker task that calls
-   --  Yield (e.g. the main task before any goroutine runs) reads null
-   --  and the Yield no-op kicks in.
-   package Current_Goroutine_Attr is new Ada.Task_Attributes
-     (Attribute     => Goroutine_Access,
-      Initial_Value => null);
+   --  Per-OS-thread "currently running goroutine" pointer. See the file
+   --  header's "TLS for Current_Goroutine" section for why this is a
+   --  pragma Thread_Local_Storage variable rather than the obvious
+   --  Ada.Task_Attributes shape.
+   --
+   --  Initialised to null so a non-worker task that calls Yield (e.g.
+   --  the main task before any goroutine runs) reads null and the
+   --  Yield no-op kicks in.
+   Current_Goroutine : Goroutine_Access := null;
+   pragma Thread_Local_Storage (Current_Goroutine);
 
    --  ## Run queue
    --
-   --  Shared FIFO across all workers (single one in (a); item (c)
-   --  replaces the global queue with per-worker deques + a small global
-   --  injection queue for cross-worker spawns). Doubly_Linked_Lists is
+   --  Shared FIFO across all workers, used for fresh spawns and as the
+   --  Drain barrier. Yielded goroutines do NOT come back here (see the
+   --  pinning section in the file header). Sub-item (c) replaces the
+   --  global queue with per-worker Chase-Lev deques + a small global
+   --  injection queue for cross-worker spawns. Doubly_Linked_Lists is
    --  cheap to push at the tail and pop at the head; we never iterate.
 
    package Goroutine_Lists is new Ada.Containers.Doubly_Linked_Lists
@@ -133,11 +187,6 @@ package body Gada.Async.Scheduler is
    protected Run_Queue is
       --  Inject is the public-facing Spawn path; bumps In_Flight.
       procedure Inject (G : Goroutine_Access);
-
-      --  Re_Push is the internal worker path for re-scheduling a
-      --  yielded goroutine; In_Flight unchanged because the goroutine
-      --  is still alive.
-      procedure Re_Push (G : Goroutine_Access);
 
       --  Reap notes a goroutine finished (State => DONE, worker
       --  Free'd it). Decrements In_Flight; may unblock Drain.
@@ -190,11 +239,6 @@ package body Gada.Async.Scheduler is
          In_Flight := In_Flight + 1;
          Items.Append (G);
       end Inject;
-
-      procedure Re_Push (G : Goroutine_Access) is
-      begin
-         Items.Append (G);
-      end Re_Push;
 
       procedure Reap is
       begin
@@ -258,16 +302,21 @@ package body Gada.Async.Scheduler is
 
    --  ## Trampoline body for goroutines
    --
-   --  Runs on the goroutine's libco stack. The Spawn'd Body_Proc
-   --  is dispatched here; on its natural return we set State => DONE
-   --  before letting the Gada.Async.Context tail-stub bounce back to
-   --  the worker. The State write is the *only* signal the worker has
-   --  to distinguish "yielded" (re-enqueue) from "done" (reap).
+   --  Runs on the goroutine's libco stack. The Spawn'd Body_Proc is
+   --  dispatched here; on its natural return we set State => DONE before
+   --  letting the Gada.Async.Context tail-stub bounce back to the worker.
+   --  The State write is the *only* signal the worker has to distinguish
+   --  "yielded" (re-enqueue) from "done" (reap).
+   --
+   --  Reads Current_Goroutine via TLS. Per the pinning invariant the
+   --  goroutine runs on the same OS thread as the worker that just
+   --  Switch_To'd into it, so the slot we read here is exactly the one
+   --  the worker wrote a few instructions ago.
 
    procedure Goroutine_Trampoline;
 
    procedure Goroutine_Trampoline is
-      G : constant Goroutine_Access := Current_Goroutine_Attr.Value;
+      G : constant Goroutine_Access := Current_Goroutine;
    begin
       if G /= null and then G.Body_Proc /= null then
          G.Body_Proc.all;
@@ -280,15 +329,18 @@ package body Gada.Async.Scheduler is
 
    --  ## Worker task
    --
-   --  The execution loop: pop, switch in, classify on return, repeat.
-   --  Sub-item 3b will turn this single instance into an array; the
-   --  body of the loop is unchanged.
+   --  The execution loop: prefer-local-pop, else shared-pop, switch in,
+   --  classify on return, repeat. Local is a private Doubly_Linked_Lists
+   --  list on the worker's stack — no protection needed because only
+   --  this worker accesses it (yielded goroutines are pinned here per
+   --  the libco-cothread-cannot-migrate invariant).
 
    task type Worker_Task;
 
    task body Worker_Task is
-      G    : Goroutine_Access;
-      Stop : Boolean;
+      G     : Goroutine_Access;
+      Stop  : Boolean;
+      Local : Goroutine_Lists.List;
    begin
       --  Note: Worker_Started is called by Init *before* this task is
       --  allocated, not here. The reason is a tiny but real race: if
@@ -298,15 +350,28 @@ package body Gada.Async.Scheduler is
       --  Shutdown would return with the worker still asleep behind it.
       --  Bumping Workers_Active synchronously in Init fixes that.
       loop
-         Run_Queue.Pop (G, Stop);
-         exit when Stop;
+         --  Prefer this worker's pinned-yielded queue before going to
+         --  the shared FIFO. A goroutine that just yielded must come
+         --  back to *this* OS thread (libco invariant) — taking it
+         --  from Local guarantees that without serialising on the
+         --  shared protected.
+         if not Local.Is_Empty then
+            G := Local.First_Element;
+            Local.Delete_First;
+            Stop := False;
+         else
+            Run_Queue.Pop (G, Stop);
+            exit when Stop;
+         end if;
 
          --  Stage the per-worker context for Yield's lookup. Done
-         --  every iteration because under multi-worker (3b+) the
-         --  goroutine may have last run on a *different* worker and
-         --  the Worker_Ctx field would point at its stack.
+         --  every iteration because a goroutine's *first* run binds
+         --  it to this OS thread but the Worker_Ctx field at that
+         --  point is whatever the spawning context recorded (or
+         --  Null_Context); we overwrite it here with our own
+         --  Active context so the yield-back path goes to us.
          G.Worker_Ctx := Gada.Async.Context.Active;
-         Current_Goroutine_Attr.Set_Value (G);
+         Current_Goroutine := G;
 
          --  First switch into a freshly-Spawn'd goroutine bootstraps
          --  Goroutine_Trampoline (which runs Body_Proc); subsequent
@@ -314,14 +379,15 @@ package body Gada.Async.Scheduler is
          G.State := RUNNING;
          Gada.Async.Context.Switch_To (G.Ctx);
 
-         --  Goroutine handed control back. Either Yield (re-enqueue)
+         --  Goroutine handed control back. Either Yield (re-enqueue
+         --  to Local for next-iteration pickup on this same worker)
          --  or natural return (reap). State is the source of truth.
-         Current_Goroutine_Attr.Set_Value (null);
+         Current_Goroutine := null;
 
          case G.State is
             when YIELDED =>
                G.State := READY;
-               Run_Queue.Re_Push (G);
+               Local.Append (G);
             when DONE =>
                Gada.Async.Context.Free (G.Ctx);
                Free_Goroutine (G);
@@ -339,24 +405,23 @@ package body Gada.Async.Scheduler is
    end Worker_Task;
 
    type Worker_Access is access Worker_Task;
+   type Worker_Array is array (Positive range <>) of Worker_Access;
+   type Worker_Array_Access is access Worker_Array;
 
-   --  Single worker for sub-item (a). Item (b) replaces this with an
-   --  array sized by Number_Of_CPUs. Kept as an access so the storage
-   --  can be allocated in Init and the task itself runs as long as it
-   --  needs to (potentially past the elaboration scope).
-   The_Worker : Worker_Access := null;
+   --  Worker pool. Sized at Init, torn down at Shutdown. Setting to
+   --  null at Shutdown lets Boehm's GC reclaim the array storage; the
+   --  individual Worker_Task objects are similarly handled by the GC
+   --  once the runtime declares them terminated (see the Shutdown
+   --  body for the rationale on not Unchecked_Deallocate-ing them).
+   The_Workers : Worker_Array_Access := null;
 
    --  ## Public-API implementations
 
    procedure Init (Workers : Natural := 0) is
-      pragma Unreferenced (Workers);
-      --  Sub-item (a) clamps to one worker — the parameter is
-      --  retained in the spec so (b) doesn't need a signature change.
-      Cpu_Count : constant Positive :=
-        Positive (System.Multiprocessors.Number_Of_CPUs);
-      pragma Unreferenced (Cpu_Count);
-      --  Reserved for sub-item (b); reading it now keeps Multiprocessors
-      --  in scope so that change is purely additive.
+      Effective_Workers : constant Positive :=
+        (if Workers = 0
+         then Positive (System.Multiprocessors.Number_Of_CPUs)
+         else Workers);
    begin
       if Run_Queue.Is_Initialised then
          raise Program_Error
@@ -364,24 +429,37 @@ package body Gada.Async.Scheduler is
       end if;
       Run_Queue.Reset_Lifecycle;
       Run_Queue.Set_Initialised (True);
-      --  Bump Workers_Active *before* allocating the task so a Shutdown
-      --  that fires before the task gets CPU time still waits — the
+      The_Workers := new Worker_Array (1 .. Effective_Workers);
+
+      --  Bump Workers_Active *before* allocating each task so a Shutdown
+      --  that fires before that task gets CPU time still waits — the
       --  Drain entry guard is Workers_Active = 0, and a worker that
       --  hasn't started yet (so Worker_Started hasn't run) would have
       --  let the guard fire prematurely. Worker_Stopped runs at the
-      --  tail of Worker_Task and balances this bump.
-      Run_Queue.Worker_Started;
-      --  Roll back the lifecycle counters if the task allocation
+      --  tail of Worker_Task and balances each bump.
+      --
+      --  Roll back the lifecycle counters if a task allocation
       --  itself raises (Storage_Error on a tight task-storage budget,
-      --  Tasking_Error on policy mismatch). Without this, the next
-      --  Init would see Initialised => True and raise "called twice",
-      --  and a Shutdown would Drain forever waiting for a worker that
-      --  was never spawned. (PR #3 review feedback, gemini-code-assist.)
+      --  Tasking_Error on policy mismatch). The just-bumped-but-not-
+      --  allocated counter is undone with Worker_Stopped; any
+      --  successfully-allocated workers are sent the Mark_Shutdown +
+      --  Drain shutdown sequence so they exit their loops cleanly.
+      --  Without this, the next Init would see Initialised => True
+      --  and raise "called twice", and a Shutdown would Drain forever
+      --  waiting for a worker that was never spawned.
+      --  (PR #3 review feedback, gemini-code-assist; lifted to the
+      --  multi-worker shape in 3b.)
       begin
-         The_Worker := new Worker_Task;
+         for I in 1 .. Effective_Workers loop
+            Run_Queue.Worker_Started;
+            The_Workers (I) := new Worker_Task;
+         end loop;
       exception
          when others =>
             Run_Queue.Worker_Stopped;
+            Run_Queue.Mark_Shutdown;
+            Run_Queue.Drain;
+            The_Workers := null;
             Run_Queue.Set_Initialised (False);
             raise;
       end;
@@ -417,7 +495,7 @@ package body Gada.Async.Scheduler is
    end Spawn;
 
    procedure Yield is
-      G : constant Goroutine_Access := Current_Goroutine_Attr.Value;
+      G : constant Goroutine_Access := Current_Goroutine;
    begin
       if G = null then
          --  Called from a non-goroutine context (main task before
@@ -440,13 +518,14 @@ package body Gada.Async.Scheduler is
       Run_Queue.Mark_Shutdown;
       Run_Queue.Drain;
       Run_Queue.Set_Initialised (False);
-      The_Worker := null;
+      The_Workers := null;
       --  We deliberately do NOT call Unchecked_Deallocation on
-      --  The_Worker: by the time Drain returns the worker task has
-      --  already executed Worker_Stopped + the protected entry's
-      --  body, but it may still be unwinding its own task frame.
-      --  Setting the access to null lets Boehm's GC reclaim the
-      --  task object once the runtime declares it terminated.
+      --  The_Workers' elements: by the time Drain returns each worker
+      --  task has already executed Worker_Stopped + the protected
+      --  entry's body, but it may still be unwinding its own task
+      --  frame. Setting the access to null lets Boehm's GC reclaim
+      --  the array and the task objects once the runtime declares
+      --  them terminated.
    end Shutdown;
 
 end Gada.Async.Scheduler;

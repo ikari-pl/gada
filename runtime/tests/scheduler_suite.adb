@@ -8,13 +8,18 @@
 --  reads before driving Spawn — order-of-registration is not
 --  contractual under AUnit, defensive resets keep failures localised.
 --
---  Single-worker safety note (sub-item 3a): the scheduler clamps to
---  one Worker task today, and goroutine yields are cooperative — every
---  increment of the shared counters is serialised through the same
---  worker. No data race, no atomic needed. Sub-item (b) bumps the
---  worker count and revisits this assumption.
+--  Worker count: every test except Test_Pool_Distributes_Across_Workers
+--  passes Init (Workers => 1) explicitly. The shared Counter / Yields_Run
+--  globals would otherwise race under the multi-worker default
+--  (Number_Of_CPUs ≥ 2 on every CI runner), and the existing tests are
+--  about scheduler-control properties (yields re-schedule, body runs
+--  exactly once, etc.), not about multi-worker distribution.
+--  Test_Pool_Distributes_Across_Workers drives Workers => 2 explicitly
+--  and observes the distribution through a protected `Worker_Recorder`
+--  rather than racy shared counters.
 pragma Warnings (Off, "use of an anonymous access type allocator");
 
+with Ada.Task_Identification;
 with AUnit.Assertions; use AUnit.Assertions;
 
 with Gada.Async.Scheduler; use Gada.Async.Scheduler;
@@ -28,6 +33,7 @@ package body Scheduler_Suite is
 
    procedure Increment_Once;
    procedure Yield_Then_Mark;
+   procedure Record_Current_Worker;
 
    procedure Increment_Once is
    begin
@@ -42,6 +48,79 @@ package body Scheduler_Suite is
       end loop;
       Yield_Done := True;
    end Yield_Then_Mark;
+
+   --  ## Multi-worker observation surface
+   --
+   --  Worker_Recorder is a protected object the multi-worker test uses
+   --  to observe which worker tasks actually ran goroutines. Each
+   --  goroutine body calls Note (Current_Task) — Ada's Current_Task
+   --  lookup goes through the OS thread, which under our goroutine-
+   --  pinning rule is the same as the worker that picked up the
+   --  goroutine. Distinct_Count then deduplicates the recorded
+   --  Task_Ids; the test asserts >= 2.
+   --
+   --  Protected for thread-safety because N goroutines on N workers
+   --  call Note concurrently. Distinct_Count is a function (read-
+   --  only) but goes through the same lock for memory ordering.
+   --  ("Note" rather than "Record" because the latter is an Ada
+   --  reserved word.)
+   Max_Recorded : constant := 256;
+   type Tid_Slots is
+     array (1 .. Max_Recorded) of Ada.Task_Identification.Task_Id;
+
+   protected Worker_Recorder is
+      procedure Note (Tid : Ada.Task_Identification.Task_Id);
+      function  Distinct_Count return Natural;
+      procedure Reset;
+   private
+      Tids : Tid_Slots := [others => Ada.Task_Identification.Null_Task_Id];
+      Len  : Natural   := 0;
+   end Worker_Recorder;
+
+   protected body Worker_Recorder is
+
+      procedure Note (Tid : Ada.Task_Identification.Task_Id) is
+      begin
+         if Len < Max_Recorded then
+            Len := Len + 1;
+            Tids (Len) := Tid;
+         end if;
+      end Note;
+
+      function Distinct_Count return Natural is
+         use type Ada.Task_Identification.Task_Id;
+         Count : Natural := 0;
+      begin
+         for I in 1 .. Len loop
+            declare
+               Already_Seen : Boolean := False;
+            begin
+               for J in 1 .. I - 1 loop
+                  if Tids (J) = Tids (I) then
+                     Already_Seen := True;
+                     exit;
+                  end if;
+               end loop;
+               if not Already_Seen then
+                  Count := Count + 1;
+               end if;
+            end;
+         end loop;
+         return Count;
+      end Distinct_Count;
+
+      procedure Reset is
+      begin
+         Len := 0;
+         Tids := [others => Ada.Task_Identification.Null_Task_Id];
+      end Reset;
+
+   end Worker_Recorder;
+
+   procedure Record_Current_Worker is
+   begin
+      Worker_Recorder.Note (Ada.Task_Identification.Current_Task);
+   end Record_Current_Worker;
 
    overriding function Name
      (T : Scheduler_Test) return AUnit.Message_String is
@@ -82,6 +161,14 @@ package body Scheduler_Suite is
         (T, Test_Spawn_Before_Init_Raises'Access,
          "Spawn called before Init raises Program_Error — the "
          & "precondition documented on Spawn");
+      Register_Routine
+        (T, Test_Pool_Distributes_Across_Workers'Access,
+         "Init (Workers => 2) + Spawn N: goroutines actually land "
+         & "on >= 2 distinct worker tasks (sub-item 3b)");
+      Register_Routine
+        (T, Test_Init_Default_Number_Of_CPUs'Access,
+         "Init () with no args sizes the pool to Number_Of_CPUs "
+         & "(exercises the Workers => 0 default branch)");
    end Register_Tests;
 
    procedure Test_Init_Shutdown_Empty
@@ -95,7 +182,7 @@ package body Scheduler_Suite is
       --  shutdown-when-not-init contract is documented as no-op so
       --  this is always safe.
       Shutdown;
-      Init;
+      Init (Workers => 1);
       Shutdown;
       --  Reached here without raising = success. The goroutine pool
       --  drained correctly with zero work in flight.
@@ -124,7 +211,7 @@ package body Scheduler_Suite is
    begin
       Counter := 0;
       Shutdown;  --  defensive: prior-test leftover wouldn't survive Init
-      Init;
+      Init (Workers => 1);
       Unused_G := Spawn (Increment_Once'Access);
       Shutdown;
       Assert (Counter = 1,
@@ -140,7 +227,7 @@ package body Scheduler_Suite is
    begin
       Counter := 0;
       Shutdown;
-      Init;
+      Init (Workers => 1);
       for Iteration in 1 .. 100 loop
          Unused_G := Spawn (Increment_Once'Access);
       end loop;
@@ -158,7 +245,7 @@ package body Scheduler_Suite is
       Yields_Run := 0;
       Yield_Done := False;
       Shutdown;
-      Init;
+      Init (Workers => 1);
       Unused_G := Spawn (Yield_Then_Mark'Access);
       Shutdown;
       Assert (Yields_Run = Yield_Iterations,
@@ -178,7 +265,7 @@ package body Scheduler_Suite is
       --  exit. A regression that called Switch_To on a null
       --  Worker_Ctx would either raise or hang here.
       Shutdown;
-      Init;
+      Init (Workers => 1);
       Gada.Async.Scheduler.Yield;
       Shutdown;
       Assert (True, "Yield from main task returned cleanly");
@@ -191,9 +278,9 @@ package body Scheduler_Suite is
       Raised : Boolean := False;
    begin
       Shutdown;
-      Init;
+      Init (Workers => 1);
       begin
-         Init;
+         Init (Workers => 1);
       exception
          when Program_Error =>
             Raised := True;
@@ -221,5 +308,59 @@ package body Scheduler_Suite is
       Assert (Raised,
               "Spawn before Init should raise Program_Error");
    end Test_Spawn_Before_Init_Raises;
+
+   procedure Test_Pool_Distributes_Across_Workers
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Unused_G : Goroutine_Id;
+      --  Sub-item 3b's verify gate: distribution observed across >= 2
+      --  workers. With Workers => 2 and N_Spawns sufficiently large,
+      --  Ada's protected-entry FIFO at Run_Queue.Pop fairly distributes
+      --  fresh spawns: the first goroutine is popped by whichever
+      --  worker was first in the entry queue, the second goroutine
+      --  unblocks the next worker, and so on. Even if a fast worker
+      --  occasionally races ahead and grabs two in a row before its
+      --  sibling wakes, with N_Spawns = 100 the slow worker gets
+      --  multiple chances to participate.
+      --
+      --  Distinct >= 2 is the property under test. The exact partition
+      --  is non-deterministic by design — Go's scheduler is similarly
+      --  permissive about which goroutine lands on which P.
+      N_Spawns : constant := 100;
+   begin
+      Worker_Recorder.Reset;
+      Shutdown;
+      Init (Workers => 2);
+      for Iteration in 1 .. N_Spawns loop
+         Unused_G := Spawn (Record_Current_Worker'Access);
+      end loop;
+      Shutdown;
+      Assert (Worker_Recorder.Distinct_Count >= 2,
+              "Expected goroutines to run on >= 2 worker tasks; saw"
+              & Worker_Recorder.Distinct_Count'Image
+              & " distinct task ids across" & N_Spawns'Image
+              & " spawns");
+   end Test_Pool_Distributes_Across_Workers;
+
+   procedure Test_Init_Default_Number_Of_CPUs
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+   begin
+      --  Init () with no args should size the worker pool to
+      --  System.Multiprocessors.Number_Of_CPUs — that's the Workers => 0
+      --  default branch in Init's body. Every other test passes Workers
+      --  explicitly (1 for deterministic single-worker, 2 for the
+      --  multi-worker distribution test), so without this test the
+      --  Number_Of_CPUs branch is uncovered. We don't Spawn anything;
+      --  the worker pool comes up, has nothing to do, and is torn down.
+      --  The property under test is "Init + Shutdown with default
+      --  Workers count completes without raising".
+      Shutdown;
+      Init;
+      Shutdown;
+      Assert (True, "Init+Shutdown with default Workers count completed");
+   end Test_Init_Default_Number_Of_CPUs;
 
 end Scheduler_Suite;

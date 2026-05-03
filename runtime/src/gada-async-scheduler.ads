@@ -7,9 +7,13 @@
 --  a small pool of `Worker` Ada tasks drains a shared run queue,
 --  Switch_To-ing into each goroutine cooperatively.
 --
---  This sub-item (Phase 3 item 3a) ships the *minimal* shape:
---    * one Worker task,
---    * one shared FIFO run queue,
+--  Sub-items 3a + 3b ship the multi-worker shape:
+--    * pool of Worker tasks sized by System.Multiprocessors.Number_Of_CPUs
+--      (overridable via Init (Workers => N)),
+--    * shared FIFO run queue for fresh spawns + private per-worker
+--      yielded-goroutine queue (yielded goroutines pin to the worker
+--      that first popped them — libco cothreads cannot migrate between
+--      OS threads, see ADR-0007 §4),
 --    * Spawn / Yield / Init / Shutdown,
 --    * no work-stealing yet (item 3c),
 --    * no Park/Unpark (item 3d),
@@ -24,8 +28,7 @@
 --        Ada.Text_IO.Put_Line ("hi from goroutine");
 --     end Hello;
 --
---     Gada.Async.Scheduler.Init;             --  defaults to 1 worker today,
---                                            --  Number_Of_CPUs after item 3b
+--     Gada.Async.Scheduler.Init;             --  defaults to Number_Of_CPUs
 --     declare
 --        G : constant Goroutine_Id :=
 --          Gada.Async.Scheduler.Spawn (Hello'Access);
@@ -55,8 +58,7 @@ package Gada.Async.Scheduler is
    type Goroutine_Body is access procedure;
 
    --  Bring up the worker pool. Workers = 0 means
-   --  System.Multiprocessors.Number_Of_CPUs (item 3b will activate
-   --  that — until then, Workers is clamped to 1). Calling Init twice
+   --  System.Multiprocessors.Number_Of_CPUs. Calling Init twice
    --  without an intervening Shutdown is a precondition violation.
    procedure Init (Workers : Natural := 0);
 

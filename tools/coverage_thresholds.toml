@@ -85,18 +85,19 @@ file = "runtime/src/gada-async-context.adb"
 lines = [197, 198, 202]
 reason = "Trampoline C-boundary exception arm — see runtime/COVERAGE.md"
 
-# Init's `new Worker_Task` rollback arm. Triggering it requires
-# Storage_Error or Tasking_Error from the Ada task allocation, which
-# the Alire FSF GNAT 15.1 runtime does not expose a portable hook for.
-# The Phase 3 sub-item (b) GOMAXPROCS expansion will add a worker-pool
-# fault-injection switch (per docs/incidents/2026-05-03-...md hazard
-# follow-ups) that re-covers this rollback. Until then, the three-
-# statement arm is straightforward enough for a code-review pass.
-# (PR #3 review feedback.) Rationale: runtime/COVERAGE.md
+# Init's per-worker `new Worker_Task` rollback arm. Triggering it
+# requires Storage_Error or Tasking_Error from the Ada task allocation,
+# which the Alire FSF GNAT 15.1 runtime does not expose a portable
+# hook for. The Phase 3 sub-item (c) work-stealing expansion will add
+# a worker-pool fault-injection switch (per docs/incidents/2026-05-03-
+# scheduler-3b-multi-worker-race.md follow-ups) that re-covers this
+# rollback. Until then, the seven-statement arm is straightforward
+# enough for a code-review pass. (PR #3 review feedback, lifted to the
+# multi-worker shape in 3b.) Rationale: runtime/COVERAGE.md
 # (gada-async-scheduler).
 [[exclude]]
 file = "runtime/src/gada-async-scheduler.adb"
-lines = [383, 384, 385, 386]
+lines = [458, 459, 460, 461, 462, 463, 464]
 reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 
 # Spawn's `Make` failure leak guard. Same fault-injection prerequisite
@@ -108,5 +109,5 @@ reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 # (gada-async-scheduler).
 [[exclude]]
 file = "runtime/src/gada-async-scheduler.adb"
-lines = [411, 412, 413]
+lines = [489, 490, 491]
 reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"

@@ -27,5 +27,12 @@ aunit = "^26.0.0"
 # in the gnatprove crate metadata means it does not auto-import as a
 # library, only puts the binary on PATH via the crate's environment
 # entry. See `alr show gnatprove` for details.
+#
+# Exact-pinned (not caret) because formal-verification proof results
+# can vary between gnatprove versions ("proof drift"). A 15.2.0 that
+# tightens a prover heuristic could fail to discharge a VC that 15.1.0
+# discharged trivially -- that's a real CI surprise, not a hypothetical.
+# The cost of an exact pin is one explicit version-bump PR per upgrade,
+# which is the right cadence for a verifier.
 [[depends-on]]
-gnatprove = "^15.1.0"
+gnatprove = "15.1.0"

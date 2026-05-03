@@ -30,10 +30,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUNTIME="$ROOT/runtime"
 
-# Mirror runtime/Makefile's PATH augmentation so gnatprove (installed
-# via `alr with gnatprove`) is discoverable without the caller having
-# to source `alr printenv` first.
-PATH="$HOME/src/gnatstudio/.tools/bin:$HOME/.local/share/alire/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+# PATH augmentation for the standard Alire install location so the
+# script Just Works without the caller having to source `alr printenv`
+# first. Deliberately portable — no dev-host-specific paths (the
+# gnatstudio toolchain layout is unique to one developer's machine
+# and was a Gemini-flagged review issue on PR #2).
+PATH="$HOME/.local/share/alire/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 export PATH
 
 # Per ADR-0008 §2: the opt-in set. Add new units here when their
@@ -81,11 +83,22 @@ if ! alr exec -- which gnatprove >/dev/null 2>&1; then
 fi
 
 # Build the -u file list. gnatprove's -u takes file basenames (not Ada
-# unit names): a single -u followed by every .ads/.adb to analyse.
+# unit names): a single -u followed by every .ads/.adb to analyse. We
+# guard each filename with `[[ -f ... ]]` so a future spec-only opt-in
+# (e.g., a generic that lives entirely in a .ads) doesn't make
+# gnatprove fail with "no such file" when the .adb legitimately
+# doesn't exist. Caller still gets the spec-level proof obligations.
 U_FILES=()
 for u in "${OPT_IN_UNITS[@]}"; do
-    U_FILES+=("$u.ads" "$u.adb")
+    [[ -f "src/$u.ads" ]] && U_FILES+=("$u.ads")
+    [[ -f "src/$u.adb" ]] && U_FILES+=("$u.adb")
 done
+
+if [[ ${#U_FILES[@]} -eq 0 ]]; then
+    echo "prove.sh: no source files matched OPT_IN_UNITS in runtime/src/." >&2
+    echo "         Check that the unit names match basenames under runtime/src/." >&2
+    exit 1
+fi
 
 echo "=== prove.sh: ${#OPT_IN_UNITS[@]} unit(s) ==="
 for u in "${OPT_IN_UNITS[@]}"; do

@@ -63,7 +63,7 @@ crate = "gnatprove"
 fulfilment = "solved"
 pinned = false
 transitivity = "direct"
-versions = "^15.1.0"
+versions = "15.1.0"
 [solution.state.release]
 authors = [
 "AdaCore",

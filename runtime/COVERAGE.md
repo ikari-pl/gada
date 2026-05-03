@@ -95,7 +95,7 @@ Added in PR #3 review feedback (gemini-code-assist comment #1).
 
 ### `runtime/src/gada-async-scheduler.adb`
 
-#### `Init` — `new Worker_Task` rollback  *(lines 350–353)*
+#### `Init` — `new Worker_Task` rollback  *(lines 383–386)*
 
 ```ada
 begin
@@ -124,7 +124,7 @@ re-covers this rollback.
 
 Added in PR #3 review feedback (gemini-code-assist comment #2).
 
-#### `Spawn` — `Make` failure leak guard  *(lines 378–380)*
+#### `Spawn` — `Make` failure leak guard  *(lines 411–413)*
 
 ```ada
 begin

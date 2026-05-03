@@ -51,9 +51,41 @@ package body Gada.Async.Scheduler is
    --
    --  Heap-allocated, owned by the scheduler. Lifetime: from Spawn to
    --  the worker reaping it (after the body returned and State => DONE).
-   --  All access is single-threaded today (one worker), so no atomic
-   --  ordering on State is required. Sub-item (b) will revisit this
-   --  when N workers can race on the State field across cores.
+   --  Multi-worker (3b+) means N OS threads can read/write State for
+   --  goroutines being handed off through Park/Unpark, work-stealing,
+   --  and syscall handoff. The protected `Run_Queue` mediates *queue*
+   --  membership, but the field itself is touched directly between
+   --  goroutine-side writes (Yield → YIELDED, Trampoline-tail → DONE)
+   --  and worker-side reads (post-Switch_To classification) — the
+   --  protected object is no longer in the chain.
+   --
+   --  `pragma Atomic` is the right size of fence here:
+   --    - Goroutine_State is 4 values → 1 byte → trivially atomic on
+   --      every supported arch (aarch64 / x86_64);
+   --    - the pragma upgrades the access to *sequentially consistent*
+   --      load/store, which is what the worker's "see the latest
+   --      State the goroutine wrote" needs;
+   --    - it is one line at the field declaration vs. a manual fence
+   --      at every read/write site — the per-call cost is the same
+   --      single LDARB / STLRB on aarch64, but the source-level
+   --      bookkeeping is `pragma`-local.
+   --
+   --  Worker_Ctx and Body_Proc do *not* need this treatment:
+   --    - Body_Proc is written once at Spawn and read inside the
+   --      Trampoline; both sides cross the protected `Run_Queue.Inject`
+   --      / `Run_Queue.Pop` barrier, which orders the write before
+   --      the read.
+   --    - Worker_Ctx is overwritten by the picking worker on every
+   --      iteration *before* Switch_To-into the goroutine, and the
+   --      Switch_To call goes through Gada.Async.Context's own
+   --      protected `State` (Record_Exit_If_Absent / Lookup_Exit) —
+   --      that protected call provides the same write-then-fence-
+   --      then-Switch_To shape as the State write would, so by the
+   --      time the goroutine resumes inside Yield and reads
+   --      Worker_Ctx, the worker's write is visible.
+   --
+   --  See docs/incidents/2026-05-03-scheduler-3a-concurrency-bugs.md
+   --  hazard #6 for the full reasoning.
 
    type Goroutine_State is (READY, RUNNING, YIELDED, DONE);
 
@@ -62,6 +94,7 @@ package body Gada.Async.Scheduler is
                      Gada.Async.Context.Null_Context;
       Body_Proc  : Goroutine_Body := null;
       State      : Goroutine_State := READY;
+      pragma Atomic (State);
       Worker_Ctx : Gada.Async.Context.Context :=
                      Gada.Async.Context.Null_Context;
       --  Worker_Ctx is the address of the worker's own libco context.

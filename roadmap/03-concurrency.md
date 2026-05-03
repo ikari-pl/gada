@@ -63,9 +63,40 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         *Done 2026-05-02:* Five AUnit routines ship (overshooting the three-test minimum because covering the 100% gate honestly required exercising both the trampoline tail-stub and the Free(Null_Context) idempotent path). **Test_Make_Free_Round_Trip** runs 1000 Make/Free cycles asserting non-Null returns and zeroed handle post-Free. **Test_Two_Context_Switch** is the smallest possible ping-pong — Switch_To enters a trampoline'd entry, the entry yields back via Switch_To (Main_Ctx), and the test asserts the entry actually ran (a regression that broke trampoline dispatch would deadlock until the harness time-out). **Test_Ping_Pong_1M_Iterations** is the exit-criterion test: two cothreads bounce control 1M times under a `Ada.Real_Time` wall-clock budget of 1 s, with the actual elapsed-ms surfaced via `Ada.Text_IO` for trend-watching across libco / GCC bumps. **Test_Free_Null_Context** pins the documented no-op contract. **Test_Entry_Returns_Tail_Yields** is the canary for the Trampoline tail-stub: an entry that *returns naturally* (no Switch_To) used to fall off the end of the cothread into libco-undefined behaviour; the body now records each cothread's spawner in an `Exits` map at first Switch_To and the trampoline tail-loops Co_Switching back to the spawner — making the procedure `pragma No_Return` and removing the only path through the implicit-return basic block. Result on macOS/arm64: 5/5 pass, ping-pong ~38 ms / 1M iterations (~38 ns per switch), and **100% line coverage on `gada-async-context.adb`** (40 of 40 reachable lines) after two reviewer-approved exclusions documented in `runtime/COVERAGE.md`: the libco-OOM `raise Storage_Error` (no portable test under overcommit / large-VA) and the No_Return tail-loop's implicit-fall-through line (genuinely unreachable). Tooling support: `tools/coverage_thresholds.toml` gained a `[[exclude]]` schema with `file` + `lines` + `reason`, parsed by an extended `tools/coverage_gate.sh` that drops excluded lines from both numerator and denominator before scoring; `tools/coverage_ada.sh` now passes `lcov --filter line,branch,region` for symmetry with future LCOV_EXCL_*-style markers in the source. The escape valve from AGENTS.md ("Deviations are documented per package in `runtime/<package>/COVERAGE.md`") now has a mechanical enforcement path matching its documented intent.
 
 - [ ] **GADA.Async.Scheduler — M:N over a fixed pool of Ada tasks**
-      *Files:* `runtime/src/gada-async-scheduler.ads`, `runtime/src/gada-async-scheduler.adb`, `runtime/tests/test_scheduler.adb`
+      *Files:* (see sub-items below)
       *Verify:* `make -C runtime test PKG=async.scheduler`
       *Done when:* `Spawn (Body)` schedules a goroutine; `GOMAXPROCS`-equivalent fairness, work-stealing, blocking-syscall hand-off; coverage 100%.
+      *Notes:* Decomposed into the six sub-items below. The scheduler is the load-bearing primitive the rest of Phase 3 builds on (channels, select, all goroutine-shaped emit), so the decomposition is layered: each sub-item ticks only when the *previous* sub-items still pass and the new behaviour has its own AUnit case landing alongside. The parent ticks when all sub-items tick AND the parent *Verify* passes from a clean build.
+
+  - [ ] **(a) Public API + minimal single-worker scheduler**
+        *Files:* `runtime/src/gada-async-scheduler.ads`, `runtime/src/gada-async-scheduler.adb`
+        *Verify:* `cd runtime && alr build` exits 0; spec exposes `Goroutine_Id`, `Spawn`, `Yield`, `Init`, `Shutdown`; a smoke test in scheduler_suite spawns a goroutine that increments a counter and asserts the counter advanced after `Shutdown`.
+        *Done when:* A single worker Ada task runs a fetch-and-execute loop, processing goroutines from a shared FIFO queue. `Spawn` enqueues; the worker `Switch_To`'s into the goroutine's libco context; `Yield` switches back to the worker which decides re-enqueue (yielded) vs reap (returned). Goroutine state is tracked via a `Goroutine_State` enum (`READY/RUNNING/YIELDED/DONE`) — the worker reads it after the Switch_To returns to distinguish the two outcomes. Stack lifetime: `Free` runs after the goroutine is reaped, never while its libco frame is suspended.
+
+  - [ ] **(b) GOMAXPROCS worker pool**
+        *Files:* `runtime/src/gada-async-scheduler.adb` (extend), `runtime/src/gada-async-scheduler.ads` (Init signature)
+        *Verify:* `make -C runtime test PKG=async.scheduler` — multi-spawn test schedules N goroutines and confirms they ran on at least 2 distinct worker tasks.
+        *Done when:* Pool of `Worker` tasks sized by `System.Multiprocessors.Number_Of_CPUs` (overridable via `Init (Workers => N)`). All workers share the same protected-object FIFO queue (work-stealing arrives in (c)). Workers exit cleanly when `Shutdown` signals the queue is permanently drained.
+
+  - [ ] **(c) Per-worker local deque + work-stealing**
+        *Files:* `runtime/src/gada-async-scheduler-deque.{ads,adb}`, `runtime/src/gada-async-scheduler.adb` (integrate)
+        *Verify:* `make -C runtime test PKG=async.scheduler` — work-stealing test produces near-balanced load: N×K goroutines spawned from a single worker get distributed across all N workers within a tolerance.
+        *Done when:* Each worker owns a local Chase-Lev-style deque; pushes/pops own tail (LIFO, cache-friendly); idle workers steal from the *head* of a random sibling's deque (FIFO, fair). Cross-worker spawn falls back to a global injection queue. The deque algorithm is documented in an inline comment with the citation to the original paper.
+
+  - [ ] **(d) Park / Unpark primitives**
+        *Files:* `runtime/src/gada-async-scheduler.{ads,adb}` (extend)
+        *Verify:* `make -C runtime test PKG=async.scheduler` — Park-then-Unpark round-trips a goroutine off and back onto the run queue, observed via a counter that only advances after Unpark.
+        *Done when:* `Park` removes the calling goroutine from its worker's deque and yields; `Unpark (G)` makes G eligible to run again (re-pushed onto the original worker's deque, or onto the global injection queue if the worker is gone). These are the primitives channels/select/timers will build on in items 4–6.
+
+  - [ ] **(e) Blocking-syscall hand-off**
+        *Files:* `runtime/src/gada-async-scheduler.{ads,adb}` (extend)
+        *Verify:* `make -C runtime test PKG=async.scheduler` — a goroutine that calls an `Enter_Syscall`/`Exit_Syscall` stub-pair around a `delay` does not stall sibling workers (measured by sibling progress during the delay).
+        *Done when:* `Enter_Syscall` parks the calling goroutine and detaches it from its worker so the worker can pick up other goroutines; `Exit_Syscall` re-enqueues the parked goroutine. The integration with real I/O paths (file, socket) lands in Phase 4; this sub-item is the scheduler-side handoff API + its multi-worker non-stall property.
+
+  - [ ] **(f) AUnit suite + 100% coverage**
+        *Files:* `runtime/tests/scheduler_suite.{ads,adb}`, `runtime/tests/test_runner.adb` (registration)
+        *Verify:* `make -C runtime test PKG=async.scheduler`
+        *Done when:* Suite covers (1) single-spawn round-trip, (2) N-spawn fan-out joins back at Shutdown, (3) work-stealing balances across workers, (4) Park/Unpark round-trip, (5) syscall handoff doesn't stall siblings, (6) Shutdown waits for in-flight goroutines, (7) goroutine that returns naturally is reaped without leaking its libco stack (1000-cycle stress assertion). 100% line coverage on `runtime/src/gada-async-scheduler.adb` and any deque helpers.
 
 - [ ] **GADA.Async.Channels.Bounded — bounded channels**
       *Files:* `runtime/src/gada-async-channels-bounded.ads`, `runtime/src/gada-async-channels-bounded.adb`, `runtime/tests/test_channels_bounded.adb`

@@ -7,17 +7,18 @@
 --  a small pool of `Worker` Ada tasks drains a shared run queue,
 --  Switch_To-ing into each goroutine cooperatively.
 --
---  Sub-items 3a + 3b + 3d ship the multi-worker shape:
+--  Sub-items 3a + 3b + 3c + 3d + 3e ship the multi-worker shape:
 --    * pool of Worker tasks sized by System.Multiprocessors.Number_Of_CPUs
 --      (overridable via Init (Workers => N)),
---    * shared FIFO run queue for fresh spawns + per-worker Inbox queues
---      for yielded + Unparked goroutines (yielded goroutines pin to the
+--    * shared FIFO run queue for fresh spawns,
+--    * worker-local SPSC list for YIELDED self-injection (sub-item 3c),
+--    * per-worker MPSC Inbox inside Run_Queue for external Unpark
+--      injections (sub-item 3d) — yielded/parked goroutines pin to the
 --      worker that first popped them; Park/Unpark route through the
---      same Inbox to preserve the pinning invariant — libco cothreads
+--      same Inbox to preserve the pinning invariant (libco cothreads
 --      cannot migrate between OS threads, see ADR-0007 §4),
---    * Spawn / Yield / Init / Shutdown / Park / Unpark.
---    * no work-stealing yet (item 3c),
---    * no syscall handoff (item 3e).
+--    * Spawn / Yield / Init / Shutdown / Park / Unpark / Enter_Syscall
+--      / Exit_Syscall.
 --  Subsequent sub-items extend the body without breaking this spec.
 --
 --  Usage shape (intentionally minimal — until the compiler's `go`
@@ -104,6 +105,44 @@ package Gada.Async.Scheduler is
    --  goroutine, from a non-worker task, from the main task. The
    --  protected Inbox handles cross-thread injection.
    procedure Unpark (G : Goroutine_Id);
+
+   --  ## Syscall hand-off API (sub-item 3e)
+   --
+   --  Enter_Syscall and Exit_Syscall are the runtime-side hooks that
+   --  the compiler-emitted I/O wrappers (and any hand-written Ada code
+   --  that wants the same shape) call when the calling goroutine is
+   --  about to do work that does NOT happen on its bound worker — most
+   --  notably a blocking syscall dispatched to a helper thread.
+   --
+   --  Today these are Park / Unpark equivalents (a single Park already
+   --  yields the worker, so siblings make progress while the caller is
+   --  off-CPU; that is exactly the property the syscall-handoff path
+   --  needs). The separate symbols exist for two reasons:
+   --
+   --    (1) Generated I/O wrappers in Phase 4 will be auditable / grep-
+   --        pable: every place a Go-source `os.File.Read` or similar
+   --        crossed into "this might block" emits Enter_Syscall / Exit
+   --        _Syscall, never raw Park / Unpark.
+   --
+   --    (2) A future helper-thread monitor (stuck-syscall watchdog,
+   --        observability counter, sub-item 3e+) can be wired into
+   --        Enter / Exit without touching every Park / Unpark caller.
+   --
+   --  Usage shape: the GOROUTINE calls Enter_Syscall and is parked.
+   --  An EXTERNAL task — typically the helper thread that is about to
+   --  perform the blocking operation, or the main task in test code —
+   --  performs the blocking work, then calls Exit_Syscall (G) on the
+   --  goroutine's saved Goroutine_Id. The goroutine resumes from
+   --  Enter_Syscall on its bound worker.
+   --
+   --  Enter_Syscall is *not* a no-op-and-do-the-work primitive. The
+   --  body itself does no I/O. Per (2), the caller must arrange for
+   --  the actual blocking work to happen on a thread other than the
+   --  goroutine's worker; otherwise the worker stalls and there is no
+   --  point in the handoff. Phase 4's per-syscall wrappers own that
+   --  arrangement.
+   procedure Enter_Syscall;
+   procedure Exit_Syscall (G : Goroutine_Id);
 
    --  Block until every spawned goroutine has finished, then tear
    --  down the worker pool. After Shutdown returns, Init must be

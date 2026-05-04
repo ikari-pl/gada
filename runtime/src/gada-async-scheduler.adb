@@ -595,6 +595,23 @@ package body Gada.Async.Scheduler is
       Run_Queue.Inject_Local (G.Ref.Bound_Worker, G.Ref);
    end Unpark;
 
+   procedure Enter_Syscall is
+   begin
+      --  Park-equivalent. See spec for why the symbol is separate.
+      --  The actual blocking work happens elsewhere — this body is
+      --  just the goroutine-side suspension point; an external task
+      --  must Exit_Syscall (G) when the work completes.
+      Park;
+   end Enter_Syscall;
+
+   procedure Exit_Syscall (G : Goroutine_Id) is
+   begin
+      --  Unpark-equivalent. Called from the helper thread (Phase 4)
+      --  or test main task that performed the blocking work; routes
+      --  G back to its bound worker's Inbox via Unpark's contract.
+      Unpark (G);
+   end Exit_Syscall;
+
    procedure Shutdown is
    begin
       if not Run_Queue.Is_Initialised then

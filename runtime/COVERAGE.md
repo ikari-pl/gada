@@ -95,22 +95,22 @@ Added in PR #3 review feedback (gemini-code-assist comment #1).
 
 ### `runtime/src/gada-async-scheduler.adb`
 
-#### `Init` — per-worker `new Worker_Task` rollback  *(lines 458–464)*
+#### `Init` — per-worker `new Worker_Task` rollback  *(lines 437–443)*
 
 ```ada
 begin
    for I in 1 .. Effective_Workers loop
       Run_Queue.Worker_Started;
-      The_Workers (I) := new Worker_Task;
+      The_Workers (I) := new Worker_Task (Idx => I);
    end loop;
 exception
-   when others =>
-      Run_Queue.Worker_Stopped;            --  line 459
-      Run_Queue.Mark_Shutdown;             --  line 460
-      Run_Queue.Drain;                     --  line 461
-      The_Workers := null;                  --  line 462
-      Run_Queue.Set_Initialised (False);   --  line 463
-      raise;                                --  line 464
+   when others =>                          --  line 437
+      Run_Queue.Worker_Stopped;            --  line 438
+      Run_Queue.Mark_Shutdown;             --  line 439
+      Run_Queue.Drain;                     --  line 440
+      The_Workers := null;                  --  line 441
+      Run_Queue.Set_Initialised (False);   --  line 442
+      raise;                                --  line 443
 end;
 ```
 
@@ -135,16 +135,16 @@ re-covers this rollback.
 Added in PR #3 review feedback (gemini-code-assist comment #2),
 lifted to the multi-worker rollback shape in sub-item 3b.
 
-#### `Spawn` — `Make` failure leak guard  *(lines 489–491)*
+#### `Spawn` — `Make` failure leak guard  *(lines 465–467)*
 
 ```ada
 begin
    Gada.Async.Context.Make
      (G.Ctx, Goroutine_Trampoline'Access);
 exception
-   when others =>
-      Free_Goroutine (G);   --  line 490
-      raise;                 --  line 491
+   when others =>          --  line 465
+      Free_Goroutine (G);  --  line 466
+      raise;                --  line 467
 end;
 ```
 

@@ -7,16 +7,16 @@
 --  a small pool of `Worker` Ada tasks drains a shared run queue,
 --  Switch_To-ing into each goroutine cooperatively.
 --
---  Sub-items 3a + 3b ship the multi-worker shape:
+--  Sub-items 3a + 3b + 3d ship the multi-worker shape:
 --    * pool of Worker tasks sized by System.Multiprocessors.Number_Of_CPUs
 --      (overridable via Init (Workers => N)),
---    * shared FIFO run queue for fresh spawns + private per-worker
---      yielded-goroutine queue (yielded goroutines pin to the worker
---      that first popped them — libco cothreads cannot migrate between
---      OS threads, see ADR-0007 §4),
---    * Spawn / Yield / Init / Shutdown,
+--    * shared FIFO run queue for fresh spawns + per-worker Inbox queues
+--      for yielded + Unparked goroutines (yielded goroutines pin to the
+--      worker that first popped them; Park/Unpark route through the
+--      same Inbox to preserve the pinning invariant — libco cothreads
+--      cannot migrate between OS threads, see ADR-0007 §4),
+--    * Spawn / Yield / Init / Shutdown / Park / Unpark.
 --    * no work-stealing yet (item 3c),
---    * no Park/Unpark (item 3d),
 --    * no syscall handoff (item 3e).
 --  Subsequent sub-items extend the body without breaking this spec.
 --
@@ -77,6 +77,33 @@ package Gada.Async.Scheduler is
    --  generated code can call it unconditionally without first
    --  asking "am I in a goroutine?").
    procedure Yield;
+
+   --  Suspend the calling goroutine indefinitely. Unlike Yield, the
+   --  goroutine is NOT re-enqueued — it sits in suspended limbo until
+   --  somebody calls Unpark on its handle. The worker is free to pick
+   --  up other goroutines in the meantime. Calling Park from a non-
+   --  goroutine context is a no-op (matches Yield).
+   --
+   --  This is the primitive Phase 3 channel-receive-on-empty-channel,
+   --  select-with-no-ready-case, and timer-wait will be built on. Item
+   --  3d ships Park/Unpark; the higher-level uses arrive in items 4-6.
+   procedure Park;
+
+   --  Make the goroutine identified by G eligible to run again. G is
+   --  routed back to the Inbox of its bound worker (the worker that
+   --  first ran it) — libco cothreads cannot migrate between OS
+   --  threads (ADR-0007 §4), so re-enqueueing onto a different worker
+   --  is UB. Calling Unpark on No_Goroutine is a documented no-op.
+   --
+   --  Precondition: G must have run at least once on some worker
+   --  (i.e. its Bound_Worker is set). Calling Unpark on a goroutine
+   --  that has never run raises Program_Error — there's no correct
+   --  routing target to guess.
+   --
+   --  Unpark is callable from any context: from inside a (different)
+   --  goroutine, from a non-worker task, from the main task. The
+   --  protected Inbox handles cross-thread injection.
+   procedure Unpark (G : Goroutine_Id);
 
    --  Block until every spawned goroutine has finished, then tear
    --  down the worker pool. After Shutdown returns, Init must be

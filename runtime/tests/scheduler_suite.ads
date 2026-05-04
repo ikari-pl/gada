@@ -38,5 +38,13 @@ package Scheduler_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Init_Default_Number_Of_CPUs
      (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Park_Unpark_Round_Trip
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Park_From_Non_Goroutine_Is_Noop
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Unpark_Of_No_Goroutine_Is_Noop
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Unpark_Of_Never_Run_Goroutine_Raises
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Scheduler_Suite;

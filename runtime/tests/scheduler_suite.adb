@@ -34,6 +34,8 @@ package body Scheduler_Suite is
    procedure Increment_Once;
    procedure Yield_Then_Mark;
    procedure Record_Current_Worker;
+   procedure Park_Body;
+   procedure Self_Test_Unpark_Of_Never_Run;
 
    procedure Increment_Once is
    begin
@@ -122,6 +124,76 @@ package body Scheduler_Suite is
       Worker_Recorder.Note (Ada.Task_Identification.Current_Task);
    end Record_Current_Worker;
 
+   --  ## Park_Tracker — sequence buffer for the Park/Unpark test
+   --
+   --  Park_Body marks "1" before parking and "2" after Unpark resumes
+   --  it. The test asserts the final sequence is "12" — proves both
+   --  the Park-suspends-before-mark-2 and the Unpark-resumes paths.
+   --  Protected because the goroutine writes from a worker task while
+   --  the main test task reads. Buffer is a fixed-size character
+   --  array indexed by an internal counter; over-size is harmless.
+   protected Park_Tracker is
+      procedure Mark (Stage : Character);
+      function  Sequence return String;
+      procedure Reset;
+   private
+      Buf  : String (1 .. 16) := [others => ' '];
+      Last : Natural          := 0;
+   end Park_Tracker;
+
+   protected body Park_Tracker is
+
+      procedure Mark (Stage : Character) is
+      begin
+         if Last < Buf'Last then
+            Last := Last + 1;
+            Buf (Last) := Stage;
+         end if;
+      end Mark;
+
+      function Sequence return String is (Buf (1 .. Last));
+
+      procedure Reset is
+      begin
+         Last := 0;
+         Buf := [others => ' '];
+      end Reset;
+
+   end Park_Tracker;
+
+   The_Parked_Goroutine : Goroutine_Id;
+   --  Captured at Spawn so the main test task can Unpark it.
+
+   procedure Park_Body is
+   begin
+      Park_Tracker.Mark ('1');
+      Park;
+      Park_Tracker.Mark ('2');
+   end Park_Body;
+
+   procedure Self_Test_Unpark_Of_Never_Run is
+      Other : Goroutine_Id;
+   begin
+      --  Goroutine body running on the only worker (Workers => 1).
+      --  Spawn another goroutine — it goes to the shared Run_Queue
+      --  but cannot be popped because the only worker is currently
+      --  *us* and we have not yielded. Unpark on it must raise
+      --  Program_Error because Bound_Worker is still Unbound.
+      --
+      --  This test deliberately constructs the precondition violation
+      --  inside a goroutine body, where the single-worker invariant
+      --  prevents the obvious race ("worker pops Other before main
+      --  task can Unpark it").
+      Other := Spawn (Increment_Once'Access);
+      begin
+         Unpark (Other);
+         Park_Tracker.Mark ('-');  --  unexpected no-raise
+      exception
+         when Program_Error =>
+            Park_Tracker.Mark ('R');  --  expected raise
+      end;
+   end Self_Test_Unpark_Of_Never_Run;
+
    overriding function Name
      (T : Scheduler_Test) return AUnit.Message_String is
      (AUnit.Format ("Gada.Async.Scheduler suite (PKG=async.scheduler)"));
@@ -169,6 +241,22 @@ package body Scheduler_Suite is
         (T, Test_Init_Default_Number_Of_CPUs'Access,
          "Init () with no args sizes the pool to Number_Of_CPUs "
          & "(exercises the Workers => 0 default branch)");
+      Register_Routine
+        (T, Test_Park_Unpark_Round_Trip'Access,
+         "Park suspends the calling goroutine; Unpark from the main "
+         & "task resumes it on its bound worker (sub-item 3d)");
+      Register_Routine
+        (T, Test_Park_From_Non_Goroutine_Is_Noop'Access,
+         "Park from the main task (no current goroutine) returns "
+         & "immediately and does not stall the test");
+      Register_Routine
+        (T, Test_Unpark_Of_No_Goroutine_Is_Noop'Access,
+         "Unpark on No_Goroutine returns cleanly (documented no-op "
+         & "for generated code that may carry a null handle)");
+      Register_Routine
+        (T, Test_Unpark_Of_Never_Run_Goroutine_Raises'Access,
+         "Unpark on a goroutine that has never run raises "
+         & "Program_Error — there is no correct routing target");
    end Register_Tests;
 
    procedure Test_Init_Shutdown_Empty
@@ -362,5 +450,101 @@ package body Scheduler_Suite is
       Shutdown;
       Assert (True, "Init+Shutdown with default Workers count completed");
    end Test_Init_Default_Number_Of_CPUs;
+
+   procedure Test_Park_Unpark_Round_Trip
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+   begin
+      --  Park_Body marks '1', Parks, marks '2'. Worker observes
+      --  PARKED state on Switch_To return, leaves G in limbo (does
+      --  not re-enqueue). Main task waits for Park_Tracker = "1"
+      --  (which proves the goroutine ran and parked), then Unparks
+      --  via the saved Goroutine_Id. Worker's Pop on its own Inbox
+      --  wakes (Inject_Local just landed), G resumes from Park's
+      --  Switch_To, runs Mark ('2'), returns naturally, gets reaped.
+      --
+      --  After Shutdown, Park_Tracker.Sequence must be exactly "12".
+      --  Workers => 1 because: (a) the test isn't about distribution,
+      --  (b) Park_Tracker is shared state that single-worker
+      --  serialises trivially.
+      Park_Tracker.Reset;
+      Shutdown;
+      Init (Workers => 1);
+      The_Parked_Goroutine := Spawn (Park_Body'Access);
+
+      --  Wait for the goroutine to reach Park. We use a brief
+      --  bounded delay loop rather than a fixed sleep — fast on
+      --  warm caches, still bounded if the host is heavily loaded.
+      --  The goroutine reaches Mark ('1') very quickly (sub-ms);
+      --  100 × 1 ms gives 100 ms ceiling — orders of magnitude
+      --  beyond what a healthy CI runner needs.
+      for Attempt in 1 .. 100 loop
+         exit when Park_Tracker.Sequence = "1";
+         delay 0.001;
+      end loop;
+      Assert (Park_Tracker.Sequence = "1",
+              "Park_Body did not reach Park before timeout; "
+              & "Sequence = '" & Park_Tracker.Sequence & "'");
+
+      Unpark (The_Parked_Goroutine);
+      Shutdown;
+      Assert (Park_Tracker.Sequence = "12",
+              "Expected Park_Tracker = '12', got '"
+              & Park_Tracker.Sequence & "'");
+   end Test_Park_Unpark_Round_Trip;
+
+   procedure Test_Park_From_Non_Goroutine_Is_Noop
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+   begin
+      --  Park called from the main test task (no current goroutine)
+      --  must early-exit. A regression that called Switch_To on a
+      --  null Worker_Ctx would either raise or hang.
+      Shutdown;
+      Init (Workers => 1);
+      Gada.Async.Scheduler.Park;
+      Shutdown;
+      Assert (True, "Park from main task returned cleanly");
+   end Test_Park_From_Non_Goroutine_Is_Noop;
+
+   procedure Test_Unpark_Of_No_Goroutine_Is_Noop
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+   begin
+      --  Unpark on the No_Goroutine sentinel must early-exit. This
+      --  matches the contract on Free for Gada.Async.Context.Null_Context
+      --  and lets generated code call Unpark unconditionally on a
+      --  handle field that may or may not have been Spawn'd.
+      Shutdown;
+      Init (Workers => 1);
+      Unpark (No_Goroutine);
+      Shutdown;
+      Assert (True, "Unpark (No_Goroutine) returned cleanly");
+   end Test_Unpark_Of_No_Goroutine_Is_Noop;
+
+   procedure Test_Unpark_Of_Never_Run_Goroutine_Raises
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Unused_G : Goroutine_Id;
+   begin
+      --  Drives Self_Test_Unpark_Of_Never_Run inside a goroutine on
+      --  the only worker — see that procedure's comment for why this
+      --  shape avoids the obvious race ("worker pops Other before
+      --  main task Unparks").
+      Park_Tracker.Reset;
+      Counter := 0;
+      Shutdown;
+      Init (Workers => 1);
+      Unused_G := Spawn (Self_Test_Unpark_Of_Never_Run'Access);
+      Shutdown;
+      Assert (Park_Tracker.Sequence = "R",
+              "Expected Park_Tracker = 'R' (Program_Error raised on "
+              & "Unpark of never-run goroutine), got '"
+              & Park_Tracker.Sequence & "'");
+   end Test_Unpark_Of_Never_Run_Goroutine_Raises;
 
 end Scheduler_Suite;

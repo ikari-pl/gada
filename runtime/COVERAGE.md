@@ -167,6 +167,69 @@ Added in PR #3 review feedback (gemini-code-assist comment #4).
 
 ---
 
+### `runtime/src/gada-async-channels-bounded.adb`
+
+#### `Send` — `Park_Sender` close-race recheck  *(lines 413–414)*
+
+```ada
+C.Ref.State.Park_Sender (Slot, Was_Closed);
+if Was_Closed then
+   Free_Slot (Slot);                                  --  line 413
+   raise Channel_Closed                               --  line 414
+     with "Gada.Async.Channels.Bounded.Send: closed during park";
+end if;
+```
+
+`Park_Sender` re-checks `Closed_F` under its protected lock before
+appending the caller's `Wait_Slot` to the parked-senders list. The
+arm fires only if a third party calls `Close` in the source-line gap
+between the caller's `Try_Buffered_Send` (which returned
+`Was_Closed = False`, otherwise we'd have raised earlier on line
+399) and `Park_Sender`'s own `Closed_F` test.
+
+GNAT's protected calls are uninterruptible — the only window for
+the race is the Ada source-line gap between the two calls, with the
+calling cothread fully scheduled on its worker for the duration. A
+deterministic single-worker test that owns the Send's caller cannot
+interpose a Close at that exact gap; multi-worker tests can race
+but cannot *force* the race to land on this specific gap rather
+than the larger pre-`Try_Buffered_Send` gap. A future fault-
+injection seam (slated alongside Phase 4 panic-marshalling work)
+will park the calling goroutine *between* those two protected calls,
+fire a Close, and re-cover this arm. Two lines.
+
+#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 466–468, 471–473)*
+
+```ada
+C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);
+if Got then
+   Free_Slot (Slot);   --  line 466
+   OK := True;          --  line 467
+   return;              --  line 468
+end if;
+if Was_Closed then
+   Free_Slot (Slot);   --  line 471
+   OK := False;         --  line 472
+   return;              --  line 473
+end if;
+```
+
+Mirror image of the Send-side race-recheck above. `Park_Receiver`
+re-checks `Count > 0` and `Closed_F` under its protected lock;
+either arm fires only if a third party Sends or Closes in the source-
+line gap between the caller's `Try_Buffered_Receive` and
+`Park_Receiver`'s own re-tests. Same single-worker-determinism
+constraint as the Send arm. Six lines (two 3-line arms). The same
+fault-injection seam covers both arms.
+
+The arms are not dead code — they exist *because* the race window is
+real and silent corruption (a parked receiver that should have
+matched a freshly-arrived sender, or a parked receiver that hangs
+forever on a freshly-closed channel) is unacceptable. Excluding
+them here documents the testability gap, not their value.
+
+---
+
 ### Adding a new exception
 
 1. Confirm the line is **genuinely** untestable in CI (not just

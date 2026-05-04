@@ -111,3 +111,35 @@ reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 file = "runtime/src/gada-async-scheduler.adb"
 lines = [587, 588, 589]
 reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"
+
+# Park_Sender's race-recheck arm: between the caller's
+# Try_Buffered_Send (which already returned Was_Closed = False) and
+# Park_Sender's own Closed_F test, a concurrent third party would have
+# to call Close. With one worker and a deterministic test that owns the
+# Send's protected-call sequence, no other actor can interpose. The
+# arm exists for the multi-worker race window — Phase 3 sub-item 3b
+# already proved >=2 workers under stress, but the *race itself*
+# requires a Send + Close from distinct goroutines AND the protected
+# scheduler to suspend Send between Try_Buffered_Send return and
+# Park_Sender call. GNAT's protected calls are uninterruptible, so the
+# only window is the Ada source-line gap between the two calls. A
+# fault-injection seam between Try_Buffered_Send and Park_Sender
+# (Phase 4 panic-marshalling work) will re-cover this. Two lines.
+# Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
+[[exclude]]
+file = "runtime/src/gada-async-channels-bounded.adb"
+lines = [413, 414]
+reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
+
+# Park_Receiver's race-recheck arms (Got=True / Closed=True). Mirror of
+# the Send-side race-window exclusion above: between Try_Buffered_
+# Receive returning empty-and-open and Park_Receiver's own Count > 0
+# / Closed_F tests, a concurrent third party would have to call Send
+# or Close. Deterministic single-worker tests cannot interpose. Same
+# Phase 4 fault-injection seam removes both. Six lines (two
+# 3-line arms: Free_Slot/OK:=Bool/return).
+# Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
+[[exclude]]
+file = "runtime/src/gada-async-channels-bounded.adb"
+lines = [466, 467, 468, 471, 472, 473]
+reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"

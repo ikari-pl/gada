@@ -143,3 +143,15 @@ reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
 file = "runtime/src/gada-async-channels-bounded.adb"
 lines = [466, 467, 468, 471, 472, 473]
 reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
+
+# Channels.Unbounded mirror of the Channels.Bounded Park_Receiver
+# race-recheck exclusion above. Same single-worker-determinism
+# constraint, same Phase 4 fault-injection seam closes both. Six lines
+# (two 3-line arms: Free_Slot/OK:=Bool/return). The Send-side mirror
+# is intentionally absent — Unbounded.Send never blocks, so there is
+# no Park_Sender close-race-recheck arm to exclude.
+# Rationale: runtime/COVERAGE.md (gada-async-channels-unbounded).
+[[exclude]]
+file = "runtime/src/gada-async-channels-unbounded.adb"
+lines = [387, 388, 389, 392, 393, 394]
+reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"

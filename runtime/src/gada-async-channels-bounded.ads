@@ -53,9 +53,17 @@ package Gada.Async.Channels.Bounded is
    No_Channel : constant Channel;
 
    --  Construct a bounded channel with the given capacity. Capacity
-   --  must be >= 1; capacity = 0 (Go's unbuffered / synchronous
-   --  rendezvous) lives in Gada.Async.Channels.Unbounded (item 5).
-   --  Constraint_Error is the natural raise — Capacity is Positive.
+   --  must be >= 1; Constraint_Error is the natural raise — Capacity
+   --  is Positive. Go's unbuffered (synchronous rendezvous,
+   --  `make (chan T)` with no capacity arg) does not currently have a
+   --  dedicated runtime mapping — Channels.Unbounded provides
+   --  send-never-blocks linked-list semantics, which is structurally
+   --  different (one party is never blocked vs. both parties block
+   --  until rendezvous). Phase 4 compiler emit will lower
+   --  `make (chan T)` to either Bounded.Make (1) as a behavioral
+   --  approximation or to a future Channels.Synchronous package; the
+   --  decision rides on Phase 4's select-statement implementation
+   --  experience.
    function Make (Capacity : Positive) return Channel
      with Post => Make'Result /= No_Channel;
 

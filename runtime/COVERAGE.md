@@ -230,6 +230,39 @@ them here documents the testability gap, not their value.
 
 ---
 
+### `runtime/src/gada-async-channels-unbounded.adb`
+
+#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 387–389, 392–394)*
+
+```ada
+C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);
+if Got then
+   Free_Slot (Slot);   --  line 387
+   OK := True;          --  line 388
+   return;              --  line 389
+end if;
+if Was_Closed then
+   Free_Slot (Slot);   --  line 392
+   OK := False;         --  line 393
+   return;              --  line 394
+end if;
+```
+
+Mirror of the Channels.Bounded Park_Receiver race-recheck above.
+Same single-worker-determinism constraint: the only window for the
+race is the Ada source-line gap between `Try_Receive` and
+`Park_Receiver`, which a single-worker test cannot interpose a
+third-party Send or Close into. Same Phase 4 fault-injection seam
+closes both. Six lines (two 3-line arms).
+
+The Send-side mirror is intentionally absent — `Unbounded.Send`
+never blocks (there is no buffer-full state), so there is no
+`Park_Sender` arm to either ship or exclude. This is the structural
+asymmetry between bounded and unbounded channels carried into the
+coverage surface.
+
+---
+
 ### Adding a new exception
 
 1. Confirm the line is **genuinely** untestable in CI (not just

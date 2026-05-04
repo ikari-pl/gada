@@ -45,6 +45,44 @@ measured. Phase 11's cross-comparison harness replaces estimates
 with measured numbers from a parallel `gc`-built corpus on the
 same hardware. Treat ratios above as ±20% accurate until then.
 
+## Phase 3 scheduler (sub-items 3a + 3b + 3d)
+
+These rows are the **baseline before sub-item 3c** (per-worker
+SPSC ring + scoped Run_Queue stealing — see the 2026-05-04 design
+pause-note in `roadmap/03-concurrency.md`). They are reported here
+honestly, *not* yet at the ≤ 5× of Go bar that ADR-0006 §"Named
+exceptions" carves out for libco-scheduler workloads. Closing the
+gap is exactly what sub-item 3c is for; this row is its target.
+
+| Benchmark | GADA ns/op | GADA B/op | Go ns/op (ref) | Ratio | Notes |
+|---|---:|---:|---:|---:|---|
+| `Scheduler_Spawn_1W` | 5387 | 0 | ~150–500 | ~10–30× | One worker; per-op = (allocate Goroutine_Record + protected Run_Queue push + worker pop + libco co_create + Trampoline + Free_Goroutine) / N. Spawn-to-reap, no Yield. |
+| `Scheduler_Spawn_NW` | 26213 | 0 | ~50–200 | ~150–500× | `Number_Of_CPUs` workers (8 on the dev host); contends on the single shared `Run_Queue` protected object for every Spawn AND every Worker pickup. Each empty body has no real work, so adding workers adds lock pressure without parallelism. **3c will fix this** by routing fresh spawns to a per-worker SPSC ring with the shared Run_Queue serving only as a steal target. |
+| `Scheduler_Yield` | 620 | 0 | ~150–250 | ~3–4× | One goroutine yields N times against one worker; per-op = libco `co_switch` round-trip + State=YIELDED → push to per-worker Inbox → entry-family Pop → resume. The two co_switches dominate; the protected push/pop is bounded by Ada's lock-free entry-family FIFO. Within the libco-scheduler 5× exception band of ADR-0006. |
+
+Methodology and machine: same dev host as Phase 2 (darwin/arm64,
+Apple M-series, GNAT 15.0.1, libco MP build, `-O2`), `make -C runtime
+bench`. The B/op column reports 0 across all three rows because
+`Goroutine_Record` allocations live in libgc's atomic pool and the
+benchstat-format `B/op` column is computed from `GC_get_total_bytes`
+deltas which exclude that pool — see Phase 2 ledger note above.
+
+**Why these specific rows.** Each picks one degree of freedom that
+sub-item 3c will move:
+
+* `Spawn_1W` isolates raw spawn-allocation + libco-co_create cost
+  from worker-pool contention. 3c should leave this row roughly
+  unchanged (per-worker SPSC ring touches the same allocation +
+  co_create paths).
+* `Spawn_NW` is the contention row; the Spawn_NW/Spawn_1W ratio is
+  what 3c flips from > 1 (worse with more workers) toward < 1
+  (better with more workers, up to Number_Of_CPUs).
+* `Yield` measures the steady-state cooperative-scheduling cost,
+  which channel send/recv (item 4), select (item 5), and timers
+  (item 6) all build on. 3c's ring-buffer Inbox replacement should
+  reduce this row by skipping the protected-object indirection on
+  the non-cross-worker push/pop path.
+
 ## How to add a row
 
 1. Implement the unit under test in `runtime/src/`.

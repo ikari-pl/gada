@@ -97,13 +97,41 @@ library project Gada_Core is
       --     comparison without parens; upstream is C89-pedantic so
       --     we honour that style rather than patch the vendored
       --     source.
+      --  -DLIBCO_MP: load-bearing for multi-worker (Phase 3 sub-item
+      --     3b). Without it, libco's settings.h:14 expands
+      --     `thread_local` to nothing (the "single-threaded" branch),
+      --     so `co_active_handle` and `co_active_buffer` compile to
+      --     plain process-global variables shared across all OS
+      --     threads. Two workers concurrently calling co_switch then
+      --     trash each other's saved register state — the entire
+      --     "cothreads cannot migrate" invariant collapses, and the
+      --     downstream symptom is the missing-Exits-key CE in
+      --     Gada.Async.Context.Trampoline. Single-worker builds
+      --     happen to work because there's only one thread to share
+      --     the globals, but flipping Workers > 1 immediately races.
+      --     Documented at the libco README's "thread-local storage"
+      --     section: "Define LIBCO_MP at compile time to enable real
+      --     thread-local handles." The full investigation is in
+      --     docs/incidents/2026-05-03-scheduler-3b-multi-worker-race
+      --     (the second-pass diagnosis under "TLS replacement found
+      --     the C-side LIBCO_MP issue").
       --  Coverage switches do not propagate to C — gcov works on
       --     C too, but the gada_core coverage gate scopes only
       --     runtime/src/*.{adb,ads} (tools/coverage_thresholds.toml),
       --     so libco's lines do not enter the denominator. Keeping
       --     the C side opt'd-in to coverage instrumentation would
       --     just add noise.
-      C_Switches := ("-O2", "-g", "-Wall", "-Wno-parentheses");
+      --  -Dthread_local=__thread overrides settings.h's lookup logic.
+      --     Settings.h's C11 branch does `#include <threads.h>`, which
+      --     doesn't exist on macOS (Apple's libc never shipped the C11
+      --     threads header). The settings.h comment block at line 13
+      --     explicitly invites this override: "User can override
+      --     thread_local for obscure compilers". `__thread` is the
+      --     GCC/Clang extension, supported on every libco-contracted
+      --     v1 platform (amd64 + aarch64, Linux + macOS) per ADR-0007.
+      C_Switches := ("-O2", "-g", "-Wall", "-Wno-parentheses",
+                     "-DLIBCO_MP",
+                     "-Dthread_local=__thread");
       for Default_Switches ("C") use C_Switches;
    end Compiler;
 

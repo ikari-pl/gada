@@ -12,11 +12,13 @@ with Gada_Bench;
 with Memory_Bench;
 with Slices_Bench;
 with Maps_Bench;
+with Scheduler_Bench;
 
 procedure Bench_Runner is
 begin
    Memory_Bench.Register_All;
    Slices_Bench.Register_All;
    Maps_Bench.Register_All;
+   Scheduler_Bench.Register_All;
    Gada_Bench.Run_All;
 end Bench_Runner;

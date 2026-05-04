@@ -95,7 +95,7 @@ Added in PR #3 review feedback (gemini-code-assist comment #1).
 
 ### `runtime/src/gada-async-scheduler.adb`
 
-#### `Init` — per-worker `new Worker_Task` rollback  *(lines 437–443)*
+#### `Init` — per-worker `new Worker_Task` rollback  *(lines 512–518)*
 
 ```ada
 begin
@@ -104,13 +104,13 @@ begin
       The_Workers (I) := new Worker_Task (Idx => I);
    end loop;
 exception
-   when others =>                          --  line 437
-      Run_Queue.Worker_Stopped;            --  line 438
-      Run_Queue.Mark_Shutdown;             --  line 439
-      Run_Queue.Drain;                     --  line 440
-      The_Workers := null;                  --  line 441
-      Run_Queue.Set_Initialised (False);   --  line 442
-      raise;                                --  line 443
+   when others =>                          --  line 512
+      Run_Queue.Worker_Stopped;            --  line 513
+      Run_Queue.Mark_Shutdown;             --  line 514
+      Run_Queue.Drain;                     --  line 515
+      The_Workers := null;                  --  line 516
+      Run_Queue.Set_Initialised (False);   --  line 517
+      raise;                                --  line 518
 end;
 ```
 
@@ -128,23 +128,26 @@ worker that was never spawned.
 
 Triggering it requires Storage_Error or Tasking_Error from the Ada
 task allocation path, which the Alire FSF GNAT 15.1 runtime does not
-expose a portable hook for. The Phase 3 sub-item (c) work-stealing
-expansion will add a worker-pool fault-injection switch that
-re-covers this rollback.
+expose a portable hook for. A future fault-injection seam (slated
+alongside the lock-free queue work tracked in `runtime/PERF.md`) will
+re-cover this rollback; the seven-statement arm is straightforward
+enough for a code-review pass until then.
 
 Added in PR #3 review feedback (gemini-code-assist comment #2),
-lifted to the multi-worker rollback shape in sub-item 3b.
+lifted to the multi-worker rollback shape in sub-item 3b. Sub-item
+3c (the worker-local SPSC YIELDED list) shifted the line numbers
+but did not change the arm's structure.
 
-#### `Spawn` — `Make` failure leak guard  *(lines 465–467)*
+#### `Spawn` — `Make` failure leak guard  *(lines 540–542)*
 
 ```ada
 begin
    Gada.Async.Context.Make
      (G.Ctx, Goroutine_Trampoline'Access);
 exception
-   when others =>          --  line 465
-      Free_Goroutine (G);  --  line 466
-      raise;                --  line 467
+   when others =>          --  line 540
+      Free_Goroutine (G);  --  line 541
+      raise;                --  line 542
 end;
 ```
 

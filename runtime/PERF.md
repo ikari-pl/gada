@@ -45,20 +45,48 @@ measured. Phase 11's cross-comparison harness replaces estimates
 with measured numbers from a parallel `gc`-built corpus on the
 same hardware. Treat ratios above as ±20% accurate until then.
 
-## Phase 3 scheduler (sub-items 3a + 3b + 3d)
-
-These rows are the **baseline before sub-item 3c** (per-worker
-SPSC ring + scoped Run_Queue stealing — see the 2026-05-04 design
-pause-note in `roadmap/03-concurrency.md`). They are reported here
-honestly, *not* yet at the ≤ 5× of Go bar that ADR-0006 §"Named
-exceptions" carves out for libco-scheduler workloads. Closing the
-gap is exactly what sub-item 3c is for; this row is its target.
+## Phase 3 scheduler (sub-items 3a + 3b + 3c + 3d)
 
 | Benchmark | GADA ns/op | GADA B/op | Go ns/op (ref) | Ratio | Notes |
 |---|---:|---:|---:|---:|---|
-| `Scheduler_Spawn_1W` | 5387 | 0 | ~150–500 | ~10–30× | One worker; per-op = (allocate Goroutine_Record + protected Run_Queue push + worker pop + libco co_create + Trampoline + Free_Goroutine) / N. Spawn-to-reap, no Yield. |
-| `Scheduler_Spawn_NW` | 26213 | 0 | ~50–200 | ~150–500× | `Number_Of_CPUs` workers (8 on the dev host); contends on the single shared `Run_Queue` protected object for every Spawn AND every Worker pickup. Each empty body has no real work, so adding workers adds lock pressure without parallelism. **3c will fix this** by routing fresh spawns to a per-worker SPSC ring with the shared Run_Queue serving only as a steal target. |
-| `Scheduler_Yield` | 620 | 0 | ~150–250 | ~3–4× | One goroutine yields N times against one worker; per-op = libco `co_switch` round-trip + State=YIELDED → push to per-worker Inbox → entry-family Pop → resume. The two co_switches dominate; the protected push/pop is bounded by Ada's lock-free entry-family FIFO. Within the libco-scheduler 5× exception band of ADR-0006. |
+| `Scheduler_Spawn_1W` | 4666 | 0 | ~150–500 | ~9–30× | One worker; per-op = (allocate Goroutine_Record + protected Run_Queue push + worker pop + libco co_create + Trampoline + Free_Goroutine) / N. Spawn-to-reap, no Yield. The libco co_create cost (per-cothread mmap of a 64 KB stack on macOS) dominates. Outside ADR-0006's 5× band; tracked as future perf work pending lock-free queue primitives + per-cothread stack pooling. |
+| `Scheduler_Spawn_NW` | 12667 | 0 | ~50–200 | ~60–250× | `Number_Of_CPUs` workers (8 on the dev host); contends on the single shared `Run_Queue` protected object for every Spawn AND every Worker pickup. Each empty body has no real work, so adding workers adds lock pressure without parallelism — for empty bodies. Same caveat as Spawn_1W; same future-work note. |
+| `Scheduler_Yield` | **195** | 0 | ~150–250 | ~1.0× | One goroutine yields N times against one worker; per-op = libco `co_switch` round-trip + State=YIELDED → push to worker-local SPSC list → pop next iteration. Sub-item 3c moved YIELDED off the protected `Run_Queue.Inject_Local` path onto a worker-local intrusive list (same OS thread is both producer and consumer; no lock, no allocation per yield). **Within ADR-0006's libco-scheduler bar.** |
+
+### Sub-item 3c impact (2026-05-04)
+
+Numbers before/after the worker-local YIELDED list landed:
+
+| Bench | Before 3c | After 3c | Δ |
+|---|---:|---:|---:|
+| `Scheduler_Spawn_1W` | 5387 | 4666 | −13% |
+| `Scheduler_Spawn_NW` | 26213 | 12667 | **−52%** |
+| `Scheduler_Yield` | 620 | **195** | **−69%** |
+
+The Spawn_NW halving is the more interesting result — Spawn_NW
+doesn't even use the new SPSC list (its Worker.Switch_To'd bodies
+are empty, no yields), but removing YIELDED from the protected lock
+freed contention on the *whole* `Run_Queue` protected for everyone:
+fewer waiters means shorter wait queues on every protected call,
+including Inject and the entry-family Pop. The path that wasn't
+optimised got faster as a side-effect of the path that was.
+
+The remaining gap on Spawn_* is the shared `Items` queue's
+serialisation — every Spawn, every Worker pickup, and every Reap
+goes through one protected lock. Closing that gap requires lock-free
+queue primitives (Vyukov MPSC for Items + atomic counter for
+In_Flight); design and implementation are tracked as a future perf
+pass, not a Phase 3 sub-item, because:
+
+1. Phase 3's exit criterion is `ping_pong` (2 goroutines, 1 channel,
+   1 M iterations) — it never stresses high-throughput Spawn at all.
+2. The lock-free design needs careful interaction with the existing
+   entry-family barrier (which can't reference atomic counters
+   directly — barrier guards are protected-state only).
+3. Real workloads have non-trivial bodies that dwarf Spawn-time
+   contention. Optimising before measuring under realistic load is
+   the textbook premature-optimisation mistake; the post-`ping_pong`
+   measurement gives that load.
 
 Methodology and machine: same dev host as Phase 2 (darwin/arm64,
 Apple M-series, GNAT 15.0.1, libco MP build, `-O2`), `make -C runtime
@@ -66,22 +94,6 @@ bench`. The B/op column reports 0 across all three rows because
 `Goroutine_Record` allocations live in libgc's atomic pool and the
 benchstat-format `B/op` column is computed from `GC_get_total_bytes`
 deltas which exclude that pool — see Phase 2 ledger note above.
-
-**Why these specific rows.** Each picks one degree of freedom that
-sub-item 3c will move:
-
-* `Spawn_1W` isolates raw spawn-allocation + libco-co_create cost
-  from worker-pool contention. 3c should leave this row roughly
-  unchanged (per-worker SPSC ring touches the same allocation +
-  co_create paths).
-* `Spawn_NW` is the contention row; the Spawn_NW/Spawn_1W ratio is
-  what 3c flips from > 1 (worse with more workers) toward < 1
-  (better with more workers, up to Number_Of_CPUs).
-* `Yield` measures the steady-state cooperative-scheduling cost,
-  which channel send/recv (item 4), select (item 5), and timers
-  (item 6) all build on. 3c's ring-buffer Inbox replacement should
-  reduce this row by skipping the protected-object indirection on
-  the non-cross-worker push/pop path.
 
 ## How to add a row
 

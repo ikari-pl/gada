@@ -71,6 +71,14 @@ package Gada.Async.Scheduler is
    function Spawn (Body_Proc : Goroutine_Body) return Goroutine_Id
      with Pre => Body_Proc /= null;
 
+   --  Return a handle to the goroutine currently running on the
+   --  caller's OS thread. Returns No_Goroutine outside a goroutine
+   --  context (main task before Spawn, non-worker task post-Init,
+   --  etc.). Channels and any other rendezvous primitive needs this
+   --  so a goroutine that is about to Park can stash its own handle
+   --  in the wait slot the unparker will later drive Unpark on.
+   function Current return Goroutine_Id;
+
    --  Cooperative yield. When called from inside a goroutine,
    --  suspends the goroutine and returns control to its worker; the
    --  worker may pick up another goroutine and round-robin back.

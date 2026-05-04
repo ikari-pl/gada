@@ -361,7 +361,29 @@ package body Gada.Async.Scheduler is
       G : constant Goroutine_Access := Current_Goroutine;
    begin
       if G /= null and then G.Body_Proc /= null then
-         G.Body_Proc.all;
+         begin
+            G.Body_Proc.all;
+         exception
+            when others =>
+               --  User body raised. We MUST still set State := DONE
+               --  so the worker reaps cleanly — without this, the
+               --  worker reads RUNNING post-Switch_To and hits the
+               --  unexpected-state arm, which kills the worker
+               --  without Worker_Stopped and deadlocks Drain.
+               --
+               --  The exception details are not propagated up here
+               --  (Goroutine_Trampoline runs on the goroutine's
+               --  libco stack and is itself the C-convention entry
+               --  to libco; propagating across the C ABI is UB —
+               --  same constraint Gada.Async.Context.Trampoline
+               --  documents). Phase 3+ panic propagation will land a
+               --  per-goroutine panic-record that the spawner /
+               --  parent can inspect; for now, a goroutine whose
+               --  body raised is reaped silently. The
+               --  Gada.Async.Context.Trampoline outer arm logs the
+               --  exception to stderr, so the failure is visible.
+               null;
+         end;
          G.State := DONE;
       end if;
    end Goroutine_Trampoline;
@@ -446,14 +468,27 @@ package body Gada.Async.Scheduler is
                --  will Inject_Local (Idx, G) when ready. Worker just
                --  picks up the next item without re-enqueueing.
                null;
+            when READY =>
+               --  Race window: another task fired Unpark between G's
+               --  `State := PARKED` write inside Park and the actual
+               --  `Switch_To` that returned control here. Unpark
+               --  overwrote PARKED with READY and Inject_Local'd G
+               --  back onto our own Inbox already, so the next Pop
+               --  iteration will pick G up. Treating this as a no-op
+               --  is correct — re-enqueueing here would put G in our
+               --  Inbox twice and risk switching into a goroutine
+               --  whose libco context is mid-flight. Closes the race
+               --  the channel-receiver-matches-parked-sender path
+               --  exposes (item 4).
+               null;
             when DONE =>
                Gada.Async.Context.Free (G.Ctx);
                Free_Goroutine (G);
                Run_Queue.Reap;
             when others =>
-               --  RUNNING / READY here would mean libco returned
-               --  without any of our writes firing — impossible under
-               --  the cooperative protocol.
+               --  RUNNING here would mean libco returned without any
+               --  of our writes firing — impossible under the
+               --  cooperative protocol.
                raise Program_Error
                  with "Gada.Async.Scheduler: goroutine returned in"
                       & " unexpected state " & G.State'Image;
@@ -534,8 +569,20 @@ package body Gada.Async.Scheduler is
       G.Body_Proc := Body_Proc;
       G.State := READY;
       begin
+         --  256 KB: empirically large enough for nested protected
+         --  operations called from inside a goroutine body — Send
+         --  on a buffered channel involves Channel_State.Try_
+         --  Buffered_Send → Run_Queue.Inject_Local across two
+         --  protecteds, and GNAT's protected-cleanup-handler frames
+         --  add up. The 64 KB default from Gada.Async.Context.Make
+         --  was tight enough that channel-driven goroutines blew
+         --  Storage_Error on Apple-arm64. Phase 4's stack-pooling
+         --  follow-up may reduce per-cothread footprint via
+         --  growable stacks; 256 KB × N goroutines is the v1 bound.
          Gada.Async.Context.Make
-           (G.Ctx, Goroutine_Trampoline'Access);
+           (C           => G.Ctx,
+            Entry_Point => Goroutine_Trampoline'Access,
+            Stack_Size  => 256 * 1024);
       exception
          when others =>
             Free_Goroutine (G);
@@ -544,6 +591,18 @@ package body Gada.Async.Scheduler is
       Run_Queue.Inject (G);
       return (Ref => G);
    end Spawn;
+
+   function Current return Goroutine_Id is
+   begin
+      --  TLS lookup; Current_Goroutine is null on tasks that have
+      --  not been switched-into-via-libco (main task, the test
+      --  harness's own task, etc.). Returning No_Goroutine on those
+      --  paths matches Park / Yield's no-op contract for non-
+      --  goroutine context — generated code can call Current
+      --  unconditionally and feed the result to Unpark, which itself
+      --  no-ops on No_Goroutine.
+      return (Ref => Current_Goroutine);
+   end Current;
 
    procedure Yield is
       G : constant Goroutine_Access := Current_Goroutine;

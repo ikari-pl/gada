@@ -95,7 +95,7 @@ Added in PR #3 review feedback (gemini-code-assist comment #1).
 
 ### `runtime/src/gada-async-scheduler.adb`
 
-#### `Init` — per-worker `new Worker_Task` rollback  *(lines 512–518)*
+#### `Init` — per-worker `new Worker_Task` rollback  *(lines 547–553)*
 
 ```ada
 begin
@@ -104,13 +104,13 @@ begin
       The_Workers (I) := new Worker_Task (Idx => I);
    end loop;
 exception
-   when others =>                          --  line 512
-      Run_Queue.Worker_Stopped;            --  line 513
-      Run_Queue.Mark_Shutdown;             --  line 514
-      Run_Queue.Drain;                     --  line 515
-      The_Workers := null;                  --  line 516
-      Run_Queue.Set_Initialised (False);   --  line 517
-      raise;                                --  line 518
+   when others =>                          --  line 547
+      Run_Queue.Worker_Stopped;            --  line 548
+      Run_Queue.Mark_Shutdown;             --  line 549
+      Run_Queue.Drain;                     --  line 550
+      The_Workers := null;                  --  line 551
+      Run_Queue.Set_Initialised (False);   --  line 552
+      raise;                                --  line 553
 end;
 ```
 
@@ -134,20 +134,21 @@ re-cover this rollback; the seven-statement arm is straightforward
 enough for a code-review pass until then.
 
 Added in PR #3 review feedback (gemini-code-assist comment #2),
-lifted to the multi-worker rollback shape in sub-item 3b. Sub-item
-3c (the worker-local SPSC YIELDED list) shifted the line numbers
-but did not change the arm's structure.
+lifted to the multi-worker rollback shape in sub-item 3b. Sub-items
+3c (the worker-local SPSC YIELDED list) and 3e (Enter_Syscall /
+Exit_Syscall surface) shifted the line numbers but did not change
+the arm's structure.
 
-#### `Spawn` — `Make` failure leak guard  *(lines 540–542)*
+#### `Spawn` — `Make` failure leak guard  *(lines 587–589)*
 
 ```ada
 begin
    Gada.Async.Context.Make
-     (G.Ctx, Goroutine_Trampoline'Access);
+     (G.Ctx, Goroutine_Trampoline'Access, Stack_Size => 256 * 1024);
 exception
-   when others =>          --  line 540
-      Free_Goroutine (G);  --  line 541
-      raise;                --  line 542
+   when others =>          --  line 587
+      Free_Goroutine (G);  --  line 588
+      raise;                --  line 589
 end;
 ```
 

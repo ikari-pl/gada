@@ -37,6 +37,7 @@ package body Scheduler_Suite is
    procedure Park_Body;
    procedure Self_Test_Unpark_Of_Never_Run;
    procedure Syscall_Body;
+   procedure Body_That_Raises;
 
    procedure Increment_Once is
    begin
@@ -195,6 +196,24 @@ package body Scheduler_Suite is
       end;
    end Self_Test_Unpark_Of_Never_Run;
 
+   --  ## Body_That_Raises — covers the Goroutine_Trampoline `when others`
+   --
+   --  A user body that raises is the only way to exercise the
+   --  trampoline's exception arm: the trampoline catches and discards,
+   --  then sets State => DONE so the worker reaps the cothread cleanly
+   --  rather than hitting the unexpected-RUNNING-state Program_Error
+   --  arm. Without that catch, a raising goroutine deadlocks Drain.
+   --
+   --  The arm is silent on purpose — propagating across the libco /
+   --  C-convention boundary is undefined; Phase 4's panic-marshalling
+   --  layer will surface the failure to the parent. For now, observing
+   --  that Shutdown returns and the worker stays alive is the contract.
+   procedure Body_That_Raises is
+   begin
+      raise Constraint_Error
+        with "Goroutine body raise — exercises trampoline exception arm";
+   end Body_That_Raises;
+
    --  ## Syscall_Body — sub-item 3e
    --
    --  Mirrors Park_Body's shape but uses Enter_Syscall and a distinct
@@ -281,6 +300,11 @@ package body Scheduler_Suite is
          "While a goroutine is in Enter_Syscall on Workers => 2, the "
          & "scheduler still runs other goroutines to completion on "
          & "the free worker (sub-item 3e verify gate)");
+      Register_Routine
+        (T, Test_Goroutine_Body_That_Raises_Is_Reaped_Cleanly'Access,
+         "A goroutine whose body raises is reaped without taking the "
+         & "worker down — Shutdown returns and a follow-up goroutine "
+         & "still runs (covers Goroutine_Trampoline's exception arm)");
    end Register_Tests;
 
    procedure Test_Init_Shutdown_Empty
@@ -681,5 +705,42 @@ package body Scheduler_Suite is
               "Syscall_G did not complete its post-Exit_Syscall "
               & "marker; Sequence = '" & Park_Tracker.Sequence & "'");
    end Test_Syscall_Doesnt_Stall_Siblings;
+
+   procedure Test_Goroutine_Body_That_Raises_Is_Reaped_Cleanly
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Unused_G : Goroutine_Id;
+   begin
+      --  The contract under test: Goroutine_Trampoline catches Ada
+      --  exceptions raised from the user body so they don't propagate
+      --  across the libco C-convention boundary, AND it still sets
+      --  State => DONE so the worker reaps the cothread on the next
+      --  case-arm. Two observable consequences:
+      --
+      --    (1) Shutdown returns rather than hanging on Drain (which
+      --        would happen if the worker died at the unexpected-
+      --        RUNNING-state Program_Error arm without a balancing
+      --        Worker_Stopped).
+      --    (2) A follow-up goroutine on the same Init still runs to
+      --        completion — proves the worker is alive after the
+      --        raising body, not just "didn't deadlock once."
+      Counter := 0;
+      Shutdown;
+      Init (Workers => 1);
+      Unused_G := Spawn (Body_That_Raises'Access);
+
+      --  Wait for the raising body to actually fire and be reaped.
+      --  Without a follow-up Spawn we'd race Shutdown against the
+      --  trampoline's State := DONE write; with a counted follow-up
+      --  we wait deterministically on Counter rather than on time.
+      Unused_G := Spawn (Increment_Once'Access);
+      Shutdown;
+      Assert (Counter = 1,
+              "Follow-up goroutine did not run after a raising body; "
+              & "Counter =" & Counter'Image
+              & " (expected 1) — trampoline likely killed the worker "
+              & "rather than reaping the raised goroutine cleanly");
+   end Test_Goroutine_Body_That_Raises_Is_Reaped_Cleanly;
 
 end Scheduler_Suite;

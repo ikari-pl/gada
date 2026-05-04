@@ -495,6 +495,65 @@ package body Gada.Async.Channels.Bounded is
       end if;
    end Close;
 
+   procedure Try_Send
+     (C    : Channel;
+      V    : Element_Type;
+      Sent : out Boolean)
+   is
+      Stored     : Boolean;
+      Was_Closed : Boolean;
+   begin
+      if C.Ref = null then
+         raise Constraint_Error
+           with "Gada.Async.Channels.Bounded.Try_Send: No_Channel";
+      end if;
+      C.Ref.State.Try_Buffered_Send (V, Stored, Was_Closed);
+      if Was_Closed then
+         raise Channel_Closed
+           with "Gada.Async.Channels.Bounded.Try_Send: channel is closed";
+      end if;
+      Sent := Stored;
+   end Try_Send;
+
+   procedure Try_Receive
+     (C   : Channel;
+      V   : in out Element_Type;
+      OK  : out Boolean;
+      Got : out Boolean)
+   is
+      Have       : Boolean;
+      Was_Closed : Boolean;
+   begin
+      if C.Ref = null then
+         raise Constraint_Error
+           with "Gada.Async.Channels.Bounded.Try_Receive: No_Channel";
+      end if;
+      declare
+         V_Tmp : Element_Type := V;
+      begin
+         C.Ref.State.Try_Buffered_Receive (V_Tmp, Have, Was_Closed);
+         if Have then
+            V   := V_Tmp;
+            OK  := True;
+            Got := True;
+            return;
+         end if;
+      end;
+      if Was_Closed then
+         --  Buffer empty + closed: surface the comma-ok-False shape
+         --  to the select-side caller so it can dispatch the
+         --  closed-channel branch the same way the blocking
+         --  Receive does. V is left at the call-site value (see
+         --  Try_Receive spec note).
+         OK  := False;
+         Got := True;
+         return;
+      end if;
+      --  Empty + open: not ready for select.
+      OK  := False;
+      Got := False;
+   end Try_Receive;
+
    function Length (C : Channel) return Natural is
    begin
       if C.Ref = null then

@@ -263,6 +263,85 @@ coverage surface.
 
 ---
 
+### `runtime/src/gada-async-selector.adb`
+
+#### `Shuffle` — float-rounding clamp + loop terminator  *(lines 76, 81)*
+
+```ada
+J :=
+  A'First
+  + Natural (Float'Floor
+      (Random (Gen) * Float (I - A'First + 1)));
+if J > I then
+   J := I; -- defensive cap on float-rounding edges  --  line 76
+end if;
+...
+end loop;                                            --  line 81
+```
+
+`Ada.Numerics.Float_Random.Random` returns a value in `[0.0, 1.0)`,
+so `Float'Floor (Random * Float (N))` is always `< N` and the
+`J > I` clamp at line 76 is unreachable on every IEEE-conformant
+target. We keep the clamp because:
+
+  * Ada's RNG spec leaves the half-open boundary
+    implementation-defined; a future toolchain that accidentally
+    returns 1.0 (e.g. via a non-IEEE round-to-positive-infinity
+    cast) would land *exactly* on `J = I + 1`, producing an array
+    out-of-range read.
+  * The clamp is one statement, deterministic on review, and
+    cheaper than narrowing the type or asserting at runtime.
+
+Line 81 is the implicit basic block at the bottom of Shuffle's
+outer `for I in reverse ... loop`. Same pattern as `Gada.Async.
+Context.Trampoline`'s tail-loop terminator (`gada-async-context.adb:
+215`): gcov instruments the line as executable but control never
+reaches it under normal flow.
+
+#### `Try_One_Case` — Default/Timeout dead arm  *(lines 127–129)*
+
+```ada
+when Default_Op | Timeout_Op =>
+   Fired := False;                                   --  line 127
+end case;                                            --  line 128 (block end)
+end Try_One_Case;                                    --  line 129
+```
+
+`Try_One_Case` is invoked only from `Select_One`, which filters out
+`Default_Op` and `Timeout_Op` before the call:
+
+```ada
+if Cases (Idx).Kind not in Default_Op | Timeout_Op then
+   Try_One_Case (Cases (Idx), Fired);
+   ...
+end if;
+```
+
+The arm is therefore unreachable. We keep it for Ada
+exhaustiveness — the `Fired := False` write is defensive
+belt-and-braces in case a future refactor calls `Try_One_Case`
+directly. A future invariant-tightening pass (per the same
+fault-injection seam tracked alongside the channels race-window
+exclusions) may replace it with a `pragma Assert (Kind in
+Send_Op | Recv_Op)` and remove the arm.
+
+#### `Select_One` — declare-block terminator  *(line 256)*
+
+```ada
+loop
+   ...                  --  every exit branch is `return`
+end loop;
+end;                                                  --  line 256
+end Select_One;
+```
+
+The outer `loop ... end loop;` only exits via `return Default_
+Index;`, `return Timeout_Index;`, or `return Idx;`. Control never
+reaches the `end;` of the enclosing `declare` block. Same shape as
+`Gada.Async.Context.Trampoline`'s tail-loop end exclusion.
+
+---
+
 ### Adding a new exception
 
 1. Confirm the line is **genuinely** untestable in CI (not just

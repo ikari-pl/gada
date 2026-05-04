@@ -45,5 +45,7 @@ package Channels_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Close_While_Sender_Parked_Raises_Channel_Closed
      (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Try_Send_And_Try_Receive_Surface
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Channels_Suite;

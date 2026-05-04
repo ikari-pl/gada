@@ -109,6 +109,42 @@ package Gada.Async.Channels.Bounded is
    --  panic-on-double-close).
    procedure Close (C : Channel);
 
+   --  Non-blocking Send. Returns Sent => True if V was stored
+   --  (buffered or handed off to a parked receiver) and the channel
+   --  is open. Returns Sent => False if the buffer is full (no
+   --  parking — caller decides whether to retry, drop, or escalate).
+   --  On a closed channel, raises Channel_Closed (matches Send's
+   --  shape; Go's `select { case c <- v: ...; default: ... }` panics
+   --  if c is closed, which is the same observable behaviour).
+   --
+   --  Used by Gada.Async.Selector to test a Send case without
+   --  committing to the parking path; "fits the slot" cases under
+   --  select must succeed atomically and unsuccessful ones must
+   --  return immediately so siblings can be tried.
+   procedure Try_Send
+     (C    : Channel;
+      V    : Element_Type;
+      Sent : out Boolean);
+
+   --  Non-blocking Receive. Returns Got => True with V at the
+   --  drained head and OK => True if the buffer was non-empty.
+   --  Returns Got => True with V at default and OK => False if the
+   --  channel is closed-and-empty (Go's zero-value-with-ok-false on
+   --  closed-drained channels). Returns Got => False if the buffer
+   --  was empty and the channel still open (no parking — caller
+   --  decides whether to retry or move on).
+   --
+   --  V's shape is the same in-out caveat as the closed-empty arm
+   --  of Channels.Unbounded: Ada cannot synthesise a portable zero
+   --  for an opaque generic Element_Type, so on the Got=>True with
+   --  OK=>False arm V is left at the call-site value (caller is
+   --  responsible for zero-initialisation in that branch).
+   procedure Try_Receive
+     (C  : Channel;
+      V  : in out Element_Type;
+      OK : out Boolean;
+      Got : out Boolean);
+
    --  Diagnostics — not part of the Go-source-mapping surface but
    --  useful for tests and observability. Length is the buffered-
    --  count snapshot at the call instant; it can change before the

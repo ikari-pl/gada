@@ -39,6 +39,7 @@ with Context_Suite;
 with Scheduler_Suite;
 with Channels_Suite;
 with Channels_Unbounded_Suite;
+with Selector_Suite;
 
 procedure Test_Runner is
 
@@ -67,6 +68,7 @@ procedure Test_Runner is
       or else Pkg = "async.scheduler"
       or else Pkg = "async.channels.bounded"
       or else Pkg = "async.channels.unbounded"
+      or else Pkg = "async.select"
       or else Pkg = "stress.gc");
 
    --  Suites under the `stress.*` namespace are *opt-in*: an
@@ -123,6 +125,9 @@ procedure Test_Runner is
          Add_Test
            (Result,
             new Channels_Unbounded_Suite.Channels_Unbounded_Test);
+      end if;
+      if Should_Register ("async.select") then
+         Add_Test (Result, new Selector_Suite.Selector_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

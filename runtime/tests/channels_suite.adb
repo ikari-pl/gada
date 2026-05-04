@@ -174,6 +174,13 @@ package body Channels_Suite is
          & "with Closed_On_Wake => True; the parked Send raises "
          & "Channel_Closed (matches Go's panic-on-closed-channel for "
          & "a sender that was waiting at the moment of close)");
+      Register_Routine
+        (T, Test_Try_Send_And_Try_Receive_Surface'Access,
+         "Try_Send / Try_Receive non-blocking forms (used by the "
+         & "Selector polling loop) surface Sent / Got flags, raise "
+         & "Channel_Closed on send-after-close, and raise "
+         & "Constraint_Error on No_Channel — the same shape as the "
+         & "blocking Send/Receive minus the parking branch");
    end Register_Tests;
 
    ---------------------------------------------------------------
@@ -646,5 +653,71 @@ package body Channels_Suite is
 
       Gada.Async.Scheduler.Shutdown;
    end Test_Close_While_Sender_Parked_Raises_Channel_Closed;
+
+   procedure Test_Try_Send_And_Try_Receive_Surface
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      C       : constant Bound.Channel := Bound.Make (Capacity => 1);
+      Sent    : Boolean;
+      Got     : Boolean;
+      OK      : Boolean;
+      V       : Integer := 0;
+      Hits    : Natural := 0;
+   begin
+      --  Try_Send on a free buffer: Sent=True, value lands in buffer.
+      Bound.Try_Send (C, 1, Sent);
+      Assert (Sent, "Try_Send on free buffer must set Sent => True");
+      Assert (Bound.Length (C) = 1, "Buffer should hold 1 after Try_Send");
+
+      --  Try_Send on a full buffer: Sent=False (no parking).
+      Bound.Try_Send (C, 2, Sent);
+      Assert (not Sent,
+              "Try_Send on full buffer must set Sent => False (no park)");
+
+      --  Try_Receive on a non-empty buffer: Got=True, OK=True, V=1.
+      Bound.Try_Receive (C, V, OK, Got);
+      Assert (Got and then OK and then V = 1,
+              "Try_Receive on buffered chan expected (1, OK=True, "
+              & "Got=True); got V =" & V'Image
+              & ", OK =" & OK'Image
+              & ", Got =" & Got'Image);
+
+      --  Try_Receive on an empty open buffer: Got=False (no park).
+      Bound.Try_Receive (C, V, OK, Got);
+      Assert (not Got,
+              "Try_Receive on empty open chan must set Got => False");
+
+      --  Close + Try_Receive: Got=True, OK=False (closed-and-empty
+      --  signal — Go's zero-value-with-ok-false in the polling shape).
+      Bound.Close (C);
+      Bound.Try_Receive (C, V, OK, Got);
+      Assert (Got and then not OK,
+              "Try_Receive on closed-empty must set Got => True, "
+              & "OK => False; got Got =" & Got'Image
+              & ", OK =" & OK'Image);
+
+      --  Try_Send on the now-closed channel: raises Channel_Closed
+      --  (mirrors blocking Send's behaviour; Go's `select { case c
+      --  <- v: ...; default: ... }` with c closed panics).
+      begin
+         Bound.Try_Send (C, 99, Sent);
+      exception
+         when Bound.Channel_Closed =>
+            Hits := Hits + 1;
+      end;
+      Assert (Hits = 1, "Try_Send on closed channel must raise");
+
+      --  Try_Send / Try_Receive on No_Channel raise Constraint_Error.
+      begin
+         Bound.Try_Send (Bound.No_Channel, 0, Sent);
+      exception when Constraint_Error => Hits := Hits + 1; end;
+      begin
+         Bound.Try_Receive (Bound.No_Channel, V, OK, Got);
+      exception when Constraint_Error => Hits := Hits + 1; end;
+      Assert (Hits = 3,
+              "Try_Send/Try_Receive on No_Channel must raise "
+              & "Constraint_Error; Hits =" & Hits'Image);
+   end Test_Try_Send_And_Try_Receive_Surface;
 
 end Channels_Suite;

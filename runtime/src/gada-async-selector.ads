@@ -95,13 +95,18 @@ package Gada.Async.Selector is
    --  by generated code; a discriminant would force a type-cast on
    --  every assignment.
    --
-   --  Recv_V_Out / Recv_OK_Out are anonymous access types so the
-   --  caller can pass `'Access` of stack-aliased locals (Ada 2012's
-   --  accessibility-level rule for anonymous access in record
-   --  components is "anywhere"). A named `access all Element_Type`
-   --  would force callers onto heap allocations to satisfy the
-   --  library-level accessibility, which would defeat the
-   --  point of using a select-from-locals shape.
+   --  Recv_V_Out / Recv_OK_Out hold the named Element_Ptr / Boolean_
+   --  Ptr access types declared above. They have library-level
+   --  accessibility, which forces callers to pass heap-allocated
+   --  values (`new Element_Type'(initial)` / `new Boolean'(...)`)
+   --  rather than `'Access` of stack-aliased locals. A previous
+   --  draft used anonymous access types here — anonymous access
+   --  components in record types declared at library level *also*
+   --  have library-level accessibility per Ada 2012's accessibility
+   --  rules, so the change to named types preserves the same
+   --  caller-side ergonomics while giving the access types a name
+   --  the test suite and Phase 4 compiler-emit can refer to
+   --  explicitly. See lines 114-118 below for the caller pattern.
    type Case_Item is record
       Kind             : Op_Kind := Default_Op;
 

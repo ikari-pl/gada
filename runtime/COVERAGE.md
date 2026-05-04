@@ -301,10 +301,9 @@ reaches it under normal flow.
 #### `Try_One_Case` — Default/Timeout dead arm  *(lines 127–129)*
 
 ```ada
-when Default_Op | Timeout_Op =>
-   Fired := False;                                   --  line 127
-end case;                                            --  line 128 (block end)
-end Try_One_Case;                                    --  line 129
+when Default_Op | Timeout_Op =>                      --  line 127
+   Fired := False;                                   --  line 128
+end case;                                            --  line 129
 ```
 
 `Try_One_Case` is invoked only from `Select_One`, which filters out

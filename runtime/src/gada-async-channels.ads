@@ -5,8 +5,14 @@
 --  unbounded variants are separate generic children:
 --
 --    * Gada.Async.Channels.Bounded   — make(chan T, N), N > 0
---    * Gada.Async.Channels.Unbounded — make(chan T), synchronous
---                                       rendezvous (Phase 3 item 5)
+--    * Gada.Async.Channels.Unbounded — linked-list backed unbounded
+--                                       channel (send never blocks);
+--                                       Phase 3 item 5. Note: this is
+--                                       NOT Go's `make (chan T)` form
+--                                       (which is synchronous
+--                                       rendezvous, not unbounded);
+--                                       see Channels.Unbounded.ads
+--                                       for the divergence rationale.
 --
 --  Both children depend on Gada.Async.Scheduler for Park / Unpark;
 --  blocking Send / Receive route through the same primitives Phase 4

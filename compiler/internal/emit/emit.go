@@ -120,16 +120,18 @@ type emitter struct {
 	buf    strings.Builder
 	indent int
 
-	needsCoreIO    bool
-	needsCoreDefer bool // any DeferStmt seen → emit `with Gada.Core.Defer;`
-	needsCorePanic bool // any panic/recover BuiltinCall seen → emit `with Gada.Core.Panic;` and `package Panic_Of_Integer is new ...`
-	sliceElems     map[string]ir.Type
-	sliceElemOrder []string
-	mapPairs       map[string]*ir.MapType
-	mapPairOrder   []string
-	localTypes     map[string]ir.Type
-	rangeCounter   int
-	err            error
+	needsCoreIO         bool
+	needsCoreDefer      bool // any DeferStmt seen → emit `with Gada.Core.Defer;`
+	needsCorePanic      bool // any panic/recover BuiltinCall seen → emit `with Gada.Core.Panic;` and `package Panic_Of_Integer is new ...`
+	needsAsyncScheduler bool // any GoStmt seen → emit `with Gada.Async.Scheduler;` and the per-subprogram closure-and-Unused_G scaffolding
+	sliceElems          map[string]ir.Type
+	sliceElemOrder      []string
+	mapPairs            map[string]*ir.MapType
+	mapPairOrder        []string
+	localTypes          map[string]ir.Type
+	rangeCounter        int
+	goCounter           int // monotonic per-emit; same scheme as rangeCounter so multiple go-stmts in one subprogram get distinct closure names
+	err                 error
 }
 
 func newEmitter(pkg string, f *ir.File) *emitter {
@@ -267,6 +269,9 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 	case *ir.DeferStmt:
 		e.needsCoreDefer = true
 		e.walkStmt(s.Call)
+	case *ir.GoStmt:
+		e.needsAsyncScheduler = true
+		e.walkStmt(s.Call)
 	case nil:
 		// optional Init/Post on bare for {}.
 	}
@@ -329,8 +334,11 @@ func (e *emitter) run() error {
 	if e.needsCorePanic {
 		e.println("with Gada.Core.Panic;")
 	}
+	if e.needsAsyncScheduler {
+		e.println("with Gada.Async.Scheduler;")
+	}
 	if e.needsCoreIO || len(e.sliceElemOrder) > 0 || len(e.mapPairOrder) > 0 ||
-		e.needsCoreDefer || e.needsCorePanic {
+		e.needsCoreDefer || e.needsCorePanic || e.needsAsyncScheduler {
 		e.println("")
 	}
 	if e.pkgName == "main" {
@@ -584,10 +592,12 @@ func (e *emitter) emitMainProcedure() {
 	var mainDecls []*ir.Assign
 	var mainBody []ir.Stmt
 	var mainDefers []*ir.DeferStmt
+	var mainGos []*ir.GoStmt
 	var mainUsesPanic bool
 	if main != nil {
 		mainDecls, mainBody = splitDecls(main.Body)
 		mainDefers = collectDefers(main.Body)
+		mainGos = collectGoStmts(main.Body)
 		mainUsesPanic = bodyUsesPanicOrRecover(main.Body)
 	}
 	// Same layering rule as emitSubprogram: when a function combines
@@ -600,7 +610,7 @@ func (e *emitter) emitMainProcedure() {
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0
 	hasPanic := e.needsCorePanic
-	hasDeclSection := hasSlices || hasMaps || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper)
+	hasDeclSection := hasSlices || hasMaps || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0
 
 	e.println("procedure Main is")
 	if hasDeclSection {
@@ -644,6 +654,9 @@ func (e *emitter) emitMainProcedure() {
 	if len(mainDefers) > 0 && !mainDefersInsideWrapper {
 		e.emitDeferClosuresAndBlocks(mainDefers)
 	}
+	if len(mainGos) > 0 {
+		e.emitGoClosuresAndDecl(mainGos)
+	}
 	e.indent--
 
 	if hasDeclSection {
@@ -653,6 +666,15 @@ func (e *emitter) emitMainProcedure() {
 	e.println("begin")
 	e.indent++
 
+	// `package main` with at least one go-stmt owns the scheduler
+	// lifecycle: bring up the worker pool before user code, tear it
+	// down after. Shutdown joins every still-live goroutine, so a
+	// fire-and-forget `go worker()` finishes before Main returns even
+	// if user code did no explicit synchronization.
+	if len(mainGos) > 0 {
+		e.println("Gada.Async.Scheduler.Init;")
+	}
+
 	if mainDefersInsideWrapper {
 		e.println("declare")
 		e.indent++
@@ -661,6 +683,11 @@ func (e *emitter) emitMainProcedure() {
 		e.println("begin")
 		e.indent++
 	}
+
+	// Reset the per-function go-stmt counter so emitStmt's GoStmt
+	// case numbers Spawn calls in the same 1..N source order in
+	// which collectGoStmts populated `mainGos`.
+	e.goCounter = 0
 
 	emittedAny := false
 	if len(mainBody) > 0 {
@@ -678,6 +705,14 @@ func (e *emitter) emitMainProcedure() {
 	if mainDefersInsideWrapper {
 		e.indent--
 		e.println("end;")
+	}
+
+	// Tear the scheduler down on the normal exit path. An unrecovered
+	// panic that escapes the user's defers reaches the function-level
+	// handler below and the program terminates — Shutdown is skipped
+	// in that case, which is fine because the OS reaps the process.
+	if len(mainGos) > 0 {
+		e.println("Gada.Async.Scheduler.Shutdown;")
 	}
 
 	if mainUsesPanic {
@@ -844,6 +879,7 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 
 	decls, body := splitDecls(fn.Body)
 	defers := collectDefers(fn.Body)
+	gos := collectGoStmts(fn.Body)
 	usesPanic := bodyUsesPanicOrRecover(fn.Body)
 
 	// When the function uses both `defer` and `panic`/`recover`, the
@@ -855,6 +891,12 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	// handler sees `Is_Panicking = False` so it swallows.
 	defersInsideWrapper := len(defers) > 0 && usesPanic
 
+	// Reset the per-function go-stmt counter so emitStmt's GoStmt
+	// case numbers Spawn calls in the same 1..N source order in
+	// which collectGoStmts populated `gos`. Closures live in the
+	// declarative region; the counter walks alongside body emission.
+	e.goCounter = 0
+
 	// --- declarative region ---
 	e.indent++
 	for _, a := range decls {
@@ -862,6 +904,9 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	}
 	if len(defers) > 0 && !defersInsideWrapper {
 		e.emitDeferClosuresAndBlocks(defers)
+	}
+	if len(gos) > 0 {
+		e.emitGoClosuresAndDecl(gos)
 	}
 	e.indent--
 
@@ -965,6 +1010,34 @@ func collectDefers(body []ir.Stmt) []*ir.DeferStmt {
 		for _, s := range ss {
 			switch s := s.(type) {
 			case *ir.DeferStmt:
+				out = append(out, s)
+			case *ir.If:
+				walk(s.Then)
+				walk(s.Else)
+			case *ir.For:
+				walk(s.Body)
+			case *ir.RangeStmt:
+				walk(s.Body)
+			}
+		}
+	}
+	walk(body)
+	return out
+}
+
+// collectGoStmts returns every GoStmt under body in source order
+// (depth-first preorder, matching emitStmt's natural traversal). The
+// resulting list is used both to emit nested `Go_Closure_<N>` procs
+// in the enclosing function's declarative region and to resolve the
+// 1-based index that the inline `Spawn (Go_Closure_<N>'…)` call
+// emitted at the original source site refers to.
+func collectGoStmts(body []ir.Stmt) []*ir.GoStmt {
+	var out []*ir.GoStmt
+	var walk func([]ir.Stmt)
+	walk = func(ss []ir.Stmt) {
+		for _, s := range ss {
+			switch s := s.(type) {
+			case *ir.GoStmt:
 				out = append(out, s)
 			case *ir.If:
 				walk(s.Then)
@@ -1107,6 +1180,72 @@ func (e *emitter) emitDeferClosure(n int, d *ir.DeferStmt) {
 	}
 	e.indent--
 	e.println(fmt.Sprintf("end Defer_Closure_%d;", n))
+}
+
+// emitGoClosuresAndDecl writes the closure procedures for every
+// `go` statement in the enclosing function plus a single shared
+// `Unused_G : Gada.Async.Scheduler.Goroutine_Id;` slot the inline
+// Spawn assignments will target. Spawn returns a handle today; future
+// Park / Unpark wiring will need a real binding, but for unsynchronized
+// fire-and-forget the handle is consumed by Shutdown's reaper. Called
+// from the function's declarative region (or, in the defer + panic
+// layering case, the inner declare scope — same rule as defers).
+func (e *emitter) emitGoClosuresAndDecl(gos []*ir.GoStmt) {
+	for i, g := range gos {
+		e.emitGoClosure(i+1, g)
+	}
+	e.println("Unused_G : Gada.Async.Scheduler.Goroutine_Id;")
+}
+
+// emitGoClosure writes one nested parameterless procedure that the
+// matching inline `Spawn (Go_Closure_<n>'Unrestricted_Access)` call
+// will hand to the scheduler. n is the 1-based source-order index of
+// the go-statement within the enclosing function.
+//
+// Phase 3 only emits the no-arg form `go f()`. `go f(x, y)` requires
+// snapshot semantics — Go evaluates arguments at the spawn site, but
+// an Ada nested-procedure closure reads the enclosing scope at
+// goroutine execution time, so a mutation between Spawn and the
+// goroutine's first instruction would silently change what the
+// goroutine sees. Proper capture needs Scheduler.Spawn to grow a
+// per-spawn context payload (next roadmap sub-item); until then,
+// reject non-empty argument lists rather than ship subtly divergent
+// behaviour.
+func (e *emitter) emitGoClosure(n int, g *ir.GoStmt) {
+	if !e.checkGoArgsEmpty(g) {
+		return
+	}
+	e.println(fmt.Sprintf("procedure Go_Closure_%d is", n))
+	e.println("begin")
+	e.indent++
+	switch c := g.Call.(type) {
+	case *ir.Call:
+		e.emitCallStmt(c)
+	case *ir.BuiltinCall:
+		e.emitBuiltinStmt(c)
+	default:
+		e.fail(fmt.Errorf("emit: go holds unexpected stmt %T", g.Call))
+	}
+	e.indent--
+	e.println(fmt.Sprintf("end Go_Closure_%d;", n))
+}
+
+// checkGoArgsEmpty enforces the Phase 3 "no-arg only" subset for
+// `go f(...)` until Scheduler.Spawn grows a context payload. Returns
+// false (and sets e.err) when the call carries any positional args.
+func (e *emitter) checkGoArgsEmpty(g *ir.GoStmt) bool {
+	var nargs int
+	switch c := g.Call.(type) {
+	case *ir.Call:
+		nargs = len(c.Args)
+	case *ir.BuiltinCall:
+		nargs = len(c.Args)
+	}
+	if nargs > 0 {
+		e.fail(fmt.Errorf("emit: go-statement argument capture not yet supported; rewrite `go f(x, y)` as `go func() { f(x, y) }()` once closures land, or as a wrapper subprogram that takes no args (roadmap/03-concurrency.md)"))
+		return false
+	}
+	return true
 }
 
 // zeroLiteralOf returns the Ada literal for the zero value of t. Used
@@ -1269,6 +1408,17 @@ func (e *emitter) emitStmt(s ir.Stmt) {
 		// order). The body walk reaches here only if a DeferStmt is
 		// encountered outside the head of a function body — which
 		// emitSubprogram should have already collected. Skip silently.
+	case *ir.GoStmt:
+		// Closure was hoisted to the declarative region by
+		// emitSubprogram in source-order alongside `gos`; the inline
+		// Spawn assignment must remain at the original position
+		// because Go's `go f()` creates the goroutine *here*, not at
+		// scope entry. Numbering matches collectGoStmts' depth-first
+		// preorder, which mirrors emitStmt's natural traversal.
+		e.goCounter++
+		e.println(fmt.Sprintf(
+			"Unused_G := Gada.Async.Scheduler.Spawn (Go_Closure_%d'Unrestricted_Access);",
+			e.goCounter))
 	default:
 		e.fail(fmt.Errorf("emit: unsupported stmt %T", s))
 	}

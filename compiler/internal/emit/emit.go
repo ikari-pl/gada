@@ -130,7 +130,7 @@ type emitter struct {
 	mapPairOrder        []string
 	localTypes          map[string]ir.Type
 	rangeCounter        int
-	goCounter           int // monotonic per-emit; same scheme as rangeCounter so multiple go-stmts in one subprogram get distinct closure names
+	goIndex             map[*ir.GoStmt]int // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
 	err                 error
 }
 
@@ -140,6 +140,7 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		file:       f,
 		sliceElems: map[string]ir.Type{},
 		mapPairs:   map[string]*ir.MapType{},
+		goIndex:    map[*ir.GoStmt]int{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
@@ -271,6 +272,14 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 		e.walkStmt(s.Call)
 	case *ir.GoStmt:
 		e.needsAsyncScheduler = true
+		// File-wide monotonic numbering. The pre-walk visits every
+		// subprogram in `Decls` order and recurses into bodies depth-first,
+		// so `len(e.goIndex) + 1` produces a stable index per AST node.
+		// emitGoClosuresAndDecl and emitStmt's GoStmt arm both look up by
+		// pointer rather than by counting again — closure names stay tied
+		// to AST identity even if a future function-literal pass walks the
+		// tree in a different order.
+		e.goIndex[s] = len(e.goIndex) + 1
 		e.walkStmt(s.Call)
 	case nil:
 		// optional Init/Post on bare for {}.
@@ -666,12 +675,15 @@ func (e *emitter) emitMainProcedure() {
 	e.println("begin")
 	e.indent++
 
-	// `package main` with at least one go-stmt owns the scheduler
-	// lifecycle: bring up the worker pool before user code, tear it
-	// down after. Shutdown joins every still-live goroutine, so a
-	// fire-and-forget `go worker()` finishes before Main returns even
-	// if user code did no explicit synchronization.
-	if len(mainGos) > 0 {
+	// `package main` files that contain *any* go-stmt anywhere — in
+	// main itself, in a sibling subprogram, or hoisted into a closure
+	// — own the scheduler lifecycle: bring up the worker pool before
+	// any user code runs, tear it down after. Keying on the file-wide
+	// `e.needsAsyncScheduler` (rather than just main's body) avoids
+	// the trap where main has no `go` itself but calls a helper that
+	// does — without Init the helper's Spawn would crash with the
+	// "Init not called" precondition.
+	if e.needsAsyncScheduler {
 		e.println("Gada.Async.Scheduler.Init;")
 	}
 
@@ -683,11 +695,6 @@ func (e *emitter) emitMainProcedure() {
 		e.println("begin")
 		e.indent++
 	}
-
-	// Reset the per-function go-stmt counter so emitStmt's GoStmt
-	// case numbers Spawn calls in the same 1..N source order in
-	// which collectGoStmts populated `mainGos`.
-	e.goCounter = 0
 
 	emittedAny := false
 	if len(mainBody) > 0 {
@@ -707,11 +714,15 @@ func (e *emitter) emitMainProcedure() {
 		e.println("end;")
 	}
 
-	// Tear the scheduler down on the normal exit path. An unrecovered
-	// panic that escapes the user's defers reaches the function-level
-	// handler below and the program terminates — Shutdown is skipped
-	// in that case, which is fine because the OS reaps the process.
-	if len(mainGos) > 0 {
+	// Tear the scheduler down on the normal exit path. Init / Shutdown
+	// are a matched pair, both keyed on the file-wide
+	// `e.needsAsyncScheduler` so a `func main() { helper() }` whose
+	// helper internally `go`-spawns still gets the same wrap. An
+	// unrecovered panic that escapes the user's defers reaches the
+	// function-level handler below and the program terminates —
+	// Shutdown is skipped in that case, which is fine because the OS
+	// reaps the process.
+	if e.needsAsyncScheduler {
 		e.println("Gada.Async.Scheduler.Shutdown;")
 	}
 
@@ -890,12 +901,6 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	// enclosing handler matches; `recover()` pops the panic and the
 	// handler sees `Is_Panicking = False` so it swallows.
 	defersInsideWrapper := len(defers) > 0 && usesPanic
-
-	// Reset the per-function go-stmt counter so emitStmt's GoStmt
-	// case numbers Spawn calls in the same 1..N source order in
-	// which collectGoStmts populated `gos`. Closures live in the
-	// declarative region; the counter walks alongside body emission.
-	e.goCounter = 0
 
 	// --- declarative region ---
 	e.indent++
@@ -1190,9 +1195,13 @@ func (e *emitter) emitDeferClosure(n int, d *ir.DeferStmt) {
 // fire-and-forget the handle is consumed by Shutdown's reaper. Called
 // from the function's declarative region (or, in the defer + panic
 // layering case, the inner declare scope — same rule as defers).
+//
+// Closure names come from the file-wide goIndex pre-populated by the
+// walkStmt pre-pass, not from a local index — see goIndex's field
+// comment for why per-AST-node identity beats per-subprogram counters.
 func (e *emitter) emitGoClosuresAndDecl(gos []*ir.GoStmt) {
-	for i, g := range gos {
-		e.emitGoClosure(i+1, g)
+	for _, g := range gos {
+		e.emitGoClosure(e.goIndex[g], g)
 	}
 	e.println("Unused_G : Gada.Async.Scheduler.Goroutine_Id;")
 }
@@ -1410,15 +1419,15 @@ func (e *emitter) emitStmt(s ir.Stmt) {
 		// emitSubprogram should have already collected. Skip silently.
 	case *ir.GoStmt:
 		// Closure was hoisted to the declarative region by
-		// emitSubprogram in source-order alongside `gos`; the inline
-		// Spawn assignment must remain at the original position
-		// because Go's `go f()` creates the goroutine *here*, not at
-		// scope entry. Numbering matches collectGoStmts' depth-first
-		// preorder, which mirrors emitStmt's natural traversal.
-		e.goCounter++
+		// emitSubprogram; the inline Spawn assignment must remain at
+		// the original position because Go's `go f()` creates the
+		// goroutine *here*, not at scope entry. The closure name is
+		// looked up from the file-wide goIndex (populated by the
+		// walkStmt pre-pass) so AST-node identity drives the number,
+		// not the order in which emitStmt happens to visit the tree.
 		e.println(fmt.Sprintf(
 			"Unused_G := Gada.Async.Scheduler.Spawn (Go_Closure_%d'Unrestricted_Access);",
-			e.goCounter))
+			e.goIndex[s]))
 	default:
 		e.fail(fmt.Errorf("emit: unsupported stmt %T", s))
 	}

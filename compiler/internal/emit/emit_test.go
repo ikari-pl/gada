@@ -41,7 +41,7 @@ var corpusFixtures = []string{
 	// Phase 2 — main-side defer / panic (Item 9 emitMain wiring).
 	"main_defer", "main_panic", "main_defer_panic",
 	// Phase 3 — go-statement compiler emission.
-	"go_simple", "go_main",
+	"go_simple", "go_main", "go_main_via_helper",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs

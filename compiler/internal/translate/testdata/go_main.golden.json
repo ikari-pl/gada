@@ -1,0 +1,39 @@
+{
+  "kind": "Package",
+  "name": "main",
+  "files": [
+    {
+      "kind": "File",
+      "name": "go_main.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "worker",
+          "params": null,
+          "results": null,
+          "body": null
+        },
+        {
+          "kind": "Function",
+          "name": "main",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "GoStmt",
+              "call": {
+                "kind": "Call",
+                "fun": {
+                  "kind": "Ident",
+                  "name": "worker"
+                },
+                "args": null
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

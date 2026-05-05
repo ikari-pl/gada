@@ -50,6 +50,8 @@ func TestCorpus(t *testing.T) {
 		"defer_simple.go", "panic_simple.go", "recover_simple.go",
 		// Phase 2 — main-side defer/panic fixtures (Item 9 emitMain wiring).
 		"main_defer.go", "main_panic.go", "main_defer_panic.go",
+		// Phase 3 — go-statement fixtures (compiler-emit go-stmt item).
+		"go_simple.go", "go_main.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -146,9 +148,10 @@ func f() { x := 1; x += 1 }`, "assign token"},
 func f() { x := 1; x++ }`, "unsupported stmt"},
 		{"if init", `package p
 func f() { if x := 1; x > 0 {} }`, "if-with-init"},
-		{"go stmt", `package p
-func g() {}
-func f() { go g() }`, "unsupported stmt"},
+		{"go with bad call subexpr", `package p
+func f() { go g(1i) }`, "literal kind"},
+		{"go panic with bad subexpr", `package p
+func f() { go panic(1i) }`, "literal kind"},
 		{"defer with bad call subexpr", `package p
 func f() { defer g(1i) }`, "literal kind"},
 		{"defer panic with bad subexpr", `package p

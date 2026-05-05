@@ -227,6 +227,8 @@ func transStmt(s ast.Stmt) (ir.Stmt, error) {
 		return transRange(s)
 	case *ast.DeferStmt:
 		return transDefer(s)
+	case *ast.GoStmt:
+		return transGo(s)
 	case *ast.ReturnStmt:
 		return transReturn(s)
 	case *ast.ExprStmt:
@@ -288,6 +290,28 @@ func transDefer(s *ast.DeferStmt) (*ir.DeferStmt, error) {
 		return nil, err
 	}
 	return &ir.DeferStmt{Call: c}, nil
+}
+
+// transGo handles `go f(args)`. Mirrors transDefer — the Go AST's
+// `*ast.GoStmt` carries a single `*ast.CallExpr`, lowered through
+// the same builtin-vs-general split. `go panic(x)` and `go recover()`
+// are rejected by the Go compiler at semantic analysis (gc emits
+// `go discards result of recover()` / parser-level for panic),
+// but the parser still produces the AST shape; widening Call to
+// Stmt keeps the IR symmetrical with DeferStmt and lets the emit
+// layer surface the rejection on the right axis (the Phase 3
+// emit's GoStmt handler refuses BuiltinCall payloads).
+func transGo(s *ast.GoStmt) (*ir.GoStmt, error) {
+	if b, ok, err := tryBuiltinCall(s.Call); err != nil {
+		return nil, err
+	} else if ok {
+		return &ir.GoStmt{Call: b}, nil
+	}
+	c, err := transCall(s.Call)
+	if err != nil {
+		return nil, err
+	}
+	return &ir.GoStmt{Call: c}, nil
 }
 
 // identNameOrBlank extracts a bare identifier name from a Go AST

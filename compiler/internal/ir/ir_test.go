@@ -55,6 +55,7 @@ func TestNodeKind(t *testing.T) {
 		{"MapLit", &MapLit{}, "MapLit"},
 		{"RangeStmt", &RangeStmt{}, "RangeStmt"},
 		{"DeferStmt", &DeferStmt{}, "DeferStmt"},
+		{"GoStmt", &GoStmt{}, "GoStmt"},
 	}
 
 	for _, tc := range cases {
@@ -86,6 +87,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Stmt = &BuiltinCall{} // panic(x) at statement position
 	var _ Stmt = &RangeStmt{}
 	var _ Stmt = &DeferStmt{}
+	var _ Stmt = &GoStmt{}
 
 	var _ Expr = &Ident{}
 	var _ Expr = &Lit{}
@@ -384,6 +386,44 @@ func TestDeferStmtMissingCall(t *testing.T) {
 	}
 }
 
+// TestGoStmtMissingCall mirrors the DeferStmt guard for GoStmt — a
+// `go` with no callee is rejected at unmarshal time so the emit
+// layer never sees a nil Call.
+func TestGoStmtMissingCall(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"kind":"GoStmt"}`,
+		`{"kind":"GoStmt","call":null}`,
+	}
+	for _, in := range cases {
+		if _, err := unmarshalStmt(json.RawMessage(in)); err == nil {
+			t.Fatalf("expected error for %s, got nil", in)
+		}
+	}
+}
+
+// TestRoundTripGoCorpus exercises GoStmt holding a Call in a single
+// structure. Mirrors TestRoundTripDeferCorpus.
+func TestRoundTripGoCorpus(t *testing.T) {
+	t.Parallel()
+
+	pkg := &Package{
+		Name: "p",
+		Files: []*File{{
+			Name: "p.go",
+			Decls: []Decl{
+				&Function{
+					Name: "spawner",
+					Body: []Stmt{
+						&GoStmt{Call: &Call{Fun: &Ident{Name: "worker"}}},
+					},
+				},
+			},
+		}},
+	}
+	roundTrip(t, pkg)
+}
+
 // TestRoundTripDeferCorpus exercises the new defer/panic/recover IR
 // shapes (DeferStmt holding a Call, BuiltinCall("panic"), BuiltinCall(
 // "recover") at expression position) in a single structure. The slice
@@ -479,6 +519,7 @@ func TestSentinels(t *testing.T) {
 	(&MapLit{}).irExpr()
 	(&RangeStmt{}).irStmt()
 	(&DeferStmt{}).irStmt()
+	(&GoStmt{}).irStmt()
 
 	(&IntType{}).irType()
 	(&StringType{}).irType()
@@ -566,6 +607,7 @@ func TestPropagatedDecodeErrors(t *testing.T) {
 		{"MapLit", `{"kind":"MapLit","entries":"not-array"}`, exprErr},
 		{"RangeStmt", `{"kind":"RangeStmt","body":"not-array"}`, stmtErr},
 		{"DeferStmt", `{"kind":"DeferStmt","call":42}`, stmtErr},
+		{"GoStmt", `{"kind":"GoStmt","call":42}`, stmtErr},
 	}
 
 	for _, tc := range cases {
@@ -633,6 +675,7 @@ func TestPropagatedChildErrors(t *testing.T) {
 		{"RangeStmt.X bad child", `{"kind":"RangeStmt","x":` + bad + `}`, stmtErr},
 		{"RangeStmt.Body bad child", `{"kind":"RangeStmt","body":[` + bad + `]}`, stmtErr},
 		{"DeferStmt.Call bad child", `{"kind":"DeferStmt","call":` + bad + `}`, stmtErr},
+		{"GoStmt.Call bad child", `{"kind":"GoStmt","call":` + bad + `}`, stmtErr},
 	}
 
 	for _, tc := range cases {

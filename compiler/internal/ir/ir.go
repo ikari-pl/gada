@@ -304,6 +304,31 @@ type DeferStmt struct {
 func (*DeferStmt) irStmt()          {}
 func (*DeferStmt) NodeKind() string { return "DeferStmt" }
 
+// GoStmt is Go `go f(args)`. Same Call-as-Stmt shape as DeferStmt
+// because Go's grammar accepts any call expression after either
+// keyword; the divergence is purely emit-side. Phase 3 lowers each
+// go-statement to a synthesised parameterless closure passed to
+// `Gada.Async.Scheduler.Spawn`. Argument evaluation in Go's spec
+// is *eager* — `go f(g())` calls g() in the spawning goroutine,
+// then schedules a goroutine that calls f with the captured
+// result — but the v1 emit binds a closure over local-named
+// arguments, which delivers identical semantics for the closed
+// Phase-3 corpus (no nested-call args; the eager-eval lowering
+// arrives with Phase 4's compiler-emit work alongside multi-
+// return-value handling).
+//
+// Call is typed as Stmt so it can hold either `*ir.Call` (the
+// Phase-3 expected shape) or `*ir.BuiltinCall` (for the
+// hypothetical `go panic(x)` and `go recover()` shapes — Go
+// rejects both at compile-time, but the IR widens cleanly to
+// match DeferStmt's typing without a parallel hierarchy).
+type GoStmt struct {
+	Call Stmt
+}
+
+func (*GoStmt) irStmt()          {}
+func (*GoStmt) NodeKind() string { return "GoStmt" }
+
 // BuiltinCall is a call to a Go predeclared function. Distinguished
 // from Call (which carries an arbitrary Fun expression) so the
 // emitter can dispatch by name without re-deriving builtin-ness.
@@ -465,6 +490,12 @@ func unmarshalStmt(raw json.RawMessage) (Stmt, error) {
 		return &n, nil
 	case "DeferStmt":
 		var n DeferStmt
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "GoStmt":
+		var n GoStmt
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1382,6 +1413,31 @@ func (s *DeferStmt) UnmarshalJSON(b []byte) error {
 	}
 	if len(aux.Call) == 0 || string(aux.Call) == "null" {
 		return fmt.Errorf("ir: DeferStmt missing call")
+	}
+	c, err := unmarshalStmt(aux.Call)
+	if err != nil {
+		return err
+	}
+	s.Call = c
+	return nil
+}
+
+func (s *GoStmt) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Call Stmt   `json:"call"`
+	}{"GoStmt", s.Call})
+}
+
+func (s *GoStmt) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Call json.RawMessage `json:"call"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Call) == 0 || string(aux.Call) == "null" {
+		return fmt.Errorf("ir: GoStmt missing call")
 	}
 	c, err := unmarshalStmt(aux.Call)
 	if err != nil {

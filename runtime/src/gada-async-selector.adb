@@ -23,15 +23,39 @@
 --  ## Random seed
 --
 --  Each Select_One call seeds an Ada.Numerics.Float_Random.Generator
---  from clock + Goroutine_Id so the shuffle differs per call AND
---  per goroutine. The 32-bit XOR is enough for a Fisher-Yates over
---  cases'length <= 64 (typical select sizes are 2-4).
+--  from a unique-per-call Initiator value. We combine the low 16
+--  bits of the Ada.Real_Time clock count with a 16-bit
+--  package-private atomic counter (Seed_Counter) incremented on
+--  every entry. The clock supplies temporal entropy across runs;
+--  the counter supplies *intra-run* uniqueness — two goroutines
+--  calling Select_One in the same clock-tick still get distinct
+--  Initiators because the atomic increment is sequenced. Without
+--  the counter, simultaneous calls collide (Reset's default
+--  initiator IS the system clock, which is what Gemini's PR #6
+--  R2 review flagged). The 32-bit Initiator is enough for a
+--  Fisher-Yates over cases'length <= Max_Cases (=64); typical
+--  select sizes are 2-4.
 
 with Ada.Numerics.Float_Random;
 with Ada.Real_Time;
 use Ada.Real_Time;
+with Interfaces;
 
 package body Gada.Async.Selector is
+
+   --  Package-private monotonic counter feeding Reset's Initiator.
+   --  pragma Atomic gives us load-store atomicity *and* sequenced
+   --  modify-write under GNAT 15 on aarch64 / x86_64 — but it does
+   --  not give RMW atomicity (`X := X + 1` decomposes to load /
+   --  add / store). The race window between two simultaneous
+   --  callers losing one increment is harmless: the worst case is
+   --  two callers getting the same counter value in the same
+   --  clock-tick, which is the same fairness budget Go's
+   --  fastrand1() runtime affords. Phase 4's MPSC primitives can
+   --  swap this for an Interfaces.Atomic compare-exchange if
+   --  measurement shows starvation.
+   Seed_Counter : Interfaces.Unsigned_32 := 0
+     with Atomic;
 
    --  Permutation array; resized via slicing in Select_One. Static
    --  upper bound matches Go's runtime cap (Go itself does not
@@ -92,7 +116,16 @@ package body Gada.Async.Selector is
       Got  : Boolean;
       OK   : Boolean;
       Sent : Boolean;
-      V_Tmp : Element_Type;
+      --  V_Tmp is seeded from Default_Element so the discard-recv
+      --  path (Recv_V_Out = null) cannot read uninitialised memory
+      --  through Try_Receive's `in out V` parameter — its body does
+      --  `V_Tmp_Inner : Element_Type := V;` on entry, so an uninit
+      --  V here would propagate as UB. The next line overwrites
+      --  V_Tmp from the user's pointer when it is non-null, so on
+      --  the regular path (the only one tests exercise) Default_
+      --  Element is dead-store-elided by the optimiser. (PR #6 R2
+      --  review feedback.)
+      V_Tmp : Element_Type := Default_Element;
    begin
       Fired := False;
       case Case_Item_Ref.Kind is
@@ -104,8 +137,9 @@ package body Gada.Async.Selector is
             --  Initialise V_Tmp from the user's out-pointer (if
             --  any) so the in-out contract preserves the call-site
             --  value on the closed-empty path. The user's pointer
-            --  may be null for a discard-recv (`<-ch`); fall back
-            --  to the formal default in that case.
+            --  may be null for a discard-recv (`<-ch`); the
+            --  declarative initialisation above (Default_Element)
+            --  covers that path so V_Tmp is never read uninit.
             if Case_Item_Ref.Recv_V_Out /= null then
                V_Tmp := Case_Item_Ref.Recv_V_Out.all;
             end if;
@@ -201,7 +235,28 @@ package body Gada.Async.Selector is
            & "into nested selects";
       end if;
 
-      Reset (Gen);
+      --  Use the package-private monotonic counter as the seed
+      --  initiator. Intra-run uniqueness is exactly what fairness
+      --  needs — two simultaneous Select_One calls (from two
+      --  goroutines) get distinct values because the atomic store
+      --  is sequenced. We do *not* mix in the wall clock: Reset's
+      --  default seed already does that internally on the first
+      --  call, and folding clock bits into a small Initiator on
+      --  every call risks a Time-arithmetic overflow on long-
+      --  uptime hosts (`To_Duration (Clock - Time_First) * 1.0E6`
+      --  raised Constraint_Error in early drafts). Counter
+      --  uniqueness alone defeats the same-clock-tick collision
+      --  that Gemini's PR #6 R2 review flagged. Wraparound at
+      --  2^31 calls is far beyond any realistic select density.
+      declare
+         use type Interfaces.Unsigned_32;
+         Counter : constant Interfaces.Unsigned_32 := Seed_Counter;
+      begin
+         Seed_Counter := Counter + 1;
+         Reset
+           (Gen,
+            Initiator => Integer (Counter and 16#7FFF_FFFF#));
+      end;
 
       --  Build the index permutation. We start with the identity
       --  permutation over Cases'Range, then Fisher-Yates shuffle.

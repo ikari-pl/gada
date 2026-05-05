@@ -16,8 +16,9 @@ package body Selector_Suite is
      (Element_Type => Integer);
 
    package Sel is new Gada.Async.Selector
-     (Element_Type => Integer,
-      Bnd          => Bound);
+     (Element_Type    => Integer,
+      Default_Element => 0,
+      Bnd             => Bound);
 
    --  Globals reused by goroutine bodies (no closure mechanism on
    --  Goroutine_Body access procedures).

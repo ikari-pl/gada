@@ -38,7 +38,13 @@
 --  Gada.Async.Context — the scheduler is the one place co_switch
 --  appears at the runtime level, per ADR-0002 §"layered".
 
-with Gada.Async.Scheduler;
+--  Note: Gada.Async.Scheduler is `with`'d only from the body — the
+--  spec exposes no Scheduler-typed entities, so a spec-side `with`
+--  trips GNAT 15's `unit not referenced in spec` warning under the
+--  -gnatwu policy this crate enables. The body's reliance on
+--  Scheduler.Park / Unpark / Current is what makes the layering
+--  real (per ADR-0002 §"layered"); the comment above is the
+--  spec-side breadcrumb.
 
 generic
    type Element_Type is private;
@@ -83,10 +89,19 @@ package Gada.Async.Channels.Bounded is
    procedure Send (C : Channel; V : Element_Type);
 
    --  Receive from C. Returns (head_of_buffer, OK => True) on success;
-   --  blocks (parks) on empty-open; returns (default Element_Type,
+   --  blocks (parks) on empty-open; returns (V unspecified,
    --  OK => False) on empty-closed. The OK out parameter mirrors Go's
    --  `v, ok := <-c` comma-ok form so callers can distinguish a real
    --  zero-value send from a closed-channel signal.
+   --
+   --  Note on V's value when OK is False: Ada cannot synthesise a
+   --  portable "zero" for an arbitrary private generic Element_Type,
+   --  so on the closed-empty arm V is *not* written. Phase 4's
+   --  compiler-emit lowers Go's `v, ok := <-c` to a fresh declaration
+   --  of v (which Go zeroes by spec); current callers in tests
+   --  initialise V at the call site or treat it as undefined when
+   --  OK = False, matching the Gada.Async.Channels.Unbounded.Receive
+   --  contract.
    --
    --  As with Send, the blocking path is only meaningful inside a
    --  goroutine. A non-goroutine Receive on an empty open channel

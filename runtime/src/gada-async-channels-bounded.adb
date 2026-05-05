@@ -57,8 +57,16 @@
 
 with Ada.Containers.Doubly_Linked_Lists;
 with Ada.Unchecked_Deallocation;
+with Gada.Async.Scheduler;
 
 package body Gada.Async.Channels.Bounded is
+
+   --  Bring the "=" operator on Scheduler.Goroutine_Id into scope so
+   --  the non-goroutine-context guards in Send / Receive can write
+   --  `Scheduler.Current = Scheduler.No_Goroutine` without dotted-
+   --  prefix-call ceremony. Goroutine_Id is a private record, so the
+   --  default "=" needs `use type`.
+   use type Scheduler.Goroutine_Id;
 
    type Wait_Slot is record
       G              : Scheduler.Goroutine_Id := Scheduler.No_Goroutine;
@@ -404,6 +412,24 @@ package body Gada.Async.Channels.Bounded is
       end if;
 
       --  Buffer was full, no parked receiver — park.
+      --
+      --  Park is meaningful only inside a goroutine: Scheduler.Park
+      --  suspends the *current* goroutine, but Scheduler.Current
+      --  returns No_Goroutine when called from a top-level Ada task
+      --  or main thread context. Allocating Slot, calling Park_Sender
+      --  (which would store the slot on the channel's parked-senders
+      --  queue), and then returning to the caller without an actual
+      --  Park leaves Slot orphaned: a future Receive or Close walks
+      --  the parked-senders list and writes through the dangling
+      --  pointer. Raise here, before allocation, so the contract
+      --  violation surfaces at the call site rather than as a
+      --  delayed memory corruption.
+      if Scheduler.Current = Scheduler.No_Goroutine then
+         raise Program_Error with
+           "Gada.Async.Channels.Bounded.Send: cannot park outside a "
+           & "goroutine context (call from a Scheduler.Spawn body, "
+           & "not from a top-level task or main)";
+      end if;
       Slot := new Wait_Slot'(G              => Scheduler.Current,
                              Value          => V,
                              OK             => True,
@@ -452,13 +478,29 @@ package body Gada.Async.Channels.Bounded is
       end if;
       if Was_Closed then
          --  Buffer empty + channel closed — Go's zero-value-with-ok
-         --  -false. Element_Type's default is the instantiation's
-         --  zero; out parameter V is left at its initialised default.
+         --  -false. V is left untouched: Ada cannot synthesise a
+         --  portable "zero" for an arbitrary private formal
+         --  Element_Type. The spec documents this; the Phase 4
+         --  compiler-emit lowers Go's `v, ok := <-c` to a fresh v
+         --  declaration which Go zero-initialises by spec, so the
+         --  end-user-visible behaviour matches Go even though the
+         --  runtime's V parameter is technically untouched here.
          OK := False;
          return;
       end if;
 
       --  Buffer empty, channel open — park.
+      --  Same non-goroutine-context guard as Send: see the note
+      --  above the matching guard in Send for the full rationale.
+      --  Without this, Park_Receiver enqueues a Slot whose owner
+      --  cannot be resumed, and a later Send / Close writes through
+      --  the dangling pointer.
+      if Scheduler.Current = Scheduler.No_Goroutine then
+         raise Program_Error with
+           "Gada.Async.Channels.Bounded.Receive: cannot park outside "
+           & "a goroutine context (call from a Scheduler.Spawn body, "
+           & "not from a top-level task or main)";
+      end if;
       Slot := new Wait_Slot;
       Slot.G := Scheduler.Current;
       C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);

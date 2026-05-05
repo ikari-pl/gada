@@ -58,6 +58,12 @@ with Ada.Unchecked_Deallocation;
 
 package body Gada.Async.Channels.Unbounded is
 
+   --  Bring "=" on Scheduler.Goroutine_Id into scope for the non-
+   --  goroutine-context guard in Receive. Goroutine_Id is a private
+   --  record so the default "=" needs `use type`. Mirror of the
+   --  same use clause in Channels.Bounded.
+   use type Scheduler.Goroutine_Id;
+
    --  ## Wait_Slot — receiver-only rendezvous record.
 
    type Wait_Slot is record
@@ -380,6 +386,22 @@ package body Gada.Async.Channels.Unbounded is
       end if;
 
       --  Buffer empty, channel open — park.
+      --
+      --  Park is meaningful only inside a goroutine. Outside one,
+      --  Scheduler.Current is No_Goroutine: allocating Slot, calling
+      --  Park_Receiver (which enqueues the slot on the parked-
+      --  receivers list), and then returning without an actual Park
+      --  leaves Slot orphaned for a later Send or Close to write
+      --  through. Raise before allocation so the contract violation
+      --  surfaces at the call site rather than as delayed memory
+      --  corruption. Mirror of the same guard in Channels.Bounded.
+      if Scheduler.Current = Scheduler.No_Goroutine then
+         raise Program_Error with
+           "Gada.Async.Channels.Unbounded.Receive: cannot park "
+           & "outside a goroutine context (call from a "
+           & "Scheduler.Spawn body, not from a top-level task or "
+           & "main)";
+      end if;
       Slot := new Wait_Slot;
       Slot.G := Scheduler.Current;
       C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);

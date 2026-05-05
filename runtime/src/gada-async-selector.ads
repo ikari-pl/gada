@@ -70,6 +70,15 @@ with Gada.Async.Channels.Bounded;
 
 generic
    type Element_Type is private;
+   --  Sentinel used when the user supplies a discard-recv case
+   --  (Recv_V_Out = null). The select runtime needs *some* well-
+   --  defined Element_Type value to seed the in-out V parameter of
+   --  Try_Receive — Ada has no way to synthesise a "zero" for an
+   --  arbitrary private formal, and reading uninitialised stack on
+   --  the path would be UB. Instantiations pass the natural zero
+   --  for their Element_Type (0 for Integer, False for Boolean, "" /
+   --  Null_Unbounded_String for strings, etc.).
+   Default_Element : Element_Type;
    with package Bnd is new Gada.Async.Channels.Bounded (Element_Type);
 package Gada.Async.Selector is
 

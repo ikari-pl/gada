@@ -43,6 +43,8 @@ with Interfaces;
 
 package body Gada.Async.Selector is
 
+   use type Interfaces.Unsigned_32;
+
    --  Package-private monotonic counter feeding Reset's Initiator.
    --  pragma Atomic gives us load-store atomicity *and* sequenced
    --  modify-write under GNAT 15 on aarch64 / x86_64 — but it does
@@ -235,28 +237,19 @@ package body Gada.Async.Selector is
            & "into nested selects";
       end if;
 
-      --  Use the package-private monotonic counter as the seed
-      --  initiator. Intra-run uniqueness is exactly what fairness
-      --  needs — two simultaneous Select_One calls (from two
-      --  goroutines) get distinct values because the atomic store
-      --  is sequenced. We do *not* mix in the wall clock: Reset's
-      --  default seed already does that internally on the first
-      --  call, and folding clock bits into a small Initiator on
-      --  every call risks a Time-arithmetic overflow on long-
-      --  uptime hosts (`To_Duration (Clock - Time_First) * 1.0E6`
-      --  raised Constraint_Error in early drafts). Counter
+      --  Seed the generator from the package-private monotonic
+      --  counter. Intra-run uniqueness is exactly what fairness
+      --  needs — two simultaneous Select_One calls get distinct
+      --  Initiators because the atomic store is sequenced. We do
+      --  *not* mix in the wall clock: an earlier draft folded
+      --  `To_Duration (Clock - Time_First) * 1.0E6` into the
+      --  Initiator, but that overflowed Time_Span on long-uptime
+      --  hosts (Constraint_Error in a-reatim.adb:97). Counter
       --  uniqueness alone defeats the same-clock-tick collision
       --  that Gemini's PR #6 R2 review flagged. Wraparound at
       --  2^31 calls is far beyond any realistic select density.
-      declare
-         use type Interfaces.Unsigned_32;
-         Counter : constant Interfaces.Unsigned_32 := Seed_Counter;
-      begin
-         Seed_Counter := Counter + 1;
-         Reset
-           (Gen,
-            Initiator => Integer (Counter and 16#7FFF_FFFF#));
-      end;
+      Seed_Counter := Seed_Counter + 1;
+      Reset (Gen, Initiator => Integer (Seed_Counter and 16#7FFF_FFFF#));
 
       --  Build the index permutation. We start with the identity
       --  permutation over Cases'Range, then Fisher-Yates shuffle.

@@ -128,7 +128,7 @@ reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-bounded.adb"
-lines = [413, 414]
+lines = [436, 437]
 reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
 
 # Park_Receiver's race-recheck arms (Got=True / Closed=True). Mirror of
@@ -141,7 +141,7 @@ reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-bounded.adb"
-lines = [466, 467, 468, 471, 472, 473]
+lines = [502, 503, 504, 507, 508, 509]
 reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
 
 # Channels.Unbounded mirror of the Channels.Bounded Park_Receiver
@@ -153,32 +153,35 @@ reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE
 # Rationale: runtime/COVERAGE.md (gada-async-channels-unbounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-unbounded.adb"
-lines = [387, 388, 389, 392, 393, 394]
+lines = [405, 406, 407, 410, 411, 412]
 reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
 
-# Selector defensive / unreachable lines:
-#   76 — Shuffle's "J := I" float-rounding cap. Random (Gen) is
-#        clamped to [0, 1) so Float'Floor (Random * Float (N)) is
-#        always < N — but Ada.Numerics.Float_Random's spec leaves
-#        the half-open boundary implementation-defined, and a
-#        future float-rounding regression on a non-IEEE target
-#        could land exactly at 1.0. The clamp is one statement,
-#        deterministic, and self-evidently correct on review.
-#   81 — `end loop;` of Shuffle's outer for-loop. Implicit basic
-#        block at the iteration end; gcov instruments it as
-#        executable but it's the loop's own terminator.
-#   127, 128, 129 — Try_One_Case's `when Default_Op | Timeout_Op =>
-#        Fired := False; end case;` arm. Unreachable from Select_
-#        One because the outer loop filters those kinds before
-#        calling Try_One_Case. Kept for Ada exhaustiveness; the
-#        `Fired := False` write is defensive belt-and-braces.
-#   256 — `end;` of Select_One's inner declare block, after the
-#        infinite `loop ... end loop;`. The loop only exits via
-#        `return`; the end-block is never reached. Unreachable
-#        terminator in the same shape as Gada.Async.Context's
-#        Trampoline tail loop (gada-async-context.adb:215).
+# Selector defensive / unreachable lines (line numbers adjusted in
+# 8e0bf22 and follow-ups for Gemini PR #6 R2 review — the body
+# grew the Default_Element formal init plus the package-private
+# Seed_Counter declaration block):
+#   102 — Shuffle's "J := I" float-rounding cap. Random (Gen) is
+#         clamped to [0, 1) so Float'Floor (Random * Float (N)) is
+#         always < N — but Ada.Numerics.Float_Random's spec leaves
+#         the half-open boundary implementation-defined, and a
+#         future float-rounding regression on a non-IEEE target
+#         could land exactly at 1.0. The clamp is one statement,
+#         deterministic, and self-evidently correct on review.
+#   107 — `end loop;` of Shuffle's outer for-loop. Implicit basic
+#         block at the iteration end; gcov instruments it as
+#         executable but it's the loop's own terminator.
+#   163, 164, 165 — Try_One_Case's `when Default_Op | Timeout_Op =>
+#         Fired := False; end case;` arm. Unreachable from Select_
+#         One because the outer loop filters those kinds before
+#         calling Try_One_Case. Kept for Ada exhaustiveness; the
+#         `Fired := False` write is defensive belt-and-braces.
+#   304 — `end;` of Select_One's inner declare block, after the
+#         infinite `loop ... end loop;`. The loop only exits via
+#         `return`; the end-block is never reached. Unreachable
+#         terminator in the same shape as Gada.Async.Context's
+#         Trampoline tail loop (gada-async-context.adb:215).
 # Rationale: runtime/COVERAGE.md (gada-async-selector).
 [[exclude]]
 file = "runtime/src/gada-async-selector.adb"
-lines = [76, 81, 127, 128, 129, 256]
+lines = [102, 107, 163, 164, 165, 304]
 reason = "Selector defensive/unreachable arms — see runtime/COVERAGE.md"

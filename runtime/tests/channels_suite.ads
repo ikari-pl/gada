@@ -47,5 +47,9 @@ package Channels_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Try_Send_And_Try_Receive_Surface
      (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Send_Park_From_Non_Goroutine_Raises
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Receive_Park_From_Non_Goroutine_Raises
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Channels_Suite;

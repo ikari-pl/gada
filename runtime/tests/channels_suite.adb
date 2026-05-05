@@ -181,6 +181,18 @@ package body Channels_Suite is
          & "Channel_Closed on send-after-close, and raise "
          & "Constraint_Error on No_Channel — the same shape as the "
          & "blocking Send/Receive minus the parking branch");
+      Register_Routine
+        (T, Test_Send_Park_From_Non_Goroutine_Raises'Access,
+         "Send that would park (full buffer + no parked receiver) "
+         & "from a non-goroutine context raises Program_Error "
+         & "rather than allocating an orphaned Wait_Slot — guards "
+         & "against the use-after-free shape Gemini PR #6 R2 flagged");
+      Register_Routine
+        (T, Test_Receive_Park_From_Non_Goroutine_Raises'Access,
+         "Receive that would park (empty buffer + open channel) "
+         & "from a non-goroutine context raises Program_Error "
+         & "rather than allocating an orphaned Wait_Slot — mirror "
+         & "of the Send-side guard");
    end Register_Tests;
 
    ---------------------------------------------------------------
@@ -723,5 +735,57 @@ package body Channels_Suite is
               "Try_Send/Try_Receive on No_Channel must raise "
               & "Constraint_Error; Hits =" & Hits'Image);
    end Test_Try_Send_And_Try_Receive_Surface;
+
+   ---------------------------------------------------------------
+
+   procedure Test_Send_Park_From_Non_Goroutine_Raises
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      C      : constant Bound.Channel := Bound.Make (Capacity => 1);
+      Raised : Boolean := False;
+   begin
+      --  Fill the buffer so the next Send hits the parking path.
+      Bound.Send (C, 1);
+      --  This Send would park (buffer full, no parked receiver). We
+      --  are calling from the main task — Scheduler.Current ==
+      --  No_Goroutine. The guard added in 8e0bf22 must raise
+      --  Program_Error before allocating Slot.
+      begin
+         Bound.Send (C, 2);
+         Assert (False,
+                 "Bound.Send on full buffer from main task should "
+                 & "have raised Program_Error (parking outside a "
+                 & "goroutine context is meaningless)");
+      exception
+         when Program_Error =>
+            Raised := True;
+      end;
+      Assert (Raised, "Program_Error must propagate");
+   end Test_Send_Park_From_Non_Goroutine_Raises;
+
+   procedure Test_Receive_Park_From_Non_Goroutine_Raises
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      C      : constant Bound.Channel := Bound.Make (Capacity => 1);
+      V      : Integer := 0;
+      OK     : Boolean;
+      Raised : Boolean := False;
+   begin
+      --  Channel is empty AND open: Receive must park. Calling from
+      --  the main task (Scheduler.Current == No_Goroutine) trips the
+      --  guard and raises Program_Error.
+      begin
+         Bound.Receive (C, V, OK);
+         Assert (False,
+                 "Bound.Receive on empty open channel from main "
+                 & "task should have raised Program_Error");
+      exception
+         when Program_Error =>
+            Raised := True;
+      end;
+      Assert (Raised, "Program_Error must propagate");
+   end Test_Receive_Park_From_Non_Goroutine_Raises;
 
 end Channels_Suite;

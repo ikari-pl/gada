@@ -425,10 +425,7 @@ package body Gada.Async.Channels.Bounded is
       --  violation surfaces at the call site rather than as a
       --  delayed memory corruption.
       if Scheduler.Current = Scheduler.No_Goroutine then
-         raise Program_Error with
-           "Gada.Async.Channels.Bounded.Send: cannot park outside a "
-           & "goroutine context (call from a Scheduler.Spawn body, "
-           & "not from a top-level task or main)";
+         raise Program_Error with "Gada.Async.Channels.Bounded.Send: cannot park outside a goroutine context (call from a Scheduler.Spawn body, not from a top-level task or main)";
       end if;
       Slot := new Wait_Slot'(G              => Scheduler.Current,
                              Value          => V,
@@ -496,10 +493,7 @@ package body Gada.Async.Channels.Bounded is
       --  cannot be resumed, and a later Send / Close writes through
       --  the dangling pointer.
       if Scheduler.Current = Scheduler.No_Goroutine then
-         raise Program_Error with
-           "Gada.Async.Channels.Bounded.Receive: cannot park outside "
-           & "a goroutine context (call from a Scheduler.Spawn body, "
-           & "not from a top-level task or main)";
+         raise Program_Error with "Gada.Async.Channels.Bounded.Receive: cannot park outside a goroutine context (call from a Scheduler.Spawn body, not from a top-level task or main)";
       end if;
       Slot := new Wait_Slot;
       Slot.G := Scheduler.Current;

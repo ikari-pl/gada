@@ -396,11 +396,7 @@ package body Gada.Async.Channels.Unbounded is
       --  surfaces at the call site rather than as delayed memory
       --  corruption. Mirror of the same guard in Channels.Bounded.
       if Scheduler.Current = Scheduler.No_Goroutine then
-         raise Program_Error with
-           "Gada.Async.Channels.Unbounded.Receive: cannot park "
-           & "outside a goroutine context (call from a "
-           & "Scheduler.Spawn body, not from a top-level task or "
-           & "main)";
+         raise Program_Error with "Gada.Async.Channels.Unbounded.Receive: cannot park outside a goroutine context (call from a Scheduler.Spawn body, not from a top-level task or main)";
       end if;
       Slot := new Wait_Slot;
       Slot.G := Scheduler.Current;

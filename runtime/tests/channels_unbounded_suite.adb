@@ -100,6 +100,12 @@ package body Channels_Unbounded_Suite is
          "Send on a channel with a parked receiver hands the value "
          & "directly into the receiver's slot without growing the "
          & "buffer — Length stays 0 across the round-trip");
+      Register_Routine
+        (T, Test_Receive_Park_From_Non_Goroutine_Raises'Access,
+         "Receive that would park (empty buffer + open channel) "
+         & "from a non-goroutine context raises Program_Error "
+         & "rather than allocating an orphaned Wait_Slot — mirror "
+         & "of the Channels.Bounded.Receive guard");
    end Register_Tests;
 
    ---------------------------------------------------------------
@@ -455,5 +461,32 @@ package body Channels_Unbounded_Suite is
 
       Gada.Async.Scheduler.Shutdown;
    end Test_Send_During_Receiver_Park_Hands_Off_Directly;
+
+   ---------------------------------------------------------------
+
+   procedure Test_Receive_Park_From_Non_Goroutine_Raises
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      C      : constant Unbnd.Channel := Unbnd.Make;
+      V      : Integer := 0;
+      OK     : Boolean;
+      Raised : Boolean := False;
+   begin
+      --  Channel is empty AND open: Receive must park. Calling from
+      --  the main task (Scheduler.Current = No_Goroutine) trips the
+      --  guard added in 8e0bf22 and raises Program_Error before
+      --  Slot allocation.
+      begin
+         Unbnd.Receive (C, V, OK);
+         Assert (False,
+                 "Unbnd.Receive on empty open channel from main "
+                 & "task should have raised Program_Error");
+      exception
+         when Program_Error =>
+            Raised := True;
+      end;
+      Assert (Raised, "Program_Error must propagate");
+   end Test_Receive_Park_From_Non_Goroutine_Raises;
 
 end Channels_Unbounded_Suite;

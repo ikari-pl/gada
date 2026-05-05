@@ -97,7 +97,7 @@ reason = "Trampoline C-boundary exception arm — see runtime/COVERAGE.md"
 # (gada-async-scheduler).
 [[exclude]]
 file = "runtime/src/gada-async-scheduler.adb"
-lines = [437, 438, 439, 440, 441, 442, 443]
+lines = [547, 548, 549, 550, 551, 552, 553]
 reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 
 # Spawn's `Make` failure leak guard. Same fault-injection prerequisite
@@ -109,5 +109,79 @@ reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 # (gada-async-scheduler).
 [[exclude]]
 file = "runtime/src/gada-async-scheduler.adb"
-lines = [465, 466, 467]
+lines = [587, 588, 589]
 reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"
+
+# Park_Sender's race-recheck arm: between the caller's
+# Try_Buffered_Send (which already returned Was_Closed = False) and
+# Park_Sender's own Closed_F test, a concurrent third party would have
+# to call Close. With one worker and a deterministic test that owns the
+# Send's protected-call sequence, no other actor can interpose. The
+# arm exists for the multi-worker race window — Phase 3 sub-item 3b
+# already proved >=2 workers under stress, but the *race itself*
+# requires a Send + Close from distinct goroutines AND the protected
+# scheduler to suspend Send between Try_Buffered_Send return and
+# Park_Sender call. GNAT's protected calls are uninterruptible, so the
+# only window is the Ada source-line gap between the two calls. A
+# fault-injection seam between Try_Buffered_Send and Park_Sender
+# (Phase 4 panic-marshalling work) will re-cover this. Two lines.
+# Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
+[[exclude]]
+file = "runtime/src/gada-async-channels-bounded.adb"
+lines = [436, 437]
+reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
+
+# Park_Receiver's race-recheck arms (Got=True / Closed=True). Mirror of
+# the Send-side race-window exclusion above: between Try_Buffered_
+# Receive returning empty-and-open and Park_Receiver's own Count > 0
+# / Closed_F tests, a concurrent third party would have to call Send
+# or Close. Deterministic single-worker tests cannot interpose. Same
+# Phase 4 fault-injection seam removes both. Six lines (two
+# 3-line arms: Free_Slot/OK:=Bool/return).
+# Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
+[[exclude]]
+file = "runtime/src/gada-async-channels-bounded.adb"
+lines = [502, 503, 504, 507, 508, 509]
+reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
+
+# Channels.Unbounded mirror of the Channels.Bounded Park_Receiver
+# race-recheck exclusion above. Same single-worker-determinism
+# constraint, same Phase 4 fault-injection seam closes both. Six lines
+# (two 3-line arms: Free_Slot/OK:=Bool/return). The Send-side mirror
+# is intentionally absent — Unbounded.Send never blocks, so there is
+# no Park_Sender close-race-recheck arm to exclude.
+# Rationale: runtime/COVERAGE.md (gada-async-channels-unbounded).
+[[exclude]]
+file = "runtime/src/gada-async-channels-unbounded.adb"
+lines = [405, 406, 407, 410, 411, 412]
+reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
+
+# Selector defensive / unreachable lines (line numbers adjusted in
+# 8e0bf22 and follow-ups for Gemini PR #6 R2 review — the body
+# grew the Default_Element formal init plus the package-private
+# Seed_Counter declaration block):
+#   102 — Shuffle's "J := I" float-rounding cap. Random (Gen) is
+#         clamped to [0, 1) so Float'Floor (Random * Float (N)) is
+#         always < N — but Ada.Numerics.Float_Random's spec leaves
+#         the half-open boundary implementation-defined, and a
+#         future float-rounding regression on a non-IEEE target
+#         could land exactly at 1.0. The clamp is one statement,
+#         deterministic, and self-evidently correct on review.
+#   107 — `end loop;` of Shuffle's outer for-loop. Implicit basic
+#         block at the iteration end; gcov instruments it as
+#         executable but it's the loop's own terminator.
+#   163, 164, 165 — Try_One_Case's `when Default_Op | Timeout_Op =>
+#         Fired := False; end case;` arm. Unreachable from Select_
+#         One because the outer loop filters those kinds before
+#         calling Try_One_Case. Kept for Ada exhaustiveness; the
+#         `Fired := False` write is defensive belt-and-braces.
+#   304 — `end;` of Select_One's inner declare block, after the
+#         infinite `loop ... end loop;`. The loop only exits via
+#         `return`; the end-block is never reached. Unreachable
+#         terminator in the same shape as Gada.Async.Context's
+#         Trampoline tail loop (gada-async-context.adb:215).
+# Rationale: runtime/COVERAGE.md (gada-async-selector).
+[[exclude]]
+file = "runtime/src/gada-async-selector.adb"
+lines = [102, 107, 163, 164, 165, 304]
+reason = "Selector defensive/unreachable arms — see runtime/COVERAGE.md"

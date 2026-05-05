@@ -36,6 +36,8 @@ package body Scheduler_Suite is
    procedure Record_Current_Worker;
    procedure Park_Body;
    procedure Self_Test_Unpark_Of_Never_Run;
+   procedure Syscall_Body;
+   procedure Body_That_Raises;
 
    procedure Increment_Once is
    begin
@@ -194,6 +196,37 @@ package body Scheduler_Suite is
       end;
    end Self_Test_Unpark_Of_Never_Run;
 
+   --  ## Body_That_Raises — covers the Goroutine_Trampoline `when others`
+   --
+   --  A user body that raises is the only way to exercise the
+   --  trampoline's exception arm: the trampoline catches and discards,
+   --  then sets State => DONE so the worker reaps the cothread cleanly
+   --  rather than hitting the unexpected-RUNNING-state Program_Error
+   --  arm. Without that catch, a raising goroutine deadlocks Drain.
+   --
+   --  The arm is silent on purpose — propagating across the libco /
+   --  C-convention boundary is undefined; Phase 4's panic-marshalling
+   --  layer will surface the failure to the parent. For now, observing
+   --  that Shutdown returns and the worker stays alive is the contract.
+   procedure Body_That_Raises is
+   begin
+      raise Constraint_Error
+        with "Goroutine body raise — exercises trampoline exception arm";
+   end Body_That_Raises;
+
+   --  ## Syscall_Body — sub-item 3e
+   --
+   --  Mirrors Park_Body's shape but uses Enter_Syscall and a distinct
+   --  pair of marker characters ('1', '3' rather than '1', '2') so a
+   --  test that runs both Park_Body and Syscall_Body in sequence can
+   --  tell their sequences apart in the shared Park_Tracker.
+   procedure Syscall_Body is
+   begin
+      Park_Tracker.Mark ('1');
+      Enter_Syscall;
+      Park_Tracker.Mark ('3');
+   end Syscall_Body;
+
    overriding function Name
      (T : Scheduler_Test) return AUnit.Message_String is
      (AUnit.Format ("Gada.Async.Scheduler suite (PKG=async.scheduler)"));
@@ -257,6 +290,21 @@ package body Scheduler_Suite is
         (T, Test_Unpark_Of_Never_Run_Goroutine_Raises'Access,
          "Unpark on a goroutine that has never run raises "
          & "Program_Error — there is no correct routing target");
+      Register_Routine
+        (T, Test_Enter_Exit_Syscall_Round_Trip'Access,
+         "Enter_Syscall suspends the calling goroutine; Exit_Syscall "
+         & "from another task resumes it on its bound worker (sub-"
+         & "item 3e — Park/Unpark equivalents under separate symbols)");
+      Register_Routine
+        (T, Test_Syscall_Doesnt_Stall_Siblings'Access,
+         "While a goroutine is in Enter_Syscall on Workers => 2, the "
+         & "scheduler still runs other goroutines to completion on "
+         & "the free worker (sub-item 3e verify gate)");
+      Register_Routine
+        (T, Test_Goroutine_Body_That_Raises_Is_Reaped_Cleanly'Access,
+         "A goroutine whose body raises is reaped without taking the "
+         & "worker down — Shutdown returns and a follow-up goroutine "
+         & "still runs (covers Goroutine_Trampoline's exception arm)");
    end Register_Tests;
 
    procedure Test_Init_Shutdown_Empty
@@ -546,5 +594,153 @@ package body Scheduler_Suite is
               & "Unpark of never-run goroutine), got '"
               & Park_Tracker.Sequence & "'");
    end Test_Unpark_Of_Never_Run_Goroutine_Raises;
+
+   procedure Test_Enter_Exit_Syscall_Round_Trip
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Syscall_G : Goroutine_Id;
+   begin
+      --  Mirrors Test_Park_Unpark_Round_Trip but drives Enter_Syscall
+      --  / Exit_Syscall instead of Park / Unpark. The goroutine marks
+      --  '1', enters syscall (parks), and only marks '3' after the
+      --  test main task has Exit_Syscall'd it. Final sequence "13"
+      --  proves both halves of the round-trip.
+      --
+      --  Workers => 1 is sufficient: the test isn't about distribution.
+      --  After the goroutine parks, the only worker is free; main
+      --  task drives Exit_Syscall directly.
+      Park_Tracker.Reset;
+      Shutdown;
+      Init (Workers => 1);
+      Syscall_G := Spawn (Syscall_Body'Access);
+
+      --  Wait for Mark ('1') — proves the goroutine reached
+      --  Enter_Syscall and parked. Same bounded-poll shape as
+      --  Test_Park_Unpark_Round_Trip.
+      for Attempt in 1 .. 100 loop
+         exit when Park_Tracker.Sequence = "1";
+         delay 0.001;
+      end loop;
+      Assert (Park_Tracker.Sequence = "1",
+              "Syscall_Body did not reach Enter_Syscall before "
+              & "timeout; Sequence = '" & Park_Tracker.Sequence & "'");
+
+      Exit_Syscall (Syscall_G);
+      Shutdown;
+      Assert (Park_Tracker.Sequence = "13",
+              "Expected Park_Tracker = '13' (Enter_Syscall + Exit_"
+              & "Syscall round-trip), got '" & Park_Tracker.Sequence
+              & "'");
+   end Test_Enter_Exit_Syscall_Round_Trip;
+
+   procedure Test_Syscall_Doesnt_Stall_Siblings
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Syscall_G : Goroutine_Id;
+      Unused_G  : Goroutine_Id;
+      --  N_Siblings: how many sibling goroutines we expect to drain
+      --  while Syscall_G is parked. Picked at 50 — large enough to
+      --  visibly demonstrate sibling progress, small enough to
+      --  drain in well under the 100 ms poll budget on every CI
+      --  runner we contract for.
+      N_Siblings : constant := 50;
+   begin
+      --  Verify gate for sub-item 3e: a goroutine that calls Enter_
+      --  Syscall does not stall sibling workers. Because Enter_
+      --  Syscall is currently a Park-equivalent, the property holds
+      --  trivially under our libco-pinning model — once a goroutine
+      --  parks, its worker is free to pick up other work, and any
+      --  other workers are independently free anyway. The test still
+      --  has value as:
+      --
+      --    (1) a regression guard — a future Enter_Syscall that
+      --        accidentally held its worker (e.g. by busy-waiting
+      --        on the helper thread) would surface here as a hung
+      --        test or a sibling-counter that didn't advance.
+      --    (2) a documented usage shape — the goroutine + helper-
+      --        thread + Exit_Syscall sequence here is the same shape
+      --        Phase 4's per-syscall I/O wrappers will emit.
+      Park_Tracker.Reset;
+      Counter := 0;
+      Shutdown;
+      Init (Workers => 2);
+
+      Syscall_G := Spawn (Syscall_Body'Access);
+
+      --  Wait for the goroutine to enter syscall (mark '1') before
+      --  we start counting sibling progress. Without this barrier
+      --  the assertion below would race the goroutine's first
+      --  Switch_To.
+      for Attempt in 1 .. 100 loop
+         exit when Park_Tracker.Sequence = "1";
+         delay 0.001;
+      end loop;
+      Assert (Park_Tracker.Sequence = "1",
+              "Syscall_Body did not enter syscall before timeout; "
+              & "Sequence = '" & Park_Tracker.Sequence & "'");
+
+      --  Spawn N_Siblings simple-body goroutines. With Syscall_G
+      --  parked and Workers => 2, both workers are eligible to run
+      --  these. They must drain to completion within the poll
+      --  budget.
+      for Iteration in 1 .. N_Siblings loop
+         Unused_G := Spawn (Increment_Once'Access);
+      end loop;
+
+      for Attempt in 1 .. 100 loop
+         exit when Counter = N_Siblings;
+         delay 0.001;
+      end loop;
+      Assert (Counter = N_Siblings,
+              "Sibling goroutines did not drain while Syscall_G "
+              & "was parked; Counter =" & Counter'Image
+              & ", expected" & N_Siblings'Image);
+
+      --  Wake the parked goroutine and reap.
+      Exit_Syscall (Syscall_G);
+      Shutdown;
+      Assert (Park_Tracker.Sequence = "13",
+              "Syscall_G did not complete its post-Exit_Syscall "
+              & "marker; Sequence = '" & Park_Tracker.Sequence & "'");
+   end Test_Syscall_Doesnt_Stall_Siblings;
+
+   procedure Test_Goroutine_Body_That_Raises_Is_Reaped_Cleanly
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Unused_G : Goroutine_Id;
+   begin
+      --  The contract under test: Goroutine_Trampoline catches Ada
+      --  exceptions raised from the user body so they don't propagate
+      --  across the libco C-convention boundary, AND it still sets
+      --  State => DONE so the worker reaps the cothread on the next
+      --  case-arm. Two observable consequences:
+      --
+      --    (1) Shutdown returns rather than hanging on Drain (which
+      --        would happen if the worker died at the unexpected-
+      --        RUNNING-state Program_Error arm without a balancing
+      --        Worker_Stopped).
+      --    (2) A follow-up goroutine on the same Init still runs to
+      --        completion — proves the worker is alive after the
+      --        raising body, not just "didn't deadlock once."
+      Counter := 0;
+      Shutdown;
+      Init (Workers => 1);
+      Unused_G := Spawn (Body_That_Raises'Access);
+
+      --  Wait for the raising body to actually fire and be reaped.
+      --  Without a follow-up Spawn we'd race Shutdown against the
+      --  trampoline's State := DONE write; with a counted follow-up
+      --  we wait deterministically on Counter rather than on time.
+      Unused_G := Spawn (Increment_Once'Access);
+      Shutdown;
+      Assert (Counter = 1,
+              "Follow-up goroutine did not run after a raising body; "
+              & "Counter =" & Counter'Image
+              & " (expected 1) — trampoline likely killed the worker "
+              & "rather than reaping the raised goroutine cleanly");
+   end Test_Goroutine_Body_That_Raises_Is_Reaped_Cleanly;
 
 end Scheduler_Suite;

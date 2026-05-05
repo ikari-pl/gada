@@ -95,7 +95,7 @@ Added in PR #3 review feedback (gemini-code-assist comment #1).
 
 ### `runtime/src/gada-async-scheduler.adb`
 
-#### `Init` — per-worker `new Worker_Task` rollback  *(lines 437–443)*
+#### `Init` — per-worker `new Worker_Task` rollback  *(lines 547–553)*
 
 ```ada
 begin
@@ -104,13 +104,13 @@ begin
       The_Workers (I) := new Worker_Task (Idx => I);
    end loop;
 exception
-   when others =>                          --  line 437
-      Run_Queue.Worker_Stopped;            --  line 438
-      Run_Queue.Mark_Shutdown;             --  line 439
-      Run_Queue.Drain;                     --  line 440
-      The_Workers := null;                  --  line 441
-      Run_Queue.Set_Initialised (False);   --  line 442
-      raise;                                --  line 443
+   when others =>                          --  line 547
+      Run_Queue.Worker_Stopped;            --  line 548
+      Run_Queue.Mark_Shutdown;             --  line 549
+      Run_Queue.Drain;                     --  line 550
+      The_Workers := null;                  --  line 551
+      Run_Queue.Set_Initialised (False);   --  line 552
+      raise;                                --  line 553
 end;
 ```
 
@@ -128,23 +128,27 @@ worker that was never spawned.
 
 Triggering it requires Storage_Error or Tasking_Error from the Ada
 task allocation path, which the Alire FSF GNAT 15.1 runtime does not
-expose a portable hook for. The Phase 3 sub-item (c) work-stealing
-expansion will add a worker-pool fault-injection switch that
-re-covers this rollback.
+expose a portable hook for. A future fault-injection seam (slated
+alongside the lock-free queue work tracked in `runtime/PERF.md`) will
+re-cover this rollback; the seven-statement arm is straightforward
+enough for a code-review pass until then.
 
 Added in PR #3 review feedback (gemini-code-assist comment #2),
-lifted to the multi-worker rollback shape in sub-item 3b.
+lifted to the multi-worker rollback shape in sub-item 3b. Sub-items
+3c (the worker-local SPSC YIELDED list) and 3e (Enter_Syscall /
+Exit_Syscall surface) shifted the line numbers but did not change
+the arm's structure.
 
-#### `Spawn` — `Make` failure leak guard  *(lines 465–467)*
+#### `Spawn` — `Make` failure leak guard  *(lines 587–589)*
 
 ```ada
 begin
    Gada.Async.Context.Make
-     (G.Ctx, Goroutine_Trampoline'Access);
+     (G.Ctx, Goroutine_Trampoline'Access, Stack_Size => 256 * 1024);
 exception
-   when others =>          --  line 465
-      Free_Goroutine (G);  --  line 466
-      raise;                --  line 467
+   when others =>          --  line 587
+      Free_Goroutine (G);  --  line 588
+      raise;                --  line 589
 end;
 ```
 
@@ -160,6 +164,180 @@ Phase 3 seam lands it re-covers both the raise and this cleanup arm
 in a single test.
 
 Added in PR #3 review feedback (gemini-code-assist comment #4).
+
+---
+
+### `runtime/src/gada-async-channels-bounded.adb`
+
+#### `Send` — `Park_Sender` close-race recheck  *(lines 413–414)*
+
+```ada
+C.Ref.State.Park_Sender (Slot, Was_Closed);
+if Was_Closed then
+   Free_Slot (Slot);                                  --  line 413
+   raise Channel_Closed                               --  line 414
+     with "Gada.Async.Channels.Bounded.Send: closed during park";
+end if;
+```
+
+`Park_Sender` re-checks `Closed_F` under its protected lock before
+appending the caller's `Wait_Slot` to the parked-senders list. The
+arm fires only if a third party calls `Close` in the source-line gap
+between the caller's `Try_Buffered_Send` (which returned
+`Was_Closed = False`, otherwise we'd have raised earlier on line
+399) and `Park_Sender`'s own `Closed_F` test.
+
+GNAT's protected calls are uninterruptible — the only window for
+the race is the Ada source-line gap between the two calls, with the
+calling cothread fully scheduled on its worker for the duration. A
+deterministic single-worker test that owns the Send's caller cannot
+interpose a Close at that exact gap; multi-worker tests can race
+but cannot *force* the race to land on this specific gap rather
+than the larger pre-`Try_Buffered_Send` gap. A future fault-
+injection seam (slated alongside Phase 4 panic-marshalling work)
+will park the calling goroutine *between* those two protected calls,
+fire a Close, and re-cover this arm. Two lines.
+
+#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 466–468, 471–473)*
+
+```ada
+C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);
+if Got then
+   Free_Slot (Slot);   --  line 466
+   OK := True;          --  line 467
+   return;              --  line 468
+end if;
+if Was_Closed then
+   Free_Slot (Slot);   --  line 471
+   OK := False;         --  line 472
+   return;              --  line 473
+end if;
+```
+
+Mirror image of the Send-side race-recheck above. `Park_Receiver`
+re-checks `Count > 0` and `Closed_F` under its protected lock;
+either arm fires only if a third party Sends or Closes in the source-
+line gap between the caller's `Try_Buffered_Receive` and
+`Park_Receiver`'s own re-tests. Same single-worker-determinism
+constraint as the Send arm. Six lines (two 3-line arms). The same
+fault-injection seam covers both arms.
+
+The arms are not dead code — they exist *because* the race window is
+real and silent corruption (a parked receiver that should have
+matched a freshly-arrived sender, or a parked receiver that hangs
+forever on a freshly-closed channel) is unacceptable. Excluding
+them here documents the testability gap, not their value.
+
+---
+
+### `runtime/src/gada-async-channels-unbounded.adb`
+
+#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 387–389, 392–394)*
+
+```ada
+C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);
+if Got then
+   Free_Slot (Slot);   --  line 387
+   OK := True;          --  line 388
+   return;              --  line 389
+end if;
+if Was_Closed then
+   Free_Slot (Slot);   --  line 392
+   OK := False;         --  line 393
+   return;              --  line 394
+end if;
+```
+
+Mirror of the Channels.Bounded Park_Receiver race-recheck above.
+Same single-worker-determinism constraint: the only window for the
+race is the Ada source-line gap between `Try_Receive` and
+`Park_Receiver`, which a single-worker test cannot interpose a
+third-party Send or Close into. Same Phase 4 fault-injection seam
+closes both. Six lines (two 3-line arms).
+
+The Send-side mirror is intentionally absent — `Unbounded.Send`
+never blocks (there is no buffer-full state), so there is no
+`Park_Sender` arm to either ship or exclude. This is the structural
+asymmetry between bounded and unbounded channels carried into the
+coverage surface.
+
+---
+
+### `runtime/src/gada-async-selector.adb`
+
+#### `Shuffle` — float-rounding clamp + loop terminator  *(lines 76, 81)*
+
+```ada
+J :=
+  A'First
+  + Natural (Float'Floor
+      (Random (Gen) * Float (I - A'First + 1)));
+if J > I then
+   J := I; -- defensive cap on float-rounding edges  --  line 76
+end if;
+...
+end loop;                                            --  line 81
+```
+
+`Ada.Numerics.Float_Random.Random` returns a value in `[0.0, 1.0)`,
+so `Float'Floor (Random * Float (N))` is always `< N` and the
+`J > I` clamp at line 76 is unreachable on every IEEE-conformant
+target. We keep the clamp because:
+
+  * Ada's RNG spec leaves the half-open boundary
+    implementation-defined; a future toolchain that accidentally
+    returns 1.0 (e.g. via a non-IEEE round-to-positive-infinity
+    cast) would land *exactly* on `J = I + 1`, producing an array
+    out-of-range read.
+  * The clamp is one statement, deterministic on review, and
+    cheaper than narrowing the type or asserting at runtime.
+
+Line 81 is the implicit basic block at the bottom of Shuffle's
+outer `for I in reverse ... loop`. Same pattern as `Gada.Async.
+Context.Trampoline`'s tail-loop terminator (`gada-async-context.adb:
+215`): gcov instruments the line as executable but control never
+reaches it under normal flow.
+
+#### `Try_One_Case` — Default/Timeout dead arm  *(lines 127–129)*
+
+```ada
+when Default_Op | Timeout_Op =>                      --  line 127
+   Fired := False;                                   --  line 128
+end case;                                            --  line 129
+```
+
+`Try_One_Case` is invoked only from `Select_One`, which filters out
+`Default_Op` and `Timeout_Op` before the call:
+
+```ada
+if Cases (Idx).Kind not in Default_Op | Timeout_Op then
+   Try_One_Case (Cases (Idx), Fired);
+   ...
+end if;
+```
+
+The arm is therefore unreachable. We keep it for Ada
+exhaustiveness — the `Fired := False` write is defensive
+belt-and-braces in case a future refactor calls `Try_One_Case`
+directly. A future invariant-tightening pass (per the same
+fault-injection seam tracked alongside the channels race-window
+exclusions) may replace it with a `pragma Assert (Kind in
+Send_Op | Recv_Op)` and remove the arm.
+
+#### `Select_One` — declare-block terminator  *(line 256)*
+
+```ada
+loop
+   ...                  --  every exit branch is `return`
+end loop;
+end;                                                  --  line 256
+end Select_One;
+```
+
+The outer `loop ... end loop;` only exits via `return Default_
+Index;`, `return Timeout_Index;`, or `return Idx;`. Control never
+reaches the `end;` of the enclosing `declare` block. Same shape as
+`Gada.Async.Context.Trampoline`'s tail-loop end exclusion.
 
 ---
 

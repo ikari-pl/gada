@@ -1,20 +1,20 @@
 --  Gada.Async.Scheduler body — M:N over a fixed pool of Ada tasks.
 --
---  Sub-items 3a + 3b + 3d of Phase 3. Ships:
+--  Sub-items 3a + 3b + 3c + 3d of Phase 3. Ships:
 --    * pool of Worker Ada tasks sized by System.Multiprocessors.Number_Of_CPUs
 --      (overridable via Init (Workers => N)),
 --    * shared FIFO run queue for fresh spawns,
---    * per-worker Inbox queue for yielded + Unparked goroutines (the
---      libco-pinning constraint forces yielded goroutines to stay on
---      the worker that first popped them; sub-item 3d's Unpark routes
---      via the same Inbox to preserve the same invariant),
+--    * worker-local SPSC intrusive list for YIELDED self-injection
+--      (sub-item 3c — same thread is both producer and consumer, so no
+--      protected lock and no allocation per yield),
+--    * per-worker MPSC Inbox inside Run_Queue for external Unpark
+--      injections (the libco-pinning constraint forces re-injection of
+--      a bound goroutine to its owning worker; sub-item 3d's Unpark
+--      from any task uses this path),
 --    * Spawn / Yield / Init / Shutdown / Park / Unpark.
 --
 --  Subsequent sub-items extend this body without breaking the public
---  spec: (c) replaces the per-worker protected Inbox with a Chase-Lev
---  deque (lockless) + work-stealing across siblings (steal-only-fresh-
---  spawns; bound goroutines stay pinned), (e) adds the syscall-handoff
---  API.
+--  spec: (e) adds the syscall-handoff API.
 --
 --  ## State-machine contract (the load-bearing invariant)
 --
@@ -48,14 +48,35 @@
 --
 --  Sub-item 3d extends the same invariant to Park/Unpark. A goroutine's
 --  Bound_Worker field is set when a worker first pops it from the
---  shared Run_Queue; subsequent re-injections (YIELDED → Inbox,
---  PARKED → Unpark → Inbox) go to *that* worker's Inbox, never
---  another's. Unpark on a never-run goroutine raises Program_Error
---  rather than guess a worker — there's no correct guess.
+--  shared Run_Queue; subsequent re-injections (YIELDED → worker
+--  Local list, PARKED → Unpark → MPSC Inbox) go to *that* worker,
+--  never another's. Unpark on a never-run goroutine raises
+--  Program_Error rather than guess a worker — there's no correct
+--  guess.
 --
 --  See docs/incidents/2026-05-03-scheduler-3b-multi-worker-race.md
 --  for the full rationale, including the C-side -DLIBCO_MP fix that
 --  was the actual root cause behind the earlier flake pattern.
+--
+--  ## Two-tier per-worker queue (sub-item 3c)
+--
+--  Each worker drains from two FIFOs in priority order:
+--
+--    1. Local — worker-local singly-linked intrusive list, threaded
+--       through Goroutine_Record.Next. Same OS thread is *both*
+--       producer (YIELDED case-arm appends) and consumer (loop top
+--       pops). No protected lock, no allocation per push/pop —
+--       the Next field is reused across yields. SPSC by structure.
+--    2. Run_Queue.Pop (Idx) — the protected entry family covering
+--       (a) the per-worker MPSC Inbox(Idx) for external Unpark, and
+--       (b) the shared Items FIFO for fresh Spawn'd goroutines, and
+--       (c) the shutdown signal.
+--
+--  YIELDED's hot path is now lock-free; PARKED → Unpark → Inbox is
+--  still protected because the producer can be any task. Splitting
+--  the two paths separates the latency-sensitive case (yield, called
+--  in tight loops) from the rare case (Unpark, called once per
+--  channel/timer wake).
 --
 --  ## TLS for Current_Goroutine
 --
@@ -127,6 +148,14 @@ package body Gada.Async.Scheduler is
       --  is libco-bound to. Set on first pop from shared Run_Queue;
       --  read by Unpark to route the goroutine back to the correct
       --  worker's Inbox.
+      Next         : Goroutine_Access := null;
+      --  Next — intrusive link for the worker-local YIELDED list
+      --  (sub-item 3c). Touched only by the bound worker's own
+      --  Worker_Task body, after Switch_To has returned control to
+      --  the worker — same OS thread reads and writes, no lock
+      --  needed. Set to null when the goroutine is not in any list.
+      --  Reusable across yields because a goroutine can only be in
+      --  *one* of {Local, Inbox(I), Items, executing} at a time.
    end record;
 
    procedure Free_Goroutine is
@@ -142,22 +171,29 @@ package body Gada.Async.Scheduler is
    --
    --  Single static protected with two layers of state:
    --    1. Items — shared FIFO of fresh spawns (any worker may pop).
-   --    2. Inboxes — per-worker FIFO of bound goroutines (only the
-   --       owning worker pops, but any task may inject — Yield from
-   --       the worker itself, Unpark from anywhere).
+   --    2. Inboxes — per-worker MPSC FIFO of bound goroutines that
+   --       were Park'd and have since been Unpark'd from another
+   --       task. The owning worker is the only consumer; any number
+   --       of tasks may produce. (YIELDED self-re-injection lives in
+   --       the worker task body's Local list — sub-item 3c — and
+   --       does not touch this protected.)
    --
    --  The Pop entry is a *family* indexed by Active_Worker_Index:
    --  worker N calls Pop(N), and its barrier is "this worker's Inbox
-   --  has work, OR the shared Items queue has work, OR the scheduler
-   --  is shutting down with no in-flight goroutines". When new work
-   --  arrives in Inboxes(5), only Pop(5)'s barrier becomes true and
-   --  only worker 5 wakes; when work arrives in Items, all workers'
-   --  barriers become true and the runtime serves one (Ada FIFO).
+   --  has an Unpark target, OR the shared Items queue has a fresh
+   --  spawn, OR the scheduler is shutting down with no in-flight
+   --  goroutines". When new work arrives in Inboxes(5), only Pop(5)'s
+   --  barrier becomes true and only worker 5 wakes; when work arrives
+   --  in Items, all workers' barriers become true and the runtime
+   --  serves one (Ada FIFO).
    --
-   --  Sub-item 3c replaces the per-worker Inbox with a Chase-Lev
-   --  deque (lockless) for cache-locality on the per-worker push/pop
-   --  hot path. Until then, the protected serialisation is sufficient
-   --  (lock held microseconds per call).
+   --  Sub-item 3c (2026-05-04) split the per-worker queue: the SPSC
+   --  YIELDED self-injection bypasses this protected entirely, while
+   --  the MPSC Unpark path stays here. The shared Items queue still
+   --  serialises every Spawn through the protected lock — closing
+   --  that gap (visible as Spawn_NW > Spawn_1W in PERF.md) needs
+   --  lock-free queue primitives and is tracked as a future perf
+   --  pass, not a sub-item of Phase 3.
 
    package Goroutine_Lists is new Ada.Containers.Doubly_Linked_Lists
      (Element_Type => Goroutine_Access);
@@ -169,9 +205,10 @@ package body Gada.Async.Scheduler is
       --  appends to the shared FIFO Items. Any worker may pop.
       procedure Inject (G : Goroutine_Access);
 
-      --  Inject_Local routes G to a specific worker's Inbox. Used by:
-      --    * Worker's own YIELDED case-arm (re-enqueue self-yielded G);
-      --    * Unpark from any task (re-enqueue an externally-suspended G).
+      --  Inject_Local routes G to a specific worker's MPSC Inbox.
+      --  Sub-item 3c moved YIELDED off this path onto the worker's
+      --  thread-local Local list, so today the only caller is Unpark
+      --  from any task (re-enqueue an externally-suspended G).
       --  Does NOT touch In_Flight — the goroutine is still alive,
       --  just changing queues.
       procedure Inject_Local (Idx : Active_Worker_Index;
@@ -324,7 +361,29 @@ package body Gada.Async.Scheduler is
       G : constant Goroutine_Access := Current_Goroutine;
    begin
       if G /= null and then G.Body_Proc /= null then
-         G.Body_Proc.all;
+         begin
+            G.Body_Proc.all;
+         exception
+            when others =>
+               --  User body raised. We MUST still set State := DONE
+               --  so the worker reaps cleanly — without this, the
+               --  worker reads RUNNING post-Switch_To and hits the
+               --  unexpected-state arm, which kills the worker
+               --  without Worker_Stopped and deadlocks Drain.
+               --
+               --  The exception details are not propagated up here
+               --  (Goroutine_Trampoline runs on the goroutine's
+               --  libco stack and is itself the C-convention entry
+               --  to libco; propagating across the C ABI is UB —
+               --  same constraint Gada.Async.Context.Trampoline
+               --  documents). Phase 3+ panic propagation will land a
+               --  per-goroutine panic-record that the spawner /
+               --  parent can inspect; for now, a goroutine whose
+               --  body raised is reaped silently. The
+               --  Gada.Async.Context.Trampoline outer arm logs the
+               --  exception to stderr, so the failure is visible.
+               null;
+         end;
          G.State := DONE;
       end if;
    end Goroutine_Trampoline;
@@ -338,18 +397,44 @@ package body Gada.Async.Scheduler is
    task type Worker_Task (Idx : Active_Worker_Index);
 
    task body Worker_Task is
+      --  Worker-local SPSC list of YIELDED goroutines bound to this
+      --  worker. Same OS thread is both producer (YIELDED case-arm
+      --  below) and consumer (loop top); no protected lock needed.
+      --  Singly-linked intrusive via Goroutine_Record.Next; head and
+      --  tail tracked here so push-back is O(1) without array growth.
+      Local_Head : Goroutine_Access := null;
+      Local_Tail : Goroutine_Access := null;
+
       G    : Goroutine_Access;
       Stop : Boolean;
    begin
       loop
-         Run_Queue.Pop (Idx) (G, Stop);
-         exit when Stop;
+         if Local_Head /= null then
+            --  Drain the worker-local YIELDED list first. Cheap path:
+            --  no protected call, no allocation, just two pointer
+            --  moves. We do NOT consult Run_Queue here — fresh spawns
+            --  in Items and external Unpark wake-ups in Inbox(Idx)
+            --  wait until Local is empty. That's correct: a goroutine
+            --  yielding in a tight loop only re-appends itself, so
+            --  Local stays bounded by recently-yielded peers and
+            --  drains in steady-state.
+            G := Local_Head;
+            Local_Head := G.Next;
+            if Local_Head = null then
+               Local_Tail := null;
+            end if;
+            G.Next := null;
+            Stop := False;
+         else
+            Run_Queue.Pop (Idx) (G, Stop);
+            exit when Stop;
+         end if;
 
          --  First pop binds the goroutine to this worker. Subsequent
-         --  re-enqueues (YIELDED → own Inbox, PARKED → external
-         --  Unpark → own Inbox) preserve this binding so libco
-         --  cothreads stay on the OS thread that allocated their
-         --  saved register state.
+         --  re-enqueues (YIELDED → Local, PARKED → external Unpark
+         --  → Inbox(Idx)) preserve this binding so libco cothreads
+         --  stay on the OS thread that allocated their saved
+         --  register state.
          if G.Bound_Worker = Unbound then
             G.Bound_Worker := Idx;
          end if;
@@ -365,20 +450,45 @@ package body Gada.Async.Scheduler is
          case G.State is
             when YIELDED =>
                G.State := READY;
-               Run_Queue.Inject_Local (Idx, G);
+               --  Append to the worker-local list. Same OS thread did
+               --  the Switch_To; there is no other writer. O(1) tail
+               --  insert via the intrusive Next field — no allocation
+               --  per yield (the previous shape called Run_Queue's
+               --  protected Inject_Local, which serialised every
+               --  yield through the shared scheduler lock).
+               G.Next := null;
+               if Local_Tail = null then
+                  Local_Head := G;
+               else
+                  Local_Tail.Next := G;
+               end if;
+               Local_Tail := G;
             when PARKED =>
                --  G is held by whoever owns its Goroutine_Id; Unpark
                --  will Inject_Local (Idx, G) when ready. Worker just
                --  picks up the next item without re-enqueueing.
+               null;
+            when READY =>
+               --  Race window: another task fired Unpark between G's
+               --  `State := PARKED` write inside Park and the actual
+               --  `Switch_To` that returned control here. Unpark
+               --  overwrote PARKED with READY and Inject_Local'd G
+               --  back onto our own Inbox already, so the next Pop
+               --  iteration will pick G up. Treating this as a no-op
+               --  is correct — re-enqueueing here would put G in our
+               --  Inbox twice and risk switching into a goroutine
+               --  whose libco context is mid-flight. Closes the race
+               --  the channel-receiver-matches-parked-sender path
+               --  exposes (item 4).
                null;
             when DONE =>
                Gada.Async.Context.Free (G.Ctx);
                Free_Goroutine (G);
                Run_Queue.Reap;
             when others =>
-               --  RUNNING / READY here would mean libco returned
-               --  without any of our writes firing — impossible under
-               --  the cooperative protocol.
+               --  RUNNING here would mean libco returned without any
+               --  of our writes firing — impossible under the
+               --  cooperative protocol.
                raise Program_Error
                  with "Gada.Async.Scheduler: goroutine returned in"
                       & " unexpected state " & G.State'Image;
@@ -459,8 +569,20 @@ package body Gada.Async.Scheduler is
       G.Body_Proc := Body_Proc;
       G.State := READY;
       begin
+         --  256 KB: empirically large enough for nested protected
+         --  operations called from inside a goroutine body — Send
+         --  on a buffered channel involves Channel_State.Try_
+         --  Buffered_Send → Run_Queue.Inject_Local across two
+         --  protecteds, and GNAT's protected-cleanup-handler frames
+         --  add up. The 64 KB default from Gada.Async.Context.Make
+         --  was tight enough that channel-driven goroutines blew
+         --  Storage_Error on Apple-arm64. Phase 4's stack-pooling
+         --  follow-up may reduce per-cothread footprint via
+         --  growable stacks; 256 KB × N goroutines is the v1 bound.
          Gada.Async.Context.Make
-           (G.Ctx, Goroutine_Trampoline'Access);
+           (C           => G.Ctx,
+            Entry_Point => Goroutine_Trampoline'Access,
+            Stack_Size  => 256 * 1024);
       exception
          when others =>
             Free_Goroutine (G);
@@ -469,6 +591,18 @@ package body Gada.Async.Scheduler is
       Run_Queue.Inject (G);
       return (Ref => G);
    end Spawn;
+
+   function Current return Goroutine_Id is
+   begin
+      --  TLS lookup; Current_Goroutine is null on tasks that have
+      --  not been switched-into-via-libco (main task, the test
+      --  harness's own task, etc.). Returning No_Goroutine on those
+      --  paths matches Park / Yield's no-op contract for non-
+      --  goroutine context — generated code can call Current
+      --  unconditionally and feed the result to Unpark, which itself
+      --  no-ops on No_Goroutine.
+      return (Ref => Current_Goroutine);
+   end Current;
 
    procedure Yield is
       G : constant Goroutine_Access := Current_Goroutine;
@@ -519,6 +653,23 @@ package body Gada.Async.Scheduler is
       G.Ref.State := READY;
       Run_Queue.Inject_Local (G.Ref.Bound_Worker, G.Ref);
    end Unpark;
+
+   procedure Enter_Syscall is
+   begin
+      --  Park-equivalent. See spec for why the symbol is separate.
+      --  The actual blocking work happens elsewhere — this body is
+      --  just the goroutine-side suspension point; an external task
+      --  must Exit_Syscall (G) when the work completes.
+      Park;
+   end Enter_Syscall;
+
+   procedure Exit_Syscall (G : Goroutine_Id) is
+   begin
+      --  Unpark-equivalent. Called from the helper thread (Phase 4)
+      --  or test main task that performed the blocking work; routes
+      --  G back to its bound worker's Inbox via Unpark's contract.
+      Unpark (G);
+   end Exit_Syscall;
 
    procedure Shutdown is
    begin

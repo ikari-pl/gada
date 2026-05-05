@@ -12,11 +12,24 @@ package body Stress_Scheduler_Suite is
      (AUnit.Format
         ("GADA scheduler stress suite (PKG=stress.scheduler)"));
 
-   --  Lock-free counter incremented by every spawned body. Atomic so
-   --  reads from the test side after Shutdown see every increment.
-   --  Pragma Atomic on Natural is portable enough for a 32-bit
-   --  counter; on a 64-bit host the actual underlying type is
-   --  Natural'Size = 32 by default, well within atomic-load reach.
+   --  Counter incremented by every spawned body. The aspect Atomic
+   --  guarantees that *individual* loads and stores cannot tear, but
+   --  it does NOT promote the read-modify-write `Spawn_Counter :=
+   --  Spawn_Counter + 1` into an atomic add — under multi-worker the
+   --  RMW would race and the final count would be < N_Cycles. This
+   --  test is *intentionally* single-worker (`Init (Workers => 1)`
+   --  in the test body) precisely to keep the increment race-free
+   --  without needing System.Atomic_Counters or Ada 2022's
+   --  Ada.Atomic_Operations.Modular_Arithmetic. The Atomic aspect is
+   --  retained so the *test-side* read after Shutdown sees the most
+   --  recent worker store without a memory-model loophole, even
+   --  though the workers' writes are already happens-before the
+   --  Drain barrier inside Shutdown.
+   --
+   --  A future leak gate that stresses multi-worker spawn fan-out
+   --  would need either a protected counter or an atomic-add
+   --  primitive; revisit when Phase 4 adds that surface.
+   --  (PR #7 R1 review feedback — "lock-free" wording dropped.)
    Spawn_Counter : Natural := 0
      with Atomic;
 

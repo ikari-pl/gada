@@ -137,15 +137,18 @@ type emitter struct {
 	err                 error
 }
 
-// pendingChanRecv pairs a `v := <-c` LHS name with its chan operand
-// and the pre-resolved Channels_Of_<T> instantiation prefix. Resolving
-// Pkg at queue-time (in emitVarDecl, where the operand is being
-// validated anyway) eliminates a defensive re-lookup in
-// emitChanRecvBlock — by the time the block emits, localTypes might
-// in principle have shifted, but reading from the stashed snapshot
-// keeps the body-side emit deterministic and free of error branches.
+// pendingChanRecv pairs a `v := <-c` (sub-item d) or `v, ok := <-c`
+// (sub-item e) LHS name(s) with their chan operand and pre-resolved
+// Channels_Of_<T> instantiation prefix. OKName empty = single-value
+// form (sub-item d): emit wraps Receive in an inner declare scope
+// with a local Discard_OK Boolean. OKName non-empty = comma-ok form
+// (sub-item e): OK is declared in the function's outer declarative
+// region (visible to the rest of the body) and Receive emits as a
+// single statement at body level — no inner scope, because the OK
+// flag IS the user's `ok` variable.
 type pendingChanRecv struct {
 	LHSName string
+	OKName  string
 	Chan    ir.Expr
 	Pkg     string
 }
@@ -1456,6 +1459,17 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 	if e.err != nil {
 		return
 	}
+	// Comma-ok receive (`v, ok := <-c`, sub-item e) is the only
+	// 2-LHS-1-RHS shape emit accepts at the head of a function body.
+	// Detect it before the single-LHS guard fires below, then dispatch
+	// to the shared ChanRecv path; everything else with multi-LHS still
+	// hits the rejection.
+	if len(a.LHS) == 2 && len(a.RHS) == 1 {
+		if cr, isRecv := a.RHS[0].(*ir.ChanRecv); isRecv && cr.CommaOK {
+			e.emitChanRecvDecl(a, cr)
+			return
+		}
+	}
 	if len(a.LHS) != 1 || len(a.RHS) != 1 {
 		e.fail(fmt.Errorf("emit: multi-value := not supported in Phase 1"))
 		return
@@ -1465,41 +1479,19 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 		e.fail(fmt.Errorf("emit: := lhs must be a plain identifier in Phase 1"))
 		return
 	}
-	// `v := <-c` is the channel-receive shape (sub-item d). It can't
-	// follow the standard `V : T := <expr>` mold because Receive is a
-	// procedure with an `out` Value parameter, not a function — there
-	// is no expression form. Emit the declaration uninitialized
-	// (`V : T;`) and queue the receive call for the body-side prelude
-	// in emitSubprogram. Comma-ok form (`v, ok := <-c`) lands in
-	// sub-item (e); rejecting CommaOK explicitly here keeps the
-	// failure axis clear while sub-item (d) is the only ChanRecv
-	// shape emit understands.
+	// `v := <-c` is the single-value channel-receive shape (sub-item d).
+	// It can't follow the standard `V : T := <expr>` mold because
+	// Receive is a procedure with an `out` Value parameter, not a
+	// function. emitChanRecvDecl handles both single- and comma-ok
+	// forms; CommaOK=true should never reach here (the 2-LHS branch
+	// above intercepts), so a true value at this point means a
+	// translate bug — surface it.
 	if cr, ok := a.RHS[0].(*ir.ChanRecv); ok {
 		if cr.CommaOK {
-			e.fail(fmt.Errorf("emit: comma-ok receive (v, ok := <-c) lands in sub-item e"))
+			e.fail(fmt.Errorf("emit: ChanRecv with CommaOK=true must arrive via 2-LHS Assign, got 1 LHS"))
 			return
 		}
-		elem, ok := e.chanElemTypeOfExpr(cr.Chan)
-		if !ok {
-			e.fail(fmt.Errorf("emit: ChanRecv on non-chan or non-ident operand not supported in Phase 3"))
-			return
-		}
-		tname, err := typeName(elem)
-		if err != nil {
-			e.fail(err)
-			return
-		}
-		pkg, err := chanPkgFor(elem)
-		if err != nil {
-			e.fail(err)
-			return
-		}
-		e.println(adaIdent(id.Name) + " : " + tname + ";")
-		e.pendingRecvs = append(e.pendingRecvs, pendingChanRecv{
-			LHSName: id.Name,
-			Chan:    cr.Chan,
-			Pkg:     pkg,
-		})
+		e.emitChanRecvDecl(a, cr)
 		return
 	}
 	typ, err := inferDeclType(a.RHS[0])
@@ -1509,6 +1501,58 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 	}
 	rhs := e.emitExpr(a.RHS[0])
 	e.println(adaIdent(id.Name) + " : " + typ + " := " + rhs + ";")
+}
+
+// emitChanRecvDecl is the shared declarative-region emit for both
+// `v := <-c` (sub-item d, CommaOK=false, OKName empty in pending
+// queue) and `v, ok := <-c` (sub-item e, CommaOK=true, OKName set).
+// It validates the chan operand, emits `V : T;` (and `OK : Boolean;`
+// if comma-ok) at the current indent, and queues a pendingChanRecv
+// for emitSubprogram to drain at body entry. Centralising the LHS
+// validation + chan-elem resolution here keeps the two callers
+// (single-value and comma-ok) using one path through the elem-type /
+// pkg lookup, so a future widening (e.g. selector-typed chan operand)
+// only changes one site.
+func (e *emitter) emitChanRecvDecl(a *ir.Assign, cr *ir.ChanRecv) {
+	vID, ok := a.LHS[0].(*ir.Ident)
+	if !ok {
+		e.fail(fmt.Errorf("emit: := lhs must be a plain identifier"))
+		return
+	}
+	var okName string
+	if cr.CommaOK {
+		okID, ok := a.LHS[1].(*ir.Ident)
+		if !ok {
+			e.fail(fmt.Errorf("emit: comma-ok := second lhs must be a plain identifier"))
+			return
+		}
+		okName = okID.Name
+	}
+	elem, ok := e.chanElemTypeOfExpr(cr.Chan)
+	if !ok {
+		e.fail(fmt.Errorf("emit: ChanRecv on non-chan or non-ident operand not supported in Phase 3"))
+		return
+	}
+	tname, err := typeName(elem)
+	if err != nil {
+		e.fail(err)
+		return
+	}
+	pkg, err := chanPkgFor(elem)
+	if err != nil {
+		e.fail(err)
+		return
+	}
+	e.println(adaIdent(vID.Name) + " : " + tname + ";")
+	if cr.CommaOK {
+		e.println(adaIdent(okName) + " : Boolean;")
+	}
+	e.pendingRecvs = append(e.pendingRecvs, pendingChanRecv{
+		LHSName: vID.Name,
+		OKName:  okName,
+		Chan:    cr.Chan,
+		Pkg:     pkg,
+	})
 }
 
 // inferDeclType maps a `:=` RHS to its Ada type name. Phase 1
@@ -2296,15 +2340,28 @@ func (e *emitter) chanElemTypeOfExpr(x ir.Expr) (ir.Type, bool) {
 // translate's transSend (which lets non-chan-typed Ident operands
 // through because translate doesn't have *types.Info wired yet — that
 // arrives in a later phase).
-// emitChanRecvBlock emits the body-side `declare Discard_OK :
-// Boolean; begin Channels_Of_T.Receive (C, V, Discard_OK); end;`
-// block for one queued `v := <-c` define. Called from emitSubprogram
-// in source order. The inner declare scope is what makes Discard_OK
-// collision-safe across multiple receive sites in the same function.
-// Pkg is the pre-resolved Channels_Of_<T> prefix stashed by
-// emitVarDecl when the receive was queued — no re-lookup needed.
+// emitChanRecvBlock emits the body-side receive call for one queued
+// pendingChanRecv entry. Two shapes:
+//
+//   - Single-value (sub-item d, OKName empty): wrap the call in an
+//     inner `declare Discard_OK : Boolean; begin … end;` so the
+//     throwaway OK is local to this site (multiple receives in one
+//     function each get a fresh Discard_OK with no naming collision).
+//
+//   - Comma-ok (sub-item e, OKName non-empty): emit a single call
+//     `Channels_Of_T.Receive (C, V, OK);` directly at body level —
+//     OK was hoisted to the function's outer declarative region by
+//     emitChanRecvDecl, so the user's `if ok { … }` after this point
+//     sees the actual receive result.
+//
+// Pkg is the pre-resolved Channels_Of_<T> prefix stashed at queue
+// time so the body emit is deterministic and free of error branches.
 func (e *emitter) emitChanRecvBlock(pr pendingChanRecv) {
 	c := e.emitExpr(pr.Chan)
+	if pr.OKName != "" {
+		e.println(pr.Pkg + ".Receive (" + c + ", " + adaIdent(pr.LHSName) + ", " + adaIdent(pr.OKName) + ");")
+		return
+	}
 	e.println("declare")
 	e.indent++
 	e.println("Discard_OK : Boolean;")

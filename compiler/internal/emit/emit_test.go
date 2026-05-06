@@ -48,6 +48,8 @@ var corpusFixtures = []string{
 	"chan_send",
 	// Phase 3 — channel-emit (sub-item d: v := <-c single-value receive).
 	"chan_recv_single",
+	// Phase 3 — channel-emit (sub-item e: v, ok := <-c comma-ok receive).
+	"chan_recv_commaok",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -827,9 +829,13 @@ func TestChanRecvUnsupportedShapes(t *testing.T) {
 		fn      *ir.Function
 		wantSub string
 	}{
-		// CommaOK=true at the := head: emit-side rejection until
-		// sub-item (e) lands. Reaches emitVarDecl's CommaOK guard.
-		{"comma-ok form", &ir.Function{
+		// Malformed IR: ChanRecv with CommaOK=true but only 1 LHS.
+		// Sub-item (e) ships the comma-ok lowering, but the path is
+		// gated on the 2-LHS branch in emitVarDecl. A translate bug
+		// that produced CommaOK=true with only 1 LHS would land at the
+		// defensive guard below — surface it loudly rather than silently
+		// emit `V : Integer;` with no OK declaration.
+		{"comma-ok with 1 lhs", &ir.Function{
 			Name:   "f",
 			Params: []*ir.Param{{Name: "c", Type: &ir.ChanType{Elem: &ir.IntType{}}}},
 			Body: []ir.Stmt{&ir.Assign{
@@ -837,7 +843,7 @@ func TestChanRecvUnsupportedShapes(t *testing.T) {
 				LHS:    []ir.Expr{idn("v")},
 				RHS:    []ir.Expr{&ir.ChanRecv{Chan: idn("c"), CommaOK: true}},
 			}},
-		}, "sub-item e"},
+		}, "must arrive via 2-LHS"},
 		// chanElemTypeOfExpr branch A: non-Ident chan operand. The
 		// receive RHS is a literal, which can't be chan-typed.
 		{"non-ident chan operand", &ir.Function{
@@ -886,6 +892,44 @@ func TestChanRecvUnsupportedShapes(t *testing.T) {
 				RHS:    []ir.Expr{&ir.ChanRecv{Chan: idn("c"), CommaOK: false}},
 			}},
 		}, "expression position"},
+		// Comma-ok with second-LHS non-Ident: defensive guard in
+		// emitChanRecvDecl that catches a translate bug producing
+		// e.g. `lit, ok := <-c` (impossible from real Go source, but
+		// IR-level fabrication needs a clear failure axis).
+		{"comma-ok 2nd lhs non-ident", &ir.Function{
+			Name:   "f",
+			Params: []*ir.Param{{Name: "c", Type: &ir.ChanType{Elem: &ir.IntType{}}}},
+			Body: []ir.Stmt{&ir.Assign{
+				Define: true,
+				LHS:    []ir.Expr{idn("v"), litInt("0")},
+				RHS:    []ir.Expr{&ir.ChanRecv{Chan: idn("c"), CommaOK: true}},
+			}},
+		}, "second lhs"},
+		// Comma-ok with first-LHS non-Ident: same defensive guard
+		// (V identifier slot).
+		{"comma-ok 1st lhs non-ident", &ir.Function{
+			Name:   "f",
+			Params: []*ir.Param{{Name: "c", Type: &ir.ChanType{Elem: &ir.IntType{}}}},
+			Body: []ir.Stmt{&ir.Assign{
+				Define: true,
+				LHS:    []ir.Expr{litInt("0"), idn("ok")},
+				RHS:    []ir.Expr{&ir.ChanRecv{Chan: idn("c"), CommaOK: true}},
+			}},
+		}, "plain identifier"},
+		// Comma-ok with non-chan operand: chanElemTypeOfExpr fails on
+		// the comma-ok path (sub-item d already pinned this for the
+		// single-value path; mirror the case so both code paths
+		// through emitChanRecvDecl exercise the chan-resolution
+		// rejection).
+		{"comma-ok non-chan operand", &ir.Function{
+			Name:   "f",
+			Params: []*ir.Param{{Name: "c", Type: &ir.IntType{}}},
+			Body: []ir.Stmt{&ir.Assign{
+				Define: true,
+				LHS:    []ir.Expr{idn("v"), idn("ok")},
+				RHS:    []ir.Expr{&ir.ChanRecv{Chan: idn("c"), CommaOK: true}},
+			}},
+		}, "ChanRecv"},
 	}
 
 	for _, tc := range cases {

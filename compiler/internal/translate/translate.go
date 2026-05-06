@@ -384,6 +384,17 @@ func transAssign(s *ast.AssignStmt) (*ir.Assign, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Comma-ok receive: `v, ok := <-c` is the only Go-level
+	// 2-LHS-1-RHS shape that a single ChanRecv satisfies. Flip
+	// CommaOK on the receive so emit picks the OK-visible
+	// lowering. Other 2-LHS-1-RHS shapes (multi-return calls,
+	// type assertions) still fall through to emit's existing
+	// rejection.
+	if len(lhs) == 2 && len(rhs) == 1 {
+		if cr, ok := rhs[0].(*ir.ChanRecv); ok {
+			cr.CommaOK = true
+		}
+	}
 	return &ir.Assign{LHS: lhs, Define: s.Tok == token.DEFINE, RHS: rhs}, nil
 }
 

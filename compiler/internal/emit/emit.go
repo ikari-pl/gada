@@ -128,6 +128,8 @@ type emitter struct {
 	sliceElemOrder      []string
 	mapPairs            map[string]*ir.MapType
 	mapPairOrder        []string
+	chanElems           map[string]ir.Type // mirror of sliceElems but for `chan T` — drives one `package Channels_Of_<T> is new Gada.Async.Channels.Bounded (Element_Type => T);` per distinct chan element-type per file. Keyed by Ada base name (e.g. "Integer"). Inserted by recordChanElem; insertion order preserved in chanElemOrder.
+	chanElemOrder       []string
 	localTypes          map[string]ir.Type
 	rangeCounter        int
 	goIndex             map[*ir.GoStmt]int // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
@@ -140,6 +142,7 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		file:       f,
 		sliceElems: map[string]ir.Type{},
 		mapPairs:   map[string]*ir.MapType{},
+		chanElems:  map[string]ir.Type{},
 		goIndex:    map[*ir.GoStmt]int{},
 	}
 	for _, imp := range f.Imports {
@@ -185,6 +188,9 @@ func (e *emitter) recordTypeInTree(t ir.Type) {
 		e.recordMapPair(t)
 		e.recordTypeInTree(t.Key)
 		e.recordTypeInTree(t.Value)
+	case *ir.ChanType:
+		e.recordChanElem(t.Elem)
+		e.recordTypeInTree(t.Elem)
 	}
 }
 
@@ -201,6 +207,23 @@ func (e *emitter) recordMapPair(m *ir.MapType) {
 	if _, present := e.mapPairs[key]; !present {
 		e.mapPairs[key] = m
 		e.mapPairOrder = append(e.mapPairOrder, key)
+	}
+}
+
+// recordChanElem mirrors recordSliceElem for chans. The elemBaseName
+// computation is shared because Channels_Of_<T> follows the exact
+// same naming discipline as Slices_Of_<T> — Ada Identifier-friendly
+// base names so the emitted instantiation list compiles without
+// further mangling.
+func (e *emitter) recordChanElem(elem ir.Type) {
+	name, err := elemBaseName(elem)
+	if err != nil {
+		e.fail(err)
+		return
+	}
+	if _, present := e.chanElems[name]; !present {
+		e.chanElems[name] = elem
+		e.chanElemOrder = append(e.chanElemOrder, name)
 	}
 }
 
@@ -294,6 +317,17 @@ func (e *emitter) walkExpr(x ir.Expr) {
 		for _, el := range x.Elems {
 			e.walkExpr(el)
 		}
+	case *ir.MakeChan:
+		// `make (chan T, …)` triggers a `Channels_Of_<T>` instantiation
+		// at the top of the file; record both the element-type seam
+		// (drives the instantiation list) and any nested types it
+		// would need to reach (e.g. `chan []int` would record the
+		// inner []int's slice instantiation too).
+		e.recordChanElem(x.Elem)
+		e.recordTypeInTree(x.Elem)
+		if x.Capacity != nil {
+			e.walkExpr(x.Capacity)
+		}
 	case *ir.MapLit:
 		e.recordMapPair(&ir.MapType{Key: x.Key, Value: x.Value})
 		e.recordTypeInTree(x.Key)
@@ -337,6 +371,9 @@ func (e *emitter) run() error {
 		e.println("with Gada.Core.Maps;")
 		e.println("with Gada.Core.Hash;")
 	}
+	if len(e.chanElemOrder) > 0 {
+		e.println("with Gada.Async.Channels.Bounded;")
+	}
 	if e.needsCoreDefer {
 		e.println("with Gada.Core.Defer;")
 	}
@@ -347,7 +384,8 @@ func (e *emitter) run() error {
 		e.println("with Gada.Async.Scheduler;")
 	}
 	if e.needsCoreIO || len(e.sliceElemOrder) > 0 || len(e.mapPairOrder) > 0 ||
-		e.needsCoreDefer || e.needsCorePanic || e.needsAsyncScheduler {
+		len(e.chanElemOrder) > 0 || e.needsCoreDefer || e.needsCorePanic ||
+		e.needsAsyncScheduler {
 		e.println("")
 	}
 	if e.pkgName == "main" {
@@ -372,6 +410,21 @@ func (e *emitter) emitSliceInstantiations() {
 	for _, k := range e.sliceElemOrder {
 		e.println("package Slices_Of_" + k +
 			" is new Gada.Core.Slices (Element_Type => " + k + ");")
+	}
+}
+
+// emitChannelInstantiations writes one
+// `package Channels_Of_<T> is new Gada.Async.Channels.Bounded (Element_Type => <T>);`
+// line per distinct chan element type collected in chanElemOrder.
+// Channels are always Bounded in Phase 3 — `make (chan T)`
+// (unbuffered) lowers to Bounded.Make (1) per the runtime spec; a
+// future Channels.Synchronous / Channels.Unbuffered package would
+// need a parallel chanElemOrder split, which we defer until any
+// real corpus distinguishes the two.
+func (e *emitter) emitChannelInstantiations() {
+	for _, k := range e.chanElemOrder {
+		e.println("package Channels_Of_" + k +
+			" is new Gada.Async.Channels.Bounded (Element_Type => " + k + ");")
 	}
 }
 
@@ -542,6 +595,18 @@ func slicePkgFor(elem ir.Type) (string, error) {
 	return "Slices_Of_" + t, nil
 }
 
+// chanPkgFor returns the Channels_Of_<T> instantiation prefix for a
+// channel whose element type is elem. Mirrors slicePkgFor; used by
+// every channel-dispatching emit site (MakeChan / Send / Receive /
+// Close / ChanType-as-decl).
+func chanPkgFor(elem ir.Type) (string, error) {
+	t, err := elemBaseName(elem)
+	if err != nil {
+		return "", err
+	}
+	return "Channels_Of_" + t, nil
+}
+
 // println writes a single line, prefixed with the current indent
 // (three spaces per level — matches the runtime style). An empty
 // string emits a bare newline with no indentation, used for the
@@ -618,8 +683,9 @@ func (e *emitter) emitMainProcedure() {
 
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0
+	hasChans := len(e.chanElemOrder) > 0
 	hasPanic := e.needsCorePanic
-	hasDeclSection := hasSlices || hasMaps || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0
+	hasDeclSection := hasSlices || hasMaps || hasChans || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0
 
 	e.println("procedure Main is")
 	if hasDeclSection {
@@ -636,13 +702,19 @@ func (e *emitter) emitMainProcedure() {
 	if hasMaps {
 		e.emitMapInstantiations()
 	}
-	if (hasSlices || hasMaps) && hasPanic {
+	if (hasSlices || hasMaps) && hasChans {
+		e.println("")
+	}
+	if hasChans {
+		e.emitChannelInstantiations()
+	}
+	if (hasSlices || hasMaps || hasChans) && hasPanic {
 		e.println("")
 	}
 	if hasPanic {
 		e.emitPanicInstantiation()
 	}
-	if (hasSlices || hasMaps || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
+	if (hasSlices || hasMaps || hasChans || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
 		e.println("")
 	}
 	for i, fn := range others {
@@ -764,10 +836,11 @@ func (e *emitter) emitPackageBody() {
 
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0
+	hasChans := len(e.chanElemOrder) > 0
 	hasPanic := e.needsCorePanic
 
 	e.println("package body " + pkg + " is")
-	if hasSlices || hasMaps || hasPanic || len(fns) > 0 {
+	if hasSlices || hasMaps || hasChans || hasPanic || len(fns) > 0 {
 		e.println("")
 	}
 
@@ -781,13 +854,19 @@ func (e *emitter) emitPackageBody() {
 	if hasMaps {
 		e.emitMapInstantiations()
 	}
-	if (hasSlices || hasMaps) && hasPanic {
+	if (hasSlices || hasMaps) && hasChans {
+		e.println("")
+	}
+	if hasChans {
+		e.emitChannelInstantiations()
+	}
+	if (hasSlices || hasMaps || hasChans) && hasPanic {
 		e.println("")
 	}
 	if hasPanic {
 		e.emitPanicInstantiation()
 	}
-	if (hasSlices || hasMaps || hasPanic) && len(fns) > 0 {
+	if (hasSlices || hasMaps || hasChans || hasPanic) && len(fns) > 0 {
 		e.println("")
 	}
 	for i, fn := range fns {
@@ -798,7 +877,7 @@ func (e *emitter) emitPackageBody() {
 	}
 	e.indent--
 
-	if hasSlices || hasMaps || len(fns) > 0 {
+	if hasSlices || hasMaps || hasChans || len(fns) > 0 {
 		e.println("")
 	}
 	e.println("end " + pkg + ";")
@@ -1384,6 +1463,12 @@ func inferDeclType(x ir.Expr) (string, error) {
 			return "", err
 		}
 		return pkg + ".Map", nil
+	case *ir.MakeChan:
+		pkg, err := chanPkgFor(x.Elem)
+		if err != nil {
+			return "", err
+		}
+		return pkg + ".Channel", nil
 	}
 	return "", fmt.Errorf("emit: := requires a literal or composite RHS, got %T", x)
 }
@@ -1818,6 +1903,8 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		return e.emitSliceLit(x)
 	case *ir.MapLit:
 		return e.emitMapLit(x)
+	case *ir.MakeChan:
+		return e.emitMakeChan(x)
 	case *ir.IndexExpr:
 		return e.emitIndexExpr(x)
 	case *ir.SliceExpr:
@@ -1846,6 +1933,23 @@ func (e *emitter) emitSliceLit(s *ir.SliceLit) string {
 		parts = append(parts, e.emitExpr(el))
 	}
 	return pkg + ".From_Array ([" + strings.Join(parts, ", ") + "])"
+}
+
+// emitMakeChan dispatches `make (chan T, N)` to
+// `Channels_Of_<T>.Make (N)` and `make (chan T)` (Capacity nil) to
+// `Channels_Of_<T>.Make (1)` per the runtime's documented
+// behavioural approximation for unbuffered channels (see
+// `runtime/src/gada-async-channels-bounded.ads` § Make rationale).
+func (e *emitter) emitMakeChan(m *ir.MakeChan) string {
+	pkg, err := chanPkgFor(m.Elem)
+	if err != nil {
+		e.fail(err)
+		return ""
+	}
+	if m.Capacity == nil {
+		return pkg + ".Make (1)"
+	}
+	return pkg + ".Make (" + e.emitExpr(m.Capacity) + ")"
 }
 
 // emitIndexExpr dispatches `s[i]` (slice) to
@@ -2236,6 +2340,12 @@ func typeName(t ir.Type) (string, error) {
 			return "", err
 		}
 		return pkg + ".Map", nil
+	case *ir.ChanType:
+		pkg, err := chanPkgFor(t.Elem)
+		if err != nil {
+			return "", err
+		}
+		return pkg + ".Channel", nil
 	case nil:
 		return "", fmt.Errorf("emit: missing type")
 	}

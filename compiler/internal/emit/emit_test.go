@@ -42,6 +42,8 @@ var corpusFixtures = []string{
 	"main_defer", "main_panic", "main_defer_panic",
 	// Phase 3 — go-statement compiler emission.
 	"go_simple", "go_main", "go_main_via_helper",
+	// Phase 3 — channel-emit (sub-item b: make + per-element-type instantiation).
+	"chan_make",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs

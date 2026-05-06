@@ -220,6 +220,25 @@ type SliceLit struct {
 func (*SliceLit) irExpr()          {}
 func (*SliceLit) NodeKind() string { return "SliceLit" }
 
+// MakeChan is Go `make (chan T, N)` and `make (chan T)` (the latter
+// with Capacity == nil). Elem is the channel's element type, used by
+// the emitter to pick the right `Channels_Of_<T>` instantiation.
+// Capacity, when non-nil, is the buffer size; when nil, the runtime
+// uses Bounded.Make (1) as the documented behavioural approximation
+// for unbuffered channels (per gada-async-channels-bounded.ads § Make
+// rationale: a future Channels.Synchronous package will lift this to
+// proper rendezvous semantics; for now Bounded(1) preserves "send and
+// receive must both be ready" almost everywhere bar zero-buffer
+// races, which an unbuffered channel doesn't meaningfully expose
+// anyway).
+type MakeChan struct {
+	Elem     Type
+	Capacity Expr // nil for `make (chan T)` — see Channels.Bounded.Make doc
+}
+
+func (*MakeChan) irExpr()          {}
+func (*MakeChan) NodeKind() string { return "MakeChan" }
+
 // IndexExpr is `X[Index]`. The same node shape covers slice indexing
 // (`s[i]`) and map lookup (`m[k]`); the emitter resolves the
 // distinction by inspecting the static type of X via its declaration.
@@ -556,6 +575,12 @@ func unmarshalExpr(raw json.RawMessage) (Expr, error) {
 		return &n, nil
 	case "Selector":
 		var n Selector
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "MakeChan":
+		var n MakeChan
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1210,6 +1235,40 @@ func (e *SliceLit) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	e.Elems = elems
+	return nil
+}
+
+func (e *MakeChan) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind     string `json:"kind"`
+		Elem     Type   `json:"elem"`
+		Capacity Expr   `json:"capacity,omitempty"`
+	}{"MakeChan", e.Elem, e.Capacity})
+}
+
+func (e *MakeChan) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Elem     json.RawMessage `json:"elem"`
+		Capacity json.RawMessage `json:"capacity,omitempty"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
+		return fmt.Errorf("ir: MakeChan missing elem")
+	}
+	elem, err := unmarshalType(aux.Elem)
+	if err != nil {
+		return err
+	}
+	e.Elem = elem
+	if len(aux.Capacity) != 0 && string(aux.Capacity) != "null" {
+		capacity, err := unmarshalExpr(aux.Capacity)
+		if err != nil {
+			return err
+		}
+		e.Capacity = capacity
+	}
 	return nil
 }
 

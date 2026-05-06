@@ -57,6 +57,7 @@ func TestNodeKind(t *testing.T) {
 		{"DeferStmt", &DeferStmt{}, "DeferStmt"},
 		{"GoStmt", &GoStmt{}, "GoStmt"},
 		{"ChanType", &ChanType{}, "ChanType"},
+		{"MakeChan", &MakeChan{}, "MakeChan"},
 	}
 
 	for _, tc := range cases {
@@ -100,6 +101,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Expr = &SliceExpr{}
 	var _ Expr = &BuiltinCall{} // recover() at expression position
 	var _ Expr = &MapLit{}
+	var _ Expr = &MakeChan{}
 
 	var _ Type = &IntType{}
 	var _ Type = &StringType{}
@@ -280,6 +282,21 @@ func TestSliceTypeMissingElem(t *testing.T) {
 	}
 	if _, err := unmarshalType(json.RawMessage(`{"kind":"SliceType","elem":null}`)); err == nil {
 		t.Fatal("expected error for SliceType with null elem")
+	}
+}
+
+// TestMakeChanMissingElem locks the explicit-error branch in
+// MakeChan.UnmarshalJSON: a `make (chan T, …)` lowering whose
+// Elem disappears would silently emit `Channels_Of_<empty>`,
+// which would compile-fail downstream with a confusing GNAT
+// error rather than surfacing the bug here.
+func TestMakeChanMissingElem(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"MakeChan"}`)); err == nil {
+		t.Fatal("expected error for MakeChan without elem")
+	}
+	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"MakeChan","elem":null}`)); err == nil {
+		t.Fatal("expected error for MakeChan with null elem")
 	}
 }
 
@@ -533,6 +550,7 @@ func TestSentinels(t *testing.T) {
 	(&BuiltinCall{}).irExpr()
 	(&BuiltinCall{}).irStmt()
 	(&MapLit{}).irExpr()
+	(&MakeChan{}).irExpr()
 	(&RangeStmt{}).irStmt()
 	(&DeferStmt{}).irStmt()
 	(&GoStmt{}).irStmt()
@@ -625,6 +643,7 @@ func TestPropagatedDecodeErrors(t *testing.T) {
 		{"RangeStmt", `{"kind":"RangeStmt","body":"not-array"}`, stmtErr},
 		{"DeferStmt", `{"kind":"DeferStmt","call":42}`, stmtErr},
 		{"GoStmt", `{"kind":"GoStmt","call":42}`, stmtErr},
+		{"MakeChan", `{"kind":"MakeChan","elem":{"kind":"IntType"},"capacity":42}`, exprErr},
 	}
 
 	for _, tc := range cases {
@@ -694,6 +713,8 @@ func TestPropagatedChildErrors(t *testing.T) {
 		{"DeferStmt.Call bad child", `{"kind":"DeferStmt","call":` + bad + `}`, stmtErr},
 		{"GoStmt.Call bad child", `{"kind":"GoStmt","call":` + bad + `}`, stmtErr},
 		{"ChanType.Elem bad type", `{"kind":"ChanType","elem":` + bad + `}`, func(b json.RawMessage) error { _, err := unmarshalType(b); return err }},
+		{"MakeChan.Elem bad type", `{"kind":"MakeChan","elem":` + bad + `}`, exprErr},
+		{"MakeChan.Capacity bad child", `{"kind":"MakeChan","elem":{"kind":"IntType"},"capacity":` + bad + `}`, exprErr},
 	}
 
 	for _, tc := range cases {

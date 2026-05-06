@@ -83,7 +83,7 @@ linters:
       # This exclusion does NOT cover top-level types/functions or
       # any non-IR exported names — those still need doc comments.
       - path: compiler/internal/ir/ir\.go
-        text: "exported method (Function|Assign|If|For|Return|Call|ExprStmt|Ident|Lit|BinOp|UnaryOp|Selector|IntType|StringType|BoolType|Float64Type|SliceType|SliceLit|IndexExpr|SliceExpr|BuiltinCall|MapType|MapLit|MapEntry|RangeStmt|DeferStmt|GoStmt|Package|File|Param)\\.(NodeKind|MarshalJSON|UnmarshalJSON)"
+        text: "exported method (Function|Assign|If|For|Return|Call|ExprStmt|Ident|Lit|BinOp|UnaryOp|Selector|IntType|StringType|BoolType|Float64Type|SliceType|SliceLit|IndexExpr|SliceExpr|BuiltinCall|MapType|MapLit|MapEntry|RangeStmt|DeferStmt|GoStmt|ChanType|Package|File|Param)\\.(NodeKind|MarshalJSON|UnmarshalJSON)"
         linters: [revive]
       # revive's `exported` rule on the LitKind enum constants. The
       # block-doc above the const () already explains every value.

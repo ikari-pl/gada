@@ -56,6 +56,7 @@ func TestNodeKind(t *testing.T) {
 		{"RangeStmt", &RangeStmt{}, "RangeStmt"},
 		{"DeferStmt", &DeferStmt{}, "DeferStmt"},
 		{"GoStmt", &GoStmt{}, "GoStmt"},
+		{"ChanType", &ChanType{}, "ChanType"},
 	}
 
 	for _, tc := range cases {
@@ -106,6 +107,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Type = &Float64Type{}
 	var _ Type = &SliceType{}
 	var _ Type = &MapType{}
+	var _ Type = &ChanType{}
 }
 
 // TestRoundTripHello marshals the canonical hello-world IR, unmarshals
@@ -278,6 +280,20 @@ func TestSliceTypeMissingElem(t *testing.T) {
 	}
 	if _, err := unmarshalType(json.RawMessage(`{"kind":"SliceType","elem":null}`)); err == nil {
 		t.Fatal("expected error for SliceType with null elem")
+	}
+}
+
+// TestChanTypeMissingElem mirrors the SliceType guard for ChanType:
+// a `ChanType` with no `elem` field is nonsensical (Go's `chan` with
+// no element type does not exist as a syntactic form), so the
+// explicit-error branch in ChanType.UnmarshalJSON must fire.
+func TestChanTypeMissingElem(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"ChanType"}`)); err == nil {
+		t.Fatal("expected error for ChanType without elem")
+	}
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"ChanType","elem":null}`)); err == nil {
+		t.Fatal("expected error for ChanType with null elem")
 	}
 }
 
@@ -527,6 +543,7 @@ func TestSentinels(t *testing.T) {
 	(&Float64Type{}).irType()
 	(&SliceType{}).irType()
 	(&MapType{}).irType()
+	(&ChanType{}).irType()
 }
 
 // TestNilListHelpers exercises the nil-vs-empty branch of the slice
@@ -676,6 +693,7 @@ func TestPropagatedChildErrors(t *testing.T) {
 		{"RangeStmt.Body bad child", `{"kind":"RangeStmt","body":[` + bad + `]}`, stmtErr},
 		{"DeferStmt.Call bad child", `{"kind":"DeferStmt","call":` + bad + `}`, stmtErr},
 		{"GoStmt.Call bad child", `{"kind":"GoStmt","call":` + bad + `}`, stmtErr},
+		{"ChanType.Elem bad type", `{"kind":"ChanType","elem":` + bad + `}`, func(b json.RawMessage) error { _, err := unmarshalType(b); return err }},
 	}
 
 	for _, tc := range cases {

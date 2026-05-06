@@ -142,8 +142,9 @@ func transFieldList(fl *ast.FieldList) ([]*ir.Param, error) {
 
 // transType maps the recognised Go type names and shapes to their IR
 // counterparts. Phase 1 covered the four basic types; Phase 2 adds
-// `[]T` (slice) and `map[K]V`. Fixed-size arrays (`[N]T`), named
-// types, struct, channel, and function types are deferred.
+// `[]T` (slice) and `map[K]V`; Phase 3 adds `chan T`. Fixed-size
+// arrays (`[N]T`), named types, struct types, function types, and
+// directional channel types (`chan<- T`, `<-chan T`) are deferred.
 func transType(e ast.Expr) (ir.Type, error) {
 	switch t := e.(type) {
 	case *ast.Ident:
@@ -178,6 +179,19 @@ func transType(e ast.Expr) (ir.Type, error) {
 			return nil, err
 		}
 		return &ir.MapType{Key: k, Value: v}, nil
+	case *ast.ChanType:
+		// Phase 3 supports only bidirectional `chan T`; Go's directional
+		// `chan<- T` and `<-chan T` (Dir != SEND|RECV) are deferred until
+		// the runtime gets dedicated send-only / recv-only subtypes.
+		// `ast.SEND | ast.RECV` is the bidirectional bitmask.
+		if t.Dir != ast.SEND|ast.RECV {
+			return nil, fmt.Errorf("translate: directional channel types (chan<-, <-chan) not supported in Phase 3")
+		}
+		elem, err := transType(t.Value)
+		if err != nil {
+			return nil, err
+		}
+		return &ir.ChanType{Elem: elem}, nil
 	default:
 		return nil, fmt.Errorf("translate: unsupported type expr %T", e)
 	}

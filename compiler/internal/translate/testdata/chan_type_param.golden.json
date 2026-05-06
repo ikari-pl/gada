@@ -1,0 +1,31 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "chan_type_param.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "consume",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "c",
+              "type": {
+                "kind": "ChanType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": null,
+          "body": null
+        }
+      ]
+    }
+  ]
+}

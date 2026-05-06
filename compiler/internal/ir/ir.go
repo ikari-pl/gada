@@ -402,6 +402,23 @@ type MapType struct {
 func (*MapType) irType()          {}
 func (*MapType) NodeKind() string { return "MapType" }
 
+// ChanType is Go `chan T`. Translates to a generic instantiation of
+// `Gada.Async.Channels.Bounded` per element type — the emitter
+// tracks one `Channels_Of_<T>` per file. Phase 3 emits all chans
+// as bidirectional Bounded channels: `make (chan T)` (unbuffered)
+// lowers to `Bounded.Make (1)` per the runtime spec's documented
+// behavioural approximation, and `make (chan T, N)` to
+// `Bounded.Make (N)`. Send-only (`chan<- T`) and receive-only
+// (`<-chan T`) directional restrictions are an Ada subtype-of-
+// Channel concern — out of scope until the directional types are
+// observed in real corpora.
+type ChanType struct {
+	Elem Type
+}
+
+func (*ChanType) irType()          {}
+func (*ChanType) NodeKind() string { return "ChanType" }
+
 // ---------------------------------------------------------------------------
 // JSON marshaling and unmarshaling
 //
@@ -596,6 +613,12 @@ func unmarshalType(raw json.RawMessage) (Type, error) {
 		return &Float64Type{}, nil
 	case "SliceType":
 		var n SliceType
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "ChanType":
+		var n ChanType
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1122,6 +1145,31 @@ func (t *SliceType) UnmarshalJSON(b []byte) error {
 	}
 	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
 		return fmt.Errorf("ir: SliceType missing elem")
+	}
+	elem, err := unmarshalType(aux.Elem)
+	if err != nil {
+		return err
+	}
+	t.Elem = elem
+	return nil
+}
+
+func (t *ChanType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Elem Type   `json:"elem"`
+	}{"ChanType", t.Elem})
+}
+
+func (t *ChanType) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Elem json.RawMessage `json:"elem"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
+		return fmt.Errorf("ir: ChanType missing elem")
 	}
 	elem, err := unmarshalType(aux.Elem)
 	if err != nil {

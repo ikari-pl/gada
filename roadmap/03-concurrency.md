@@ -138,9 +138,37 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         *Done when:* `go f(x, y)` emits Ada that snapshots `x` and `y` at the spawn site (matching Go's "args evaluated at the call to `go`, not when the goroutine starts") and passes them into the goroutine via a per-spawn context. Mutations to `x` and `y` after the spawn must not be observed by the spawned goroutine.
 
 - [ ] **Compiler emission — channel operations**
-      *Files:* `compiler/internal/emit/channel.go`, golden tests
-      *Verify:* `cd compiler && go test ./internal/emit/... -run Channel`
-      *Done when:* `make(chan T, N)`, `c <- v`, `<-c`, `close(c)` all emit correctly.
+
+  - [x] **(a) `chan T` IR + translate-side support**
+        *Files:* `compiler/internal/ir/ir.go` (`*ir.ChanType` Type variant), `compiler/internal/ir/ir_test.go` (NodeKind / SealedInterfaces / sentinel / round-trip-error coverage), `compiler/internal/translate/translate.go` (`transType` `*ast.ChanType` arm + bidirectional-only guard), `compiler/internal/translate/testdata/chan_type_param.{go,golden.json}`, `.golangci.yml` (revive doc-exclusion).
+        *Verify:* `cd compiler && go test ./internal/ir/... ./internal/translate/...`
+        *Done when:* Go `chan T` parsed in any type position (function param, return, local) round-trips through translate as `*ir.ChanType{Elem: T}`. Directional channel types (`chan<- T` / `<-chan T`) reject with a clear error pointing at sub-item (b)/(c)/etc. and do *not* silently lower to bidirectional. The runtime's `Channels.Bounded` already implements bidirectional semantics; this commit is the IR seam emit will pick up.
+        *Done 2026-05-06:* `*ir.ChanType{Elem: Type}` joins the Type sum-type alongside `*ir.SliceType` and `*ir.MapType`. JSON round-trip via the standard `kind` discriminant + the symmetric Marshal/Unmarshal pair (`ChanType missing elem` is the explicit-error guard that prevents a silently-Elem-nil node from round-tripping). Translate's `transType` adds an `*ast.ChanType` arm with an explicit bidirectional guard (`t.Dir != ast.SEND|ast.RECV` → typed error) so future directional sub-items can be detected by the existing emit-side rejection rather than an "unsupported type expr" surface error. One translate corpus fixture (`chan_type_param.go`: `func consume(c chan int) {}`) pins the Param-type round-trip; ir_test gains `TestChanTypeMissingElem`, `ChanType.Elem bad type` propagated-child case, NodeKind / SealedInterfaces / sentinel registrations. The emit corpus list is intentionally NOT extended — this milestone is IR + translate only, emit will pick up `Channels_Of_<T>` instantiations and Send/Receive/Close/Make in sub-item (b). The TestErrorCases "non-ident param type" case retargeted from `chan int` (now valid) to `func()` (still unsupported), with a new "directional chan param" case pinning the bidirectional-only guard. Coverage gates green: runtime/ 100% (704/704), emit 96.40%, translate 96.64% (316/327), compiler 95.70%.
+
+  - [ ] **(b) `make (chan T, N)` + per-element-type instantiation**
+        *Files:* `compiler/internal/translate/translate.go` (extend `tryBuiltinCall` for `make` with `chan T` first arg + capacity), `compiler/internal/ir/ir.go` (`*ir.MakeChan{Elem, Capacity}` Expr variant), `compiler/internal/emit/emit.go` (per-`Channels_Of_<T>` instantiation file-wide + `Make (Capacity)` lowering), corpus fixtures.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/chan_make`
+        *Done when:* `c := make(chan int, 8)` emits `package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);` once per file (mirroring slice/map instantiations) plus `C : Channels_Of_Integer.Channel := Channels_Of_Integer.Make (8);` in the declarative region. `make (chan T)` (unbuffered) lowers to `Make (1)` per the runtime spec's documented behavioural approximation.
+
+  - [ ] **(c) `c <- v` send statement**
+        *Files:* `compiler/internal/ir/ir.go` (`*ir.ChanSend{Chan, Value}` Stmt variant), `compiler/internal/translate/translate.go` (`*ast.SendStmt` arm), `compiler/internal/emit/emit.go` (Send call lowering), corpus fixture.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/chan_send`
+        *Done when:* `c <- v;` emits `Channels_Of_T.Send (C, V);` at the original source position; nested send sites (inside if/for) all route through the same emit path.
+
+  - [ ] **(d) `<-c` receive (single-value form)**
+        *Files:* `compiler/internal/ir/ir.go` (`*ir.ChanRecv{Chan, CommaOK bool}` Expr variant), `compiler/internal/translate/translate.go` (`*ast.UnaryExpr` ARROW arm), `compiler/internal/emit/emit.go` (Receive call with discarded OK), corpus fixture.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/chan_recv_single`
+        *Done when:* `v := <-c` emits the equivalent of `V : T; declare Discard_OK : Boolean; begin Channels_Of_T.Receive (C, V, Discard_OK); end;` (V hoisted to declarative region; the throwaway OK lives in an inner declare scope so its name never collides across multiple recv sites).
+
+  - [ ] **(e) `v, ok := <-c` comma-ok receive**
+        *Files:* `compiler/internal/emit/emit.go` (relax the multi-value `:=` rejection for the specific ChanRecv RHS shape), corpus fixture.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/chan_recv_commaok`
+        *Done when:* `v, ok := <-c` emits `V : T; OK : Boolean;` in decls + `Channels_Of_T.Receive (C, V, OK);` in body, with `OK` reflecting Go's "False on closed-empty, True on real receive" contract.
+
+  - [ ] **(f) `close (c)`**
+        *Files:* `compiler/internal/translate/translate.go` (add "close" to `builtinNames`), `compiler/internal/emit/emit.go` (Close lowering for the BuiltinCall shape), corpus fixture.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/chan_close`
+        *Done when:* `close(c)` emits `Channels_Of_T.Close (C);` and a subsequent receive on the closed channel returns the runtime's documented zero-value-with-OK-false (sub-item d) / OK-set-to-False (sub-item e) signal.
 
 - [ ] **Compiler emission — select statement**
       *Files:* `compiler/internal/emit/select.go`, golden tests

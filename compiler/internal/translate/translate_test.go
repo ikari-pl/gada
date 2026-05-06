@@ -52,6 +52,8 @@ func TestCorpus(t *testing.T) {
 		"main_defer.go", "main_panic.go", "main_defer_panic.go",
 		// Phase 3 — go-statement fixtures (compiler-emit go-stmt item).
 		"go_simple.go", "go_main.go", "go_main_via_helper.go",
+		// Phase 3 — channel-type fixture (channel-emit item, sub-item a).
+		"chan_type_param.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -182,7 +184,9 @@ func f() { _ = map[int]int{1: 1i} }`, "literal kind"},
 		{"unsupported param type name", `package p
 func f(x complex128) {}`, "unsupported type"},
 		{"non-ident param type", `package p
-func f(x chan int) {}`, "unsupported type expr"},
+func f(x func()) {}`, "unsupported type expr"},
+		{"directional chan param", `package p
+func f(x chan<- int) {}`, "directional channel types"},
 		{"map param bad key", `package p
 func f(x map[complex128]int) {}`, "unsupported type"},
 		{"map param bad value", `package p

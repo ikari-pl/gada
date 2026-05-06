@@ -366,6 +366,27 @@ type ChanSend struct {
 func (*ChanSend) irStmt()          {}
 func (*ChanSend) NodeKind() string { return "ChanSend" }
 
+// ChanRecv is Go's `<-c` receive expression. Modelled as an Expr
+// (not Stmt) because Go puts `<-c` in expression position — chiefly
+// `v := <-c` (single-value form, sub-item d) and `v, ok := <-c`
+// (comma-ok form, sub-item e). The two forms differ only in
+// CommaOK: false discards the receive's success flag (emit hides
+// it in an inner declare scope), true exposes it to a second LHS.
+//
+// The IR carries CommaOK from the start so sub-items (d) and (e)
+// share one Expr variant rather than introducing a second JSON kind
+// halfway through. Translate sets it from the surrounding
+// AssignStmt context (false for sub-item d's UnaryExpr-ARROW path);
+// emit rejects shapes it does not yet support with an explicit
+// "comma-ok arrives in sub-item e" message until that lands.
+type ChanRecv struct {
+	Chan    Expr
+	CommaOK bool
+}
+
+func (*ChanRecv) irExpr()          {}
+func (*ChanRecv) NodeKind() string { return "ChanRecv" }
+
 // BuiltinCall is a call to a Go predeclared function. Distinguished
 // from Call (which carries an arbitrary Fun expression) so the
 // emitter can dispatch by name without re-deriving builtin-ness.
@@ -605,6 +626,12 @@ func unmarshalExpr(raw json.RawMessage) (Expr, error) {
 		return &n, nil
 	case "MakeChan":
 		var n MakeChan
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "ChanRecv":
+		var n ChanRecv
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1610,5 +1637,33 @@ func (s *ChanSend) UnmarshalJSON(b []byte) error {
 	}
 	s.Chan = c
 	s.Value = v
+	return nil
+}
+
+func (e *ChanRecv) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind    string `json:"kind"`
+		Chan    Expr   `json:"chan"`
+		CommaOK bool   `json:"commaOk"`
+	}{"ChanRecv", e.Chan, e.CommaOK})
+}
+
+func (e *ChanRecv) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Chan    json.RawMessage `json:"chan"`
+		CommaOK bool            `json:"commaOk"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Chan) == 0 || string(aux.Chan) == "null" {
+		return fmt.Errorf("ir: ChanRecv missing chan")
+	}
+	c, err := unmarshalExpr(aux.Chan)
+	if err != nil {
+		return err
+	}
+	e.Chan = c
+	e.CommaOK = aux.CommaOK
 	return nil
 }

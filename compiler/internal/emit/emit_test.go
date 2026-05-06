@@ -46,6 +46,8 @@ var corpusFixtures = []string{
 	"chan_make",
 	// Phase 3 — channel-emit (sub-item c: c <- v send statement).
 	"chan_send",
+	// Phase 3 — channel-emit (sub-item d: v := <-c single-value receive).
+	"chan_recv_single",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -805,6 +807,99 @@ func TestChanSendUnsupportedShapes(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "ChanSend") {
 				t.Fatalf("wrong error (want substring \"ChanSend\"): %v", err)
+			}
+		})
+	}
+}
+
+// TestChanRecvUnsupportedShapes pins the four reachable defensive
+// branches around the `v := <-c` lowering: CommaOK rejection
+// (sub-item d limit; sub-item e widens it), the three
+// chanElemTypeOfExpr early-out branches (non-Ident, undeclared,
+// non-ChanType ident), and the emitExpr ChanRecv arm that fires
+// when `<-c` appears at general expression position. Mirror of
+// TestChanSendUnsupportedShapes.
+func TestChanRecvUnsupportedShapes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		fn      *ir.Function
+		wantSub string
+	}{
+		// CommaOK=true at the := head: emit-side rejection until
+		// sub-item (e) lands. Reaches emitVarDecl's CommaOK guard.
+		{"comma-ok form", &ir.Function{
+			Name:   "f",
+			Params: []*ir.Param{{Name: "c", Type: &ir.ChanType{Elem: &ir.IntType{}}}},
+			Body: []ir.Stmt{&ir.Assign{
+				Define: true,
+				LHS:    []ir.Expr{idn("v")},
+				RHS:    []ir.Expr{&ir.ChanRecv{Chan: idn("c"), CommaOK: true}},
+			}},
+		}, "sub-item e"},
+		// chanElemTypeOfExpr branch A: non-Ident chan operand. The
+		// receive RHS is a literal, which can't be chan-typed.
+		{"non-ident chan operand", &ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{&ir.Assign{
+				Define: true,
+				LHS:    []ir.Expr{idn("v")},
+				RHS:    []ir.Expr{&ir.ChanRecv{Chan: litInt("0"), CommaOK: false}},
+			}},
+		}, "ChanRecv"},
+		// chanElemTypeOfExpr branch B: bare Ident with no localTypes
+		// entry — the chan is referenced but never declared.
+		{"undeclared chan ident", &ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{&ir.Assign{
+				Define: true,
+				LHS:    []ir.Expr{idn("v")},
+				RHS:    []ir.Expr{&ir.ChanRecv{Chan: idn("c"), CommaOK: false}},
+			}},
+		}, "ChanRecv"},
+		// chanElemTypeOfExpr branch C: bare Ident in localTypes but
+		// as a non-chan type (here, an `int` parameter).
+		{"non-chan typed ident", &ir.Function{
+			Name:   "f",
+			Params: []*ir.Param{{Name: "c", Type: &ir.IntType{}}},
+			Body: []ir.Stmt{&ir.Assign{
+				Define: true,
+				LHS:    []ir.Expr{idn("v")},
+				RHS:    []ir.Expr{&ir.ChanRecv{Chan: idn("c"), CommaOK: false}},
+			}},
+		}, "ChanRecv"},
+		// emitExpr ChanRecv arm: `<-c` appears as the RHS of a
+		// non-define Assign (`v = <-c`, where v is a pre-existing
+		// variable). Sub-item (d) only handles the head-of-body
+		// `:=` shape; this lands at emitAssign → emitExpr →
+		// ChanRecv rejection arm.
+		{"<-c at non-define assign rhs", &ir.Function{
+			Name: "f",
+			Params: []*ir.Param{
+				{Name: "c", Type: &ir.ChanType{Elem: &ir.IntType{}}},
+				{Name: "v", Type: &ir.IntType{}},
+			},
+			Body: []ir.Stmt{&ir.Assign{
+				Define: false,
+				LHS:    []ir.Expr{idn("v")},
+				RHS:    []ir.Expr{&ir.ChanRecv{Chan: idn("c"), CommaOK: false}},
+			}},
+		}, "expression position"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pkg := wrapPkg(tc.fn)
+			var buf bytes.Buffer
+			err := Package(pkg, &buf)
+			if err == nil {
+				t.Fatalf("expected emit error, got success:\n%s", buf.String())
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("wrong error (want substring %q): %v", tc.wantSub, err)
 			}
 		})
 	}

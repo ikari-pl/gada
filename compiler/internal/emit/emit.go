@@ -133,7 +133,21 @@ type emitter struct {
 	localTypes          map[string]ir.Type
 	rangeCounter        int
 	goIndex             map[*ir.GoStmt]int // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
+	pendingRecvs        []pendingChanRecv  // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
 	err                 error
+}
+
+// pendingChanRecv pairs a `v := <-c` LHS name with its chan operand
+// and the pre-resolved Channels_Of_<T> instantiation prefix. Resolving
+// Pkg at queue-time (in emitVarDecl, where the operand is being
+// validated anyway) eliminates a defensive re-lookup in
+// emitChanRecvBlock — by the time the block emits, localTypes might
+// in principle have shifted, but reading from the stashed snapshot
+// keeps the body-side emit deterministic and free of error branches.
+type pendingChanRecv struct {
+	LHSName string
+	Chan    ir.Expr
+	Pkg     string
 }
 
 func newEmitter(pkg string, f *ir.File) *emitter {
@@ -337,6 +351,12 @@ func (e *emitter) walkExpr(x ir.Expr) {
 		if x.Capacity != nil {
 			e.walkExpr(x.Capacity)
 		}
+	case *ir.ChanRecv:
+		// `<-c` doesn't itself declare an element type — its operand
+		// (a chan-typed Ident) was registered when the chan was
+		// declared (param type or `make` literal). Just walk the
+		// operand so any nested expressions inside are visited.
+		e.walkExpr(x.Chan)
 	case *ir.MapLit:
 		e.recordMapPair(&ir.MapType{Key: x.Key, Value: x.Value})
 		e.recordTypeInTree(x.Key)
@@ -969,6 +989,9 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	if e.err != nil {
 		return
 	}
+	// Reset per-subprogram state before populateLocals so leftover
+	// pending receives from a previous subprogram never bleed in.
+	e.pendingRecvs = nil
 	e.populateLocals(fn)
 	header, name, ok := e.subpHeader(fn)
 	if !ok {
@@ -1023,7 +1046,17 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 		e.indent++
 	}
 
-	emittedAny := false
+	// Drain pending `v := <-c` receives in source order. Each lowers
+	// to a `declare Discard_OK : Boolean; begin
+	// Channels_Of_T.Receive (C, V, Discard_OK); end;` block. The
+	// receive happens before any subsequent body statement so Go's
+	// "RHS evaluates at the := point" semantics hold; the inner
+	// declare scope keeps Discard_OK from colliding across multiple
+	// receive sites and from leaking into the surrounding scope.
+	emittedAny := len(e.pendingRecvs) > 0
+	for _, pr := range e.pendingRecvs {
+		e.emitChanRecvBlock(pr)
+	}
 	if len(body) > 0 {
 		for _, s := range body {
 			if _, isDefer := s.(*ir.DeferStmt); !isDefer {
@@ -1430,6 +1463,43 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 	id, ok := a.LHS[0].(*ir.Ident)
 	if !ok {
 		e.fail(fmt.Errorf("emit: := lhs must be a plain identifier in Phase 1"))
+		return
+	}
+	// `v := <-c` is the channel-receive shape (sub-item d). It can't
+	// follow the standard `V : T := <expr>` mold because Receive is a
+	// procedure with an `out` Value parameter, not a function — there
+	// is no expression form. Emit the declaration uninitialized
+	// (`V : T;`) and queue the receive call for the body-side prelude
+	// in emitSubprogram. Comma-ok form (`v, ok := <-c`) lands in
+	// sub-item (e); rejecting CommaOK explicitly here keeps the
+	// failure axis clear while sub-item (d) is the only ChanRecv
+	// shape emit understands.
+	if cr, ok := a.RHS[0].(*ir.ChanRecv); ok {
+		if cr.CommaOK {
+			e.fail(fmt.Errorf("emit: comma-ok receive (v, ok := <-c) lands in sub-item e"))
+			return
+		}
+		elem, ok := e.chanElemTypeOfExpr(cr.Chan)
+		if !ok {
+			e.fail(fmt.Errorf("emit: ChanRecv on non-chan or non-ident operand not supported in Phase 3"))
+			return
+		}
+		tname, err := typeName(elem)
+		if err != nil {
+			e.fail(err)
+			return
+		}
+		pkg, err := chanPkgFor(elem)
+		if err != nil {
+			e.fail(err)
+			return
+		}
+		e.println(adaIdent(id.Name) + " : " + tname + ";")
+		e.pendingRecvs = append(e.pendingRecvs, pendingChanRecv{
+			LHSName: id.Name,
+			Chan:    cr.Chan,
+			Pkg:     pkg,
+		})
 		return
 	}
 	typ, err := inferDeclType(a.RHS[0])
@@ -1922,6 +1992,15 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		return e.emitSliceExpr(x)
 	case *ir.BuiltinCall:
 		return e.emitBuiltinCall(x)
+	case *ir.ChanRecv:
+		// Receive is a procedure with an `out` Value parameter, not a
+		// function — there is no expression form to splice in here.
+		// The supported lowering is `v := <-c` (sub-item d), handled
+		// at emitVarDecl. Anything else (function args, BinOp operands,
+		// etc.) lands here; surface the constraint loudly so the
+		// failure axis points at the right widening.
+		e.fail(fmt.Errorf("emit: <-c at expression position not supported in Phase 3 (only `v := <-c` head-of-body define is)"))
+		return ""
 	}
 	e.fail(fmt.Errorf("emit: unsupported expr %T", x))
 	return ""
@@ -2188,12 +2267,55 @@ func (e *emitter) chanPkgForExpr(x ir.Expr) (string, bool) {
 	return pkg, true
 }
 
+// chanElemTypeOfExpr returns the element type of a chan-typed
+// expression x. Same bare-Ident-only constraint as chanPkgForExpr —
+// emitVarDecl uses this to render `V : <T>;` when lowering
+// `v := <-c`, where T is the chan's element type (not the chan type
+// itself). Returns nil + ok=false when the operand can't be resolved
+// statically (the caller surfaces a clear error rather than silently
+// emitting a malformed declaration).
+func (e *emitter) chanElemTypeOfExpr(x ir.Expr) (ir.Type, bool) {
+	id, ok := x.(*ir.Ident)
+	if !ok {
+		return nil, false
+	}
+	t, ok := e.localTypes[id.Name]
+	if !ok {
+		return nil, false
+	}
+	ct, ok := t.(*ir.ChanType)
+	if !ok {
+		return nil, false
+	}
+	return ct.Elem, true
+}
+
 // emitChanSend lowers a `c <- v` SendStmt to `Channels_Of_T.Send (C, V);`.
 // The chan operand must resolve to a `chan T` declared in scope; the
 // emit-side rejection here is the second line of defence after
 // translate's transSend (which lets non-chan-typed Ident operands
 // through because translate doesn't have *types.Info wired yet — that
 // arrives in a later phase).
+// emitChanRecvBlock emits the body-side `declare Discard_OK :
+// Boolean; begin Channels_Of_T.Receive (C, V, Discard_OK); end;`
+// block for one queued `v := <-c` define. Called from emitSubprogram
+// in source order. The inner declare scope is what makes Discard_OK
+// collision-safe across multiple receive sites in the same function.
+// Pkg is the pre-resolved Channels_Of_<T> prefix stashed by
+// emitVarDecl when the receive was queued — no re-lookup needed.
+func (e *emitter) emitChanRecvBlock(pr pendingChanRecv) {
+	c := e.emitExpr(pr.Chan)
+	e.println("declare")
+	e.indent++
+	e.println("Discard_OK : Boolean;")
+	e.indent--
+	e.println("begin")
+	e.indent++
+	e.println(pr.Pkg + ".Receive (" + c + ", " + adaIdent(pr.LHSName) + ", Discard_OK);")
+	e.indent--
+	e.println("end;")
+}
+
 func (e *emitter) emitChanSend(s *ir.ChanSend) {
 	pkg, ok := e.chanPkgForExpr(s.Chan)
 	if !ok {

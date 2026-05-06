@@ -58,6 +58,9 @@ func TestCorpus(t *testing.T) {
 		"chan_make.go",
 		// Phase 3 — channel send fixture (channel-emit item, sub-item c).
 		"chan_send.go",
+		// Phase 3 — channel single-value receive fixture
+		// (channel-emit item, sub-item d).
+		"chan_recv_single.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)

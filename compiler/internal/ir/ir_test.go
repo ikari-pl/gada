@@ -59,6 +59,7 @@ func TestNodeKind(t *testing.T) {
 		{"ChanType", &ChanType{}, "ChanType"},
 		{"MakeChan", &MakeChan{}, "MakeChan"},
 		{"ChanSend", &ChanSend{}, "ChanSend"},
+		{"ChanRecv", &ChanRecv{}, "ChanRecv"},
 	}
 
 	for _, tc := range cases {
@@ -104,6 +105,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Expr = &BuiltinCall{} // recover() at expression position
 	var _ Expr = &MapLit{}
 	var _ Expr = &MakeChan{}
+	var _ Expr = &ChanRecv{}
 
 	var _ Type = &IntType{}
 	var _ Type = &StringType{}
@@ -313,6 +315,27 @@ func TestChanTypeMissingElem(t *testing.T) {
 	}
 	if _, err := unmarshalType(json.RawMessage(`{"kind":"ChanType","elem":null}`)); err == nil {
 		t.Fatal("expected error for ChanType with null elem")
+	}
+}
+
+// TestChanRecvMissingChan locks the explicit-error branch in
+// ChanRecv.UnmarshalJSON: a `<-c` lowering whose Chan operand
+// disappears would emit `Channels_Of_<empty>.Receive (...)` —
+// gprbuild would catch it eventually but the IR-level boundary
+// check fails closer to the bug. CommaOK is a plain bool with no
+// missing-vs-default ambiguity (default false matches sub-item d's
+// shape), so it gets no separate guard.
+func TestChanRecvMissingChan(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"kind":"ChanRecv"}`,
+		`{"kind":"ChanRecv","chan":null}`,
+		`{"kind":"ChanRecv","commaOk":true}`,
+	}
+	for _, raw := range cases {
+		if _, err := unmarshalExpr(json.RawMessage(raw)); err == nil {
+			t.Fatalf("expected error for %s", raw)
+		}
 	}
 }
 
@@ -578,6 +601,7 @@ func TestSentinels(t *testing.T) {
 	(&DeferStmt{}).irStmt()
 	(&GoStmt{}).irStmt()
 	(&ChanSend{}).irStmt()
+	(&ChanRecv{}).irExpr()
 
 	(&IntType{}).irType()
 	(&StringType{}).irType()
@@ -669,6 +693,7 @@ func TestPropagatedDecodeErrors(t *testing.T) {
 		{"GoStmt", `{"kind":"GoStmt","call":42}`, stmtErr},
 		{"MakeChan", `{"kind":"MakeChan","elem":{"kind":"IntType"},"capacity":42}`, exprErr},
 		{"ChanSend", `{"kind":"ChanSend","chan":42,"value":{"kind":"Ident","name":"v"}}`, stmtErr},
+		{"ChanRecv", `{"kind":"ChanRecv","chan":42}`, exprErr},
 	}
 
 	for _, tc := range cases {
@@ -742,6 +767,7 @@ func TestPropagatedChildErrors(t *testing.T) {
 		{"MakeChan.Capacity bad child", `{"kind":"MakeChan","elem":{"kind":"IntType"},"capacity":` + bad + `}`, exprErr},
 		{"ChanSend.Chan bad child", `{"kind":"ChanSend","chan":` + bad + `,"value":{"kind":"Ident","name":"v"}}`, stmtErr},
 		{"ChanSend.Value bad child", `{"kind":"ChanSend","chan":{"kind":"Ident","name":"c"},"value":` + bad + `}`, stmtErr},
+		{"ChanRecv.Chan bad child", `{"kind":"ChanRecv","chan":` + bad + `}`, exprErr},
 	}
 
 	for _, tc := range cases {

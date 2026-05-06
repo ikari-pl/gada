@@ -780,10 +780,27 @@ func transBinary(b *ast.BinaryExpr) (*ir.BinOp, error) {
 	return &ir.BinOp{Op: b.Op.String(), X: x, Y: y}, nil
 }
 
-func transUnary(u *ast.UnaryExpr) (*ir.UnaryOp, error) {
+// transUnary returns *ir.ChanRecv for the channel-receive form
+// (`<-c`) and *ir.UnaryOp for everything else. Both implement Expr,
+// so widening the return type to the interface keeps the call site
+// in transExpr's switch unchanged. The dispatch on token.ARROW lives
+// here rather than at transExpr because UnaryExpr is the only AST
+// shape Go uses for receive — there is no distinct ast.RecvExpr —
+// and centralising the test keeps a future "directional <-chan T
+// type" extension on a single seam (it would arrive in transType,
+// not here).
+func transUnary(u *ast.UnaryExpr) (ir.Expr, error) {
 	x, err := transExpr(u.X)
 	if err != nil {
 		return nil, err
+	}
+	if u.Op == token.ARROW {
+		// Single-value form. Comma-ok form (`v, ok := <-c`) lands as
+		// the same IR shape with CommaOK=true; translate sets the flag
+		// at the AssignStmt level (sub-item e), not here, because the
+		// receive expression itself does not encode arity — its
+		// surrounding LHS does.
+		return &ir.ChanRecv{Chan: x, CommaOK: false}, nil
 	}
 	return &ir.UnaryOp{Op: u.Op.String(), X: x}, nil
 }

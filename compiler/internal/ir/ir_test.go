@@ -55,6 +55,10 @@ func TestNodeKind(t *testing.T) {
 		{"MapLit", &MapLit{}, "MapLit"},
 		{"RangeStmt", &RangeStmt{}, "RangeStmt"},
 		{"DeferStmt", &DeferStmt{}, "DeferStmt"},
+		{"GoStmt", &GoStmt{}, "GoStmt"},
+		{"ChanType", &ChanType{}, "ChanType"},
+		{"MakeChan", &MakeChan{}, "MakeChan"},
+		{"ChanSend", &ChanSend{}, "ChanSend"},
 	}
 
 	for _, tc := range cases {
@@ -86,6 +90,8 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Stmt = &BuiltinCall{} // panic(x) at statement position
 	var _ Stmt = &RangeStmt{}
 	var _ Stmt = &DeferStmt{}
+	var _ Stmt = &GoStmt{}
+	var _ Stmt = &ChanSend{}
 
 	var _ Expr = &Ident{}
 	var _ Expr = &Lit{}
@@ -97,6 +103,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Expr = &SliceExpr{}
 	var _ Expr = &BuiltinCall{} // recover() at expression position
 	var _ Expr = &MapLit{}
+	var _ Expr = &MakeChan{}
 
 	var _ Type = &IntType{}
 	var _ Type = &StringType{}
@@ -104,6 +111,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Type = &Float64Type{}
 	var _ Type = &SliceType{}
 	var _ Type = &MapType{}
+	var _ Type = &ChanType{}
 }
 
 // TestRoundTripHello marshals the canonical hello-world IR, unmarshals
@@ -279,6 +287,56 @@ func TestSliceTypeMissingElem(t *testing.T) {
 	}
 }
 
+// TestMakeChanMissingElem locks the explicit-error branch in
+// MakeChan.UnmarshalJSON: a `make (chan T, …)` lowering whose
+// Elem disappears would silently emit `Channels_Of_<empty>`,
+// which would compile-fail downstream with a confusing GNAT
+// error rather than surfacing the bug here.
+func TestMakeChanMissingElem(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"MakeChan"}`)); err == nil {
+		t.Fatal("expected error for MakeChan without elem")
+	}
+	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"MakeChan","elem":null}`)); err == nil {
+		t.Fatal("expected error for MakeChan with null elem")
+	}
+}
+
+// TestChanTypeMissingElem mirrors the SliceType guard for ChanType:
+// a `ChanType` with no `elem` field is nonsensical (Go's `chan` with
+// no element type does not exist as a syntactic form), so the
+// explicit-error branch in ChanType.UnmarshalJSON must fire.
+func TestChanTypeMissingElem(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"ChanType"}`)); err == nil {
+		t.Fatal("expected error for ChanType without elem")
+	}
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"ChanType","elem":null}`)); err == nil {
+		t.Fatal("expected error for ChanType with null elem")
+	}
+}
+
+// TestChanSendMissingFields locks the two explicit-error branches in
+// ChanSend.UnmarshalJSON. Both `chan` and `value` are load-bearing —
+// a `c <- v` with either side dropped during round-trip would lower
+// to nonsense Ada (`.Send (, X);` or `.Send (C, );`) and the failure
+// would surface at gprbuild time rather than as a clear IR-level
+// regression here.
+func TestChanSendMissingFields(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"kind":"ChanSend"}`,
+		`{"kind":"ChanSend","chan":null,"value":{"kind":"Lit","kind2":"int","value":"1"}}`,
+		`{"kind":"ChanSend","chan":{"kind":"Ident","name":"c"}}`,
+		`{"kind":"ChanSend","chan":{"kind":"Ident","name":"c"},"value":null}`,
+	}
+	for _, raw := range cases {
+		if _, err := unmarshalStmt(json.RawMessage(raw)); err == nil {
+			t.Fatalf("expected error for %s", raw)
+		}
+	}
+}
+
 // TestSliceLitMissingElem mirrors the SliceType guard for SliceLit:
 // the element type must always be present so the emitter can pick
 // the right Slices_Of_<T> instantiation.
@@ -384,6 +442,44 @@ func TestDeferStmtMissingCall(t *testing.T) {
 	}
 }
 
+// TestGoStmtMissingCall mirrors the DeferStmt guard for GoStmt — a
+// `go` with no callee is rejected at unmarshal time so the emit
+// layer never sees a nil Call.
+func TestGoStmtMissingCall(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"kind":"GoStmt"}`,
+		`{"kind":"GoStmt","call":null}`,
+	}
+	for _, in := range cases {
+		if _, err := unmarshalStmt(json.RawMessage(in)); err == nil {
+			t.Fatalf("expected error for %s, got nil", in)
+		}
+	}
+}
+
+// TestRoundTripGoCorpus exercises GoStmt holding a Call in a single
+// structure. Mirrors TestRoundTripDeferCorpus.
+func TestRoundTripGoCorpus(t *testing.T) {
+	t.Parallel()
+
+	pkg := &Package{
+		Name: "p",
+		Files: []*File{{
+			Name: "p.go",
+			Decls: []Decl{
+				&Function{
+					Name: "spawner",
+					Body: []Stmt{
+						&GoStmt{Call: &Call{Fun: &Ident{Name: "worker"}}},
+					},
+				},
+			},
+		}},
+	}
+	roundTrip(t, pkg)
+}
+
 // TestRoundTripDeferCorpus exercises the new defer/panic/recover IR
 // shapes (DeferStmt holding a Call, BuiltinCall("panic"), BuiltinCall(
 // "recover") at expression position) in a single structure. The slice
@@ -477,8 +573,11 @@ func TestSentinels(t *testing.T) {
 	(&BuiltinCall{}).irExpr()
 	(&BuiltinCall{}).irStmt()
 	(&MapLit{}).irExpr()
+	(&MakeChan{}).irExpr()
 	(&RangeStmt{}).irStmt()
 	(&DeferStmt{}).irStmt()
+	(&GoStmt{}).irStmt()
+	(&ChanSend{}).irStmt()
 
 	(&IntType{}).irType()
 	(&StringType{}).irType()
@@ -486,6 +585,7 @@ func TestSentinels(t *testing.T) {
 	(&Float64Type{}).irType()
 	(&SliceType{}).irType()
 	(&MapType{}).irType()
+	(&ChanType{}).irType()
 }
 
 // TestNilListHelpers exercises the nil-vs-empty branch of the slice
@@ -566,6 +666,9 @@ func TestPropagatedDecodeErrors(t *testing.T) {
 		{"MapLit", `{"kind":"MapLit","entries":"not-array"}`, exprErr},
 		{"RangeStmt", `{"kind":"RangeStmt","body":"not-array"}`, stmtErr},
 		{"DeferStmt", `{"kind":"DeferStmt","call":42}`, stmtErr},
+		{"GoStmt", `{"kind":"GoStmt","call":42}`, stmtErr},
+		{"MakeChan", `{"kind":"MakeChan","elem":{"kind":"IntType"},"capacity":42}`, exprErr},
+		{"ChanSend", `{"kind":"ChanSend","chan":42,"value":{"kind":"Ident","name":"v"}}`, stmtErr},
 	}
 
 	for _, tc := range cases {
@@ -633,6 +736,12 @@ func TestPropagatedChildErrors(t *testing.T) {
 		{"RangeStmt.X bad child", `{"kind":"RangeStmt","x":` + bad + `}`, stmtErr},
 		{"RangeStmt.Body bad child", `{"kind":"RangeStmt","body":[` + bad + `]}`, stmtErr},
 		{"DeferStmt.Call bad child", `{"kind":"DeferStmt","call":` + bad + `}`, stmtErr},
+		{"GoStmt.Call bad child", `{"kind":"GoStmt","call":` + bad + `}`, stmtErr},
+		{"ChanType.Elem bad type", `{"kind":"ChanType","elem":` + bad + `}`, func(b json.RawMessage) error { _, err := unmarshalType(b); return err }},
+		{"MakeChan.Elem bad type", `{"kind":"MakeChan","elem":` + bad + `}`, exprErr},
+		{"MakeChan.Capacity bad child", `{"kind":"MakeChan","elem":{"kind":"IntType"},"capacity":` + bad + `}`, exprErr},
+		{"ChanSend.Chan bad child", `{"kind":"ChanSend","chan":` + bad + `,"value":{"kind":"Ident","name":"v"}}`, stmtErr},
+		{"ChanSend.Value bad child", `{"kind":"ChanSend","chan":{"kind":"Ident","name":"c"},"value":` + bad + `}`, stmtErr},
 	}
 
 	for _, tc := range cases {

@@ -1,0 +1,112 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "chan_make.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "consumeInt",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "c",
+              "type": {
+                "kind": "ChanType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": null,
+          "body": null
+        },
+        {
+          "kind": "Function",
+          "name": "consumeString",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "c",
+              "type": {
+                "kind": "ChanType",
+                "elem": {
+                  "kind": "StringType"
+                }
+              }
+            }
+          ],
+          "results": null,
+          "body": null
+        },
+        {
+          "kind": "Function",
+          "name": "makeBuffered",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Ident",
+                "name": "consumeInt"
+              },
+              "args": [
+                {
+                  "kind": "MakeChan",
+                  "elem": {
+                    "kind": "IntType"
+                  },
+                  "capacity": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "8"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Ident",
+                "name": "consumeInt"
+              },
+              "args": [
+                {
+                  "kind": "MakeChan",
+                  "elem": {
+                    "kind": "IntType"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Ident",
+                "name": "consumeString"
+              },
+              "args": [
+                {
+                  "kind": "MakeChan",
+                  "elem": {
+                    "kind": "StringType"
+                  },
+                  "capacity": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "4"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

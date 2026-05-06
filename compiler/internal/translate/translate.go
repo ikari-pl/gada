@@ -142,8 +142,9 @@ func transFieldList(fl *ast.FieldList) ([]*ir.Param, error) {
 
 // transType maps the recognised Go type names and shapes to their IR
 // counterparts. Phase 1 covered the four basic types; Phase 2 adds
-// `[]T` (slice) and `map[K]V`. Fixed-size arrays (`[N]T`), named
-// types, struct, channel, and function types are deferred.
+// `[]T` (slice) and `map[K]V`; Phase 3 adds `chan T`. Fixed-size
+// arrays (`[N]T`), named types, struct types, function types, and
+// directional channel types (`chan<- T`, `<-chan T`) are deferred.
 func transType(e ast.Expr) (ir.Type, error) {
 	switch t := e.(type) {
 	case *ast.Ident:
@@ -178,6 +179,19 @@ func transType(e ast.Expr) (ir.Type, error) {
 			return nil, err
 		}
 		return &ir.MapType{Key: k, Value: v}, nil
+	case *ast.ChanType:
+		// Phase 3 supports only bidirectional `chan T`; Go's directional
+		// `chan<- T` and `<-chan T` (Dir != SEND|RECV) are deferred until
+		// the runtime gets dedicated send-only / recv-only subtypes.
+		// `ast.SEND | ast.RECV` is the bidirectional bitmask.
+		if t.Dir != ast.SEND|ast.RECV {
+			return nil, fmt.Errorf("translate: directional channel types (chan<-, <-chan) not supported in Phase 3")
+		}
+		elem, err := transType(t.Value)
+		if err != nil {
+			return nil, err
+		}
+		return &ir.ChanType{Elem: elem}, nil
 	default:
 		return nil, fmt.Errorf("translate: unsupported type expr %T", e)
 	}
@@ -227,6 +241,10 @@ func transStmt(s ast.Stmt) (ir.Stmt, error) {
 		return transRange(s)
 	case *ast.DeferStmt:
 		return transDefer(s)
+	case *ast.GoStmt:
+		return transGo(s)
+	case *ast.SendStmt:
+		return transSend(s)
 	case *ast.ReturnStmt:
 		return transReturn(s)
 	case *ast.ExprStmt:
@@ -288,6 +306,51 @@ func transDefer(s *ast.DeferStmt) (*ir.DeferStmt, error) {
 		return nil, err
 	}
 	return &ir.DeferStmt{Call: c}, nil
+}
+
+// transGo handles `go f(args)`. Mirrors transDefer — the Go AST's
+// `*ast.GoStmt` carries a single `*ast.CallExpr`, lowered through
+// the same builtin-vs-general split. `go panic(x)` and `go recover()`
+// are rejected by the Go compiler at semantic analysis (gc emits
+// `go discards result of recover()` / parser-level for panic),
+// but the parser still produces the AST shape; widening Call to
+// Stmt keeps the IR symmetrical with DeferStmt and lets the emit
+// layer surface the rejection on the right axis (the Phase 3
+// emit's GoStmt handler refuses BuiltinCall payloads).
+func transGo(s *ast.GoStmt) (*ir.GoStmt, error) {
+	if b, ok, err := tryBuiltinCall(s.Call); err != nil {
+		return nil, err
+	} else if ok {
+		return &ir.GoStmt{Call: b}, nil
+	}
+	c, err := transCall(s.Call)
+	if err != nil {
+		return nil, err
+	}
+	return &ir.GoStmt{Call: c}, nil
+}
+
+// transSend handles Go's `c <- v` SendStmt. The Go AST keeps SendStmt
+// at statement position (it is not an expression), so the IR mirrors
+// the constraint with `*ir.ChanSend` (also Stmt-only). Both sides
+// route through the standard expression translator: Chan is typically
+// an Ident — emit's chanPkgForExpr only resolves bare-ident chans for
+// now, and a non-Ident chan operand here would still translate fine,
+// just to be rejected with a clear unsupported-shape error in emit.
+// We do not attempt to type-check that Chan resolves to a `chan T` at
+// translate time; the next phase's *types.Info plumbing will gate
+// that, and rejecting earlier here would make the error path surface
+// as "unsupported stmt" instead of the more useful emit-side message.
+func transSend(s *ast.SendStmt) (*ir.ChanSend, error) {
+	ch, err := transExpr(s.Chan)
+	if err != nil {
+		return nil, err
+	}
+	v, err := transExpr(s.Value)
+	if err != nil {
+		return nil, err
+	}
+	return &ir.ChanSend{Chan: ch, Value: v}, nil
 }
 
 // identNameOrBlank extracts a bare identifier name from a Go AST
@@ -427,6 +490,53 @@ func transExprStmt(s *ast.ExprStmt) (ir.Stmt, error) {
 // if a user's local `len := 1` is later called, this still routes to
 // BuiltinCall — Phase 2 accepts that. Real disambiguation needs
 // *types.Info, which the translator does not yet plumb through.
+// tryMakeChan returns (mc, true, nil) iff c is `make (chan T, …)`.
+// Returns (nil, false, nil) for non-make calls or `make` calls whose
+// first argument is not a chan type (slice / map / future array
+// `make` shapes are not yet supported and fall through to other
+// paths). An error iff the chan type or capacity arg fails to
+// translate.
+//
+// `make` is special-cased here rather than added to `builtinNames`
+// because its first argument is a *type* expression — a shape
+// `tryBuiltinCall` cannot handle without losing the type/value
+// distinction needed by the emit-side `Channels_Of_<T>` instantiation.
+func tryMakeChan(c *ast.CallExpr) (*ir.MakeChan, bool, error) {
+	id, ok := c.Fun.(*ast.Ident)
+	if !ok || id.Name != "make" {
+		return nil, false, nil
+	}
+	if len(c.Args) < 1 {
+		return nil, false, fmt.Errorf("translate: make requires at least one argument")
+	}
+	chanT, isChan := c.Args[0].(*ast.ChanType)
+	if !isChan {
+		// Slice/map/array `make` shapes fall through; current corpus
+		// builds slices via composite literals so this path is unused
+		// today.
+		return nil, false, nil
+	}
+	elem, err := transType(chanT)
+	if err != nil {
+		return nil, false, err
+	}
+	mc := &ir.MakeChan{Elem: elem.(*ir.ChanType).Elem}
+	switch len(c.Args) {
+	case 1:
+		// `make (chan T)` — unbuffered. Capacity stays nil; emit
+		// lowers to Bounded.Make (1) per the runtime spec.
+	case 2:
+		capacity, err := transExpr(c.Args[1])
+		if err != nil {
+			return nil, false, err
+		}
+		mc.Capacity = capacity
+	default:
+		return nil, false, fmt.Errorf("translate: make (chan T, ...) takes at most 2 arguments, got %d", len(c.Args))
+	}
+	return mc, true, nil
+}
+
 func tryBuiltinCall(c *ast.CallExpr) (*ir.BuiltinCall, bool, error) {
 	id, ok := c.Fun.(*ast.Ident)
 	if !ok || !builtinNames[id.Name] {
@@ -492,6 +602,17 @@ func transExpr(e ast.Expr) (ir.Expr, error) {
 	case *ast.SliceExpr:
 		return transSlice(e)
 	case *ast.CallExpr:
+		// Phase 3 channel-emit sub-item (b): `make (chan T, N)` and
+		// `make (chan T)` are intercepted *before* tryBuiltinCall
+		// because their first argument is a type expression, not an
+		// ordinary Expr. The dedicated `*ir.MakeChan` node carries
+		// the element Type and the optional Capacity Expr through to
+		// emit's `Channels_Of_<T>.Make (N)` lowering.
+		if mc, ok, err := tryMakeChan(e); err != nil {
+			return nil, err
+		} else if ok {
+			return mc, nil
+		}
 		// Only builtin calls are valid in expression position in
 		// Phase 2; general call-as-expression (e.g. `f()` on the RHS
 		// of an assign) still needs *types.Info plumbing to

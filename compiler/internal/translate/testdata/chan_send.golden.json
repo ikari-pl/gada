@@ -1,0 +1,103 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "chan_send.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "sendInts",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "c",
+              "type": {
+                "kind": "ChanType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "x"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "42"
+                }
+              ]
+            },
+            {
+              "kind": "ChanSend",
+              "chan": {
+                "kind": "Ident",
+                "name": "c"
+              },
+              "value": {
+                "kind": "Lit",
+                "litKind": "int",
+                "value": "1"
+              }
+            },
+            {
+              "kind": "ChanSend",
+              "chan": {
+                "kind": "Ident",
+                "name": "c"
+              },
+              "value": {
+                "kind": "Ident",
+                "name": "x"
+              }
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "sendStrings",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "c",
+              "type": {
+                "kind": "ChanType",
+                "elem": {
+                  "kind": "StringType"
+                }
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "ChanSend",
+              "chan": {
+                "kind": "Ident",
+                "name": "c"
+              },
+              "value": {
+                "kind": "Lit",
+                "litKind": "string",
+                "value": "\"hello\""
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

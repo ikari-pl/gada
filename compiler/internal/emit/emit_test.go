@@ -40,6 +40,12 @@ var corpusFixtures = []string{
 	"defer_simple", "panic_simple", "recover_simple",
 	// Phase 2 — main-side defer / panic (Item 9 emitMain wiring).
 	"main_defer", "main_panic", "main_defer_panic",
+	// Phase 3 — go-statement compiler emission.
+	"go_simple", "go_main", "go_main_via_helper",
+	// Phase 3 — channel-emit (sub-item b: make + per-element-type instantiation).
+	"chan_make",
+	// Phase 3 — channel-emit (sub-item c: c <- v send statement).
+	"chan_send",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -747,6 +753,63 @@ func TestRangeRestoresLocalTypes(t *testing.T) {
 	}
 }
 
+// TestChanSendUnsupportedShapes pins the four early-out branches in
+// chanPkgForExpr plus the matching `e.fail` path in emitChanSend.
+// Each subtest constructs an IR fragment that the front-end (Go
+// parser + translate) can't actually produce today — the goal is to
+// keep the defensive branches exercised so a Phase 4 widening to
+// chan-typed selectors / call results surfaces here, not at customer
+// gprbuild time. The chan_send corpus fixture covers the happy path
+// (bare-Ident-into-Channels_Of_T.Send); these tests cover everything
+// else.
+func TestChanSendUnsupportedShapes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		fn   *ir.Function
+	}{
+		// Branch A: chan operand is not an *ir.Ident at all (a literal,
+		// in this case). emitChanSend's chanPkgForExpr lookup returns
+		// false on the first type assertion.
+		{"non-ident chan", &ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{&ir.ChanSend{Chan: litInt("0"), Value: litInt("1")}},
+		}},
+		// Branch B: bare Ident, but no localTypes entry — i.e. the
+		// front-end never declared `c` in this scope. chanPkgForExpr
+		// gets past the type-assert but bounces on the map lookup.
+		{"undeclared chan ident", &ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{&ir.ChanSend{Chan: idn("c"), Value: litInt("1")}},
+		}},
+		// Branch C: bare Ident is in localTypes but as a non-chan type
+		// (here, a plain `int` parameter). chanPkgForExpr passes both
+		// type-assert and map-lookup but fails the *ir.ChanType cast.
+		{"non-chan typed ident", &ir.Function{
+			Name:   "f",
+			Params: []*ir.Param{{Name: "c", Type: &ir.IntType{}}},
+			Body:   []ir.Stmt{&ir.ChanSend{Chan: idn("c"), Value: litInt("1")}},
+		}},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pkg := wrapPkg(tc.fn)
+			var buf bytes.Buffer
+			err := Package(pkg, &buf)
+			if err == nil {
+				t.Fatalf("expected emit error, got success:\n%s", buf.String())
+			}
+			if !strings.Contains(err.Error(), "ChanSend") {
+				t.Fatalf("wrong error (want substring \"ChanSend\"): %v", err)
+			}
+		})
+	}
+}
+
 // TestSliceEmitErrors covers every error branch reachable from the
 // new Phase 2 slice-emission paths. Each entry pins one specific
 // failure mode so a future regression surfaces at the right call
@@ -1400,6 +1463,36 @@ func TestDeferPanicEmitErrors(t *testing.T) {
 				Body: []ir.Stmt{&ir.DeferStmt{Call: &ir.Return{}}},
 			}),
 			wantErr: "defer holds unexpected stmt",
+		},
+		{
+			name: "go-stmt with positional args (Call)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{&ir.GoStmt{Call: &ir.Call{
+					Fun:  idn("consume"),
+					Args: []ir.Expr{litInt("5")},
+				}}},
+			}),
+			wantErr: "go-statement argument capture not yet supported",
+		},
+		{
+			name: "go-stmt with positional args (BuiltinCall)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{&ir.GoStmt{Call: &ir.BuiltinCall{
+					Name: "panic",
+					Args: []ir.Expr{litInt("1")},
+				}}},
+			}),
+			wantErr: "go-statement argument capture not yet supported",
+		},
+		{
+			name: "go holds unexpected stmt (Return)",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{&ir.GoStmt{Call: &ir.Return{}}},
+			}),
+			wantErr: "go holds unexpected stmt",
 		},
 	}
 	for _, tc := range cases {

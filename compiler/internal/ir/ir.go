@@ -220,6 +220,25 @@ type SliceLit struct {
 func (*SliceLit) irExpr()          {}
 func (*SliceLit) NodeKind() string { return "SliceLit" }
 
+// MakeChan is Go `make (chan T, N)` and `make (chan T)` (the latter
+// with Capacity == nil). Elem is the channel's element type, used by
+// the emitter to pick the right `Channels_Of_<T>` instantiation.
+// Capacity, when non-nil, is the buffer size; when nil, the runtime
+// uses Bounded.Make (1) as the documented behavioural approximation
+// for unbuffered channels (per gada-async-channels-bounded.ads § Make
+// rationale: a future Channels.Synchronous package will lift this to
+// proper rendezvous semantics; for now Bounded(1) preserves "send and
+// receive must both be ready" almost everywhere bar zero-buffer
+// races, which an unbuffered channel doesn't meaningfully expose
+// anyway).
+type MakeChan struct {
+	Elem     Type
+	Capacity Expr // nil for `make (chan T)` — see Channels.Bounded.Make doc
+}
+
+func (*MakeChan) irExpr()          {}
+func (*MakeChan) NodeKind() string { return "MakeChan" }
+
 // IndexExpr is `X[Index]`. The same node shape covers slice indexing
 // (`s[i]`) and map lookup (`m[k]`); the emitter resolves the
 // distinction by inspecting the static type of X via its declaration.
@@ -304,6 +323,49 @@ type DeferStmt struct {
 func (*DeferStmt) irStmt()          {}
 func (*DeferStmt) NodeKind() string { return "DeferStmt" }
 
+// GoStmt is Go `go f(args)`. Same Call-as-Stmt shape as DeferStmt
+// because Go's grammar accepts any call expression after either
+// keyword; the divergence is purely emit-side. Phase 3 lowers each
+// go-statement to a synthesised parameterless closure passed to
+// `Gada.Async.Scheduler.Spawn`. Argument evaluation in Go's spec
+// is *eager* — `go f(g())` calls g() in the spawning goroutine,
+// then schedules a goroutine that calls f with the captured
+// result — but the v1 emit binds a closure over local-named
+// arguments, which delivers identical semantics for the closed
+// Phase-3 corpus (no nested-call args; the eager-eval lowering
+// arrives with Phase 4's compiler-emit work alongside multi-
+// return-value handling).
+//
+// Call is typed as Stmt so it can hold either `*ir.Call` (the
+// Phase-3 expected shape) or `*ir.BuiltinCall` (for the
+// hypothetical `go panic(x)` and `go recover()` shapes — Go
+// rejects both at compile-time, but the IR widens cleanly to
+// match DeferStmt's typing without a parallel hierarchy).
+type GoStmt struct {
+	Call Stmt
+}
+
+func (*GoStmt) irStmt()          {}
+func (*GoStmt) NodeKind() string { return "GoStmt" }
+
+// ChanSend is Go `c <- v`. Lowers in emit to
+// `Channels_Of_<T>.Send (C, V);` where T is the chan element type
+// resolved through `c`'s declared type (looked up in
+// emit.localTypes). Modelling Send as a *Stmt* — not an Expr — mirrors
+// the Go spec: SendStmt is an `ast.Stmt`, never an expression position.
+// The IR carries the operand pair separately rather than reusing
+// `*ir.Call` because a Call's Fun has no shape that could syntactically
+// represent the send arrow without a fictional builtin name; keeping
+// the variant explicit also lets emit's Stmt switch reject Send-shaped
+// nodes at any later position they appear (defer/go-target lowerings).
+type ChanSend struct {
+	Chan  Expr
+	Value Expr
+}
+
+func (*ChanSend) irStmt()          {}
+func (*ChanSend) NodeKind() string { return "ChanSend" }
+
 // BuiltinCall is a call to a Go predeclared function. Distinguished
 // from Call (which carries an arbitrary Fun expression) so the
 // emitter can dispatch by name without re-deriving builtin-ness.
@@ -376,6 +438,23 @@ type MapType struct {
 
 func (*MapType) irType()          {}
 func (*MapType) NodeKind() string { return "MapType" }
+
+// ChanType is Go `chan T`. Translates to a generic instantiation of
+// `Gada.Async.Channels.Bounded` per element type — the emitter
+// tracks one `Channels_Of_<T>` per file. Phase 3 emits all chans
+// as bidirectional Bounded channels: `make (chan T)` (unbuffered)
+// lowers to `Bounded.Make (1)` per the runtime spec's documented
+// behavioural approximation, and `make (chan T, N)` to
+// `Bounded.Make (N)`. Send-only (`chan<- T`) and receive-only
+// (`<-chan T`) directional restrictions are an Ada subtype-of-
+// Channel concern — out of scope until the directional types are
+// observed in real corpora.
+type ChanType struct {
+	Elem Type
+}
+
+func (*ChanType) irType()          {}
+func (*ChanType) NodeKind() string { return "ChanType" }
 
 // ---------------------------------------------------------------------------
 // JSON marshaling and unmarshaling
@@ -469,6 +548,18 @@ func unmarshalStmt(raw json.RawMessage) (Stmt, error) {
 			return nil, err
 		}
 		return &n, nil
+	case "GoStmt":
+		var n GoStmt
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "ChanSend":
+		var n ChanSend
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
 	default:
 		return nil, fmt.Errorf("ir: unknown stmt kind %q", env.Kind)
 	}
@@ -508,6 +599,12 @@ func unmarshalExpr(raw json.RawMessage) (Expr, error) {
 		return &n, nil
 	case "Selector":
 		var n Selector
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "MakeChan":
+		var n MakeChan
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -565,6 +662,12 @@ func unmarshalType(raw json.RawMessage) (Type, error) {
 		return &Float64Type{}, nil
 	case "SliceType":
 		var n SliceType
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "ChanType":
+		var n ChanType
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1100,6 +1203,31 @@ func (t *SliceType) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+func (t *ChanType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Elem Type   `json:"elem"`
+	}{"ChanType", t.Elem})
+}
+
+func (t *ChanType) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Elem json.RawMessage `json:"elem"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
+		return fmt.Errorf("ir: ChanType missing elem")
+	}
+	elem, err := unmarshalType(aux.Elem)
+	if err != nil {
+		return err
+	}
+	t.Elem = elem
+	return nil
+}
+
 // --- Slice / Index / Builtin expressions ---
 
 func (e *SliceLit) MarshalJSON() ([]byte, error) {
@@ -1131,6 +1259,40 @@ func (e *SliceLit) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	e.Elems = elems
+	return nil
+}
+
+func (e *MakeChan) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind     string `json:"kind"`
+		Elem     Type   `json:"elem"`
+		Capacity Expr   `json:"capacity,omitempty"`
+	}{"MakeChan", e.Elem, e.Capacity})
+}
+
+func (e *MakeChan) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Elem     json.RawMessage `json:"elem"`
+		Capacity json.RawMessage `json:"capacity,omitempty"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
+		return fmt.Errorf("ir: MakeChan missing elem")
+	}
+	elem, err := unmarshalType(aux.Elem)
+	if err != nil {
+		return err
+	}
+	e.Elem = elem
+	if len(aux.Capacity) != 0 && string(aux.Capacity) != "null" {
+		capacity, err := unmarshalExpr(aux.Capacity)
+		if err != nil {
+			return err
+		}
+		e.Capacity = capacity
+	}
 	return nil
 }
 
@@ -1388,5 +1550,65 @@ func (s *DeferStmt) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	s.Call = c
+	return nil
+}
+
+func (s *GoStmt) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Call Stmt   `json:"call"`
+	}{"GoStmt", s.Call})
+}
+
+func (s *GoStmt) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Call json.RawMessage `json:"call"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Call) == 0 || string(aux.Call) == "null" {
+		return fmt.Errorf("ir: GoStmt missing call")
+	}
+	c, err := unmarshalStmt(aux.Call)
+	if err != nil {
+		return err
+	}
+	s.Call = c
+	return nil
+}
+
+func (s *ChanSend) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind  string `json:"kind"`
+		Chan  Expr   `json:"chan"`
+		Value Expr   `json:"value"`
+	}{"ChanSend", s.Chan, s.Value})
+}
+
+func (s *ChanSend) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Chan  json.RawMessage `json:"chan"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Chan) == 0 || string(aux.Chan) == "null" {
+		return fmt.Errorf("ir: ChanSend missing chan")
+	}
+	if len(aux.Value) == 0 || string(aux.Value) == "null" {
+		return fmt.Errorf("ir: ChanSend missing value")
+	}
+	c, err := unmarshalExpr(aux.Chan)
+	if err != nil {
+		return err
+	}
+	v, err := unmarshalExpr(aux.Value)
+	if err != nil {
+		return err
+	}
+	s.Chan = c
+	s.Value = v
 	return nil
 }

@@ -120,16 +120,20 @@ type emitter struct {
 	buf    strings.Builder
 	indent int
 
-	needsCoreIO    bool
-	needsCoreDefer bool // any DeferStmt seen → emit `with Gada.Core.Defer;`
-	needsCorePanic bool // any panic/recover BuiltinCall seen → emit `with Gada.Core.Panic;` and `package Panic_Of_Integer is new ...`
-	sliceElems     map[string]ir.Type
-	sliceElemOrder []string
-	mapPairs       map[string]*ir.MapType
-	mapPairOrder   []string
-	localTypes     map[string]ir.Type
-	rangeCounter   int
-	err            error
+	needsCoreIO         bool
+	needsCoreDefer      bool // any DeferStmt seen → emit `with Gada.Core.Defer;`
+	needsCorePanic      bool // any panic/recover BuiltinCall seen → emit `with Gada.Core.Panic;` and `package Panic_Of_Integer is new ...`
+	needsAsyncScheduler bool // any GoStmt seen → emit `with Gada.Async.Scheduler;` and the per-subprogram closure-and-Unused_G scaffolding
+	sliceElems          map[string]ir.Type
+	sliceElemOrder      []string
+	mapPairs            map[string]*ir.MapType
+	mapPairOrder        []string
+	chanElems           map[string]ir.Type // mirror of sliceElems but for `chan T` — drives one `package Channels_Of_<T> is new Gada.Async.Channels.Bounded (Element_Type => T);` per distinct chan element-type per file. Keyed by Ada base name (e.g. "Integer"). Inserted by recordChanElem; insertion order preserved in chanElemOrder.
+	chanElemOrder       []string
+	localTypes          map[string]ir.Type
+	rangeCounter        int
+	goIndex             map[*ir.GoStmt]int // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
+	err                 error
 }
 
 func newEmitter(pkg string, f *ir.File) *emitter {
@@ -138,6 +142,8 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		file:       f,
 		sliceElems: map[string]ir.Type{},
 		mapPairs:   map[string]*ir.MapType{},
+		chanElems:  map[string]ir.Type{},
+		goIndex:    map[*ir.GoStmt]int{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
@@ -182,6 +188,9 @@ func (e *emitter) recordTypeInTree(t ir.Type) {
 		e.recordMapPair(t)
 		e.recordTypeInTree(t.Key)
 		e.recordTypeInTree(t.Value)
+	case *ir.ChanType:
+		e.recordChanElem(t.Elem)
+		e.recordTypeInTree(t.Elem)
 	}
 }
 
@@ -198,6 +207,23 @@ func (e *emitter) recordMapPair(m *ir.MapType) {
 	if _, present := e.mapPairs[key]; !present {
 		e.mapPairs[key] = m
 		e.mapPairOrder = append(e.mapPairOrder, key)
+	}
+}
+
+// recordChanElem mirrors recordSliceElem for chans. The elemBaseName
+// computation is shared because Channels_Of_<T> follows the exact
+// same naming discipline as Slices_Of_<T> — Ada Identifier-friendly
+// base names so the emitted instantiation list compiles without
+// further mangling.
+func (e *emitter) recordChanElem(elem ir.Type) {
+	name, err := elemBaseName(elem)
+	if err != nil {
+		e.fail(err)
+		return
+	}
+	if _, present := e.chanElems[name]; !present {
+		e.chanElems[name] = elem
+		e.chanElemOrder = append(e.chanElemOrder, name)
 	}
 }
 
@@ -267,6 +293,26 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 	case *ir.DeferStmt:
 		e.needsCoreDefer = true
 		e.walkStmt(s.Call)
+	case *ir.GoStmt:
+		e.needsAsyncScheduler = true
+		// File-wide monotonic numbering. The pre-walk visits every
+		// subprogram in `Decls` order and recurses into bodies depth-first,
+		// so `len(e.goIndex) + 1` produces a stable index per AST node.
+		// emitGoClosuresAndDecl and emitStmt's GoStmt arm both look up by
+		// pointer rather than by counting again — closure names stay tied
+		// to AST identity even if a future function-literal pass walks the
+		// tree in a different order.
+		e.goIndex[s] = len(e.goIndex) + 1
+		e.walkStmt(s.Call)
+	case *ir.ChanSend:
+		// The chan operand's element type is what triggers the
+		// `Channels_Of_<T>` instantiation. recordChanElem fires when
+		// emit walks the *declaration* (param type or `make` literal),
+		// not the use site, so the send itself only contributes its
+		// nested expressions — recordTypeInTree on Chan is unnecessary
+		// here because the chan was already declared somewhere.
+		e.walkExpr(s.Chan)
+		e.walkExpr(s.Value)
 	case nil:
 		// optional Init/Post on bare for {}.
 	}
@@ -279,6 +325,17 @@ func (e *emitter) walkExpr(x ir.Expr) {
 		e.recordTypeInTree(x.Elem)
 		for _, el := range x.Elems {
 			e.walkExpr(el)
+		}
+	case *ir.MakeChan:
+		// `make (chan T, …)` triggers a `Channels_Of_<T>` instantiation
+		// at the top of the file; record both the element-type seam
+		// (drives the instantiation list) and any nested types it
+		// would need to reach (e.g. `chan []int` would record the
+		// inner []int's slice instantiation too).
+		e.recordChanElem(x.Elem)
+		e.recordTypeInTree(x.Elem)
+		if x.Capacity != nil {
+			e.walkExpr(x.Capacity)
 		}
 	case *ir.MapLit:
 		e.recordMapPair(&ir.MapType{Key: x.Key, Value: x.Value})
@@ -323,14 +380,21 @@ func (e *emitter) run() error {
 		e.println("with Gada.Core.Maps;")
 		e.println("with Gada.Core.Hash;")
 	}
+	if len(e.chanElemOrder) > 0 {
+		e.println("with Gada.Async.Channels.Bounded;")
+	}
 	if e.needsCoreDefer {
 		e.println("with Gada.Core.Defer;")
 	}
 	if e.needsCorePanic {
 		e.println("with Gada.Core.Panic;")
 	}
+	if e.needsAsyncScheduler {
+		e.println("with Gada.Async.Scheduler;")
+	}
 	if e.needsCoreIO || len(e.sliceElemOrder) > 0 || len(e.mapPairOrder) > 0 ||
-		e.needsCoreDefer || e.needsCorePanic {
+		len(e.chanElemOrder) > 0 || e.needsCoreDefer || e.needsCorePanic ||
+		e.needsAsyncScheduler {
 		e.println("")
 	}
 	if e.pkgName == "main" {
@@ -355,6 +419,21 @@ func (e *emitter) emitSliceInstantiations() {
 	for _, k := range e.sliceElemOrder {
 		e.println("package Slices_Of_" + k +
 			" is new Gada.Core.Slices (Element_Type => " + k + ");")
+	}
+}
+
+// emitChannelInstantiations writes one
+// `package Channels_Of_<T> is new Gada.Async.Channels.Bounded (Element_Type => <T>);`
+// line per distinct chan element type collected in chanElemOrder.
+// Channels are always Bounded in Phase 3 — `make (chan T)`
+// (unbuffered) lowers to Bounded.Make (1) per the runtime spec; a
+// future Channels.Synchronous / Channels.Unbuffered package would
+// need a parallel chanElemOrder split, which we defer until any
+// real corpus distinguishes the two.
+func (e *emitter) emitChannelInstantiations() {
+	for _, k := range e.chanElemOrder {
+		e.println("package Channels_Of_" + k +
+			" is new Gada.Async.Channels.Bounded (Element_Type => " + k + ");")
 	}
 }
 
@@ -525,6 +604,18 @@ func slicePkgFor(elem ir.Type) (string, error) {
 	return "Slices_Of_" + t, nil
 }
 
+// chanPkgFor returns the Channels_Of_<T> instantiation prefix for a
+// channel whose element type is elem. Mirrors slicePkgFor; used by
+// every channel-dispatching emit site (MakeChan / Send / Receive /
+// Close / ChanType-as-decl).
+func chanPkgFor(elem ir.Type) (string, error) {
+	t, err := elemBaseName(elem)
+	if err != nil {
+		return "", err
+	}
+	return "Channels_Of_" + t, nil
+}
+
 // println writes a single line, prefixed with the current indent
 // (three spaces per level — matches the runtime style). An empty
 // string emits a bare newline with no indentation, used for the
@@ -584,10 +675,12 @@ func (e *emitter) emitMainProcedure() {
 	var mainDecls []*ir.Assign
 	var mainBody []ir.Stmt
 	var mainDefers []*ir.DeferStmt
+	var mainGos []*ir.GoStmt
 	var mainUsesPanic bool
 	if main != nil {
 		mainDecls, mainBody = splitDecls(main.Body)
 		mainDefers = collectDefers(main.Body)
+		mainGos = collectGoStmts(main.Body)
 		mainUsesPanic = bodyUsesPanicOrRecover(main.Body)
 	}
 	// Same layering rule as emitSubprogram: when a function combines
@@ -599,8 +692,9 @@ func (e *emitter) emitMainProcedure() {
 
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0
+	hasChans := len(e.chanElemOrder) > 0
 	hasPanic := e.needsCorePanic
-	hasDeclSection := hasSlices || hasMaps || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper)
+	hasDeclSection := hasSlices || hasMaps || hasChans || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0
 
 	e.println("procedure Main is")
 	if hasDeclSection {
@@ -617,13 +711,19 @@ func (e *emitter) emitMainProcedure() {
 	if hasMaps {
 		e.emitMapInstantiations()
 	}
-	if (hasSlices || hasMaps) && hasPanic {
+	if (hasSlices || hasMaps) && hasChans {
+		e.println("")
+	}
+	if hasChans {
+		e.emitChannelInstantiations()
+	}
+	if (hasSlices || hasMaps || hasChans) && hasPanic {
 		e.println("")
 	}
 	if hasPanic {
 		e.emitPanicInstantiation()
 	}
-	if (hasSlices || hasMaps || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
+	if (hasSlices || hasMaps || hasChans || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
 		e.println("")
 	}
 	for i, fn := range others {
@@ -644,6 +744,9 @@ func (e *emitter) emitMainProcedure() {
 	if len(mainDefers) > 0 && !mainDefersInsideWrapper {
 		e.emitDeferClosuresAndBlocks(mainDefers)
 	}
+	if len(mainGos) > 0 {
+		e.emitGoClosuresAndDecl(mainGos)
+	}
 	e.indent--
 
 	if hasDeclSection {
@@ -652,6 +755,18 @@ func (e *emitter) emitMainProcedure() {
 
 	e.println("begin")
 	e.indent++
+
+	// `package main` files that contain *any* go-stmt anywhere — in
+	// main itself, in a sibling subprogram, or hoisted into a closure
+	// — own the scheduler lifecycle: bring up the worker pool before
+	// any user code runs, tear it down after. Keying on the file-wide
+	// `e.needsAsyncScheduler` (rather than just main's body) avoids
+	// the trap where main has no `go` itself but calls a helper that
+	// does — without Init the helper's Spawn would crash with the
+	// "Init not called" precondition.
+	if e.needsAsyncScheduler {
+		e.println("Gada.Async.Scheduler.Init;")
+	}
 
 	if mainDefersInsideWrapper {
 		e.println("declare")
@@ -678,6 +793,18 @@ func (e *emitter) emitMainProcedure() {
 	if mainDefersInsideWrapper {
 		e.indent--
 		e.println("end;")
+	}
+
+	// Tear the scheduler down on the normal exit path. Init / Shutdown
+	// are a matched pair, both keyed on the file-wide
+	// `e.needsAsyncScheduler` so a `func main() { helper() }` whose
+	// helper internally `go`-spawns still gets the same wrap. An
+	// unrecovered panic that escapes the user's defers reaches the
+	// function-level handler below and the program terminates —
+	// Shutdown is skipped in that case, which is fine because the OS
+	// reaps the process.
+	if e.needsAsyncScheduler {
+		e.println("Gada.Async.Scheduler.Shutdown;")
 	}
 
 	if mainUsesPanic {
@@ -718,10 +845,11 @@ func (e *emitter) emitPackageBody() {
 
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0
+	hasChans := len(e.chanElemOrder) > 0
 	hasPanic := e.needsCorePanic
 
 	e.println("package body " + pkg + " is")
-	if hasSlices || hasMaps || hasPanic || len(fns) > 0 {
+	if hasSlices || hasMaps || hasChans || hasPanic || len(fns) > 0 {
 		e.println("")
 	}
 
@@ -735,13 +863,19 @@ func (e *emitter) emitPackageBody() {
 	if hasMaps {
 		e.emitMapInstantiations()
 	}
-	if (hasSlices || hasMaps) && hasPanic {
+	if (hasSlices || hasMaps) && hasChans {
+		e.println("")
+	}
+	if hasChans {
+		e.emitChannelInstantiations()
+	}
+	if (hasSlices || hasMaps || hasChans) && hasPanic {
 		e.println("")
 	}
 	if hasPanic {
 		e.emitPanicInstantiation()
 	}
-	if (hasSlices || hasMaps || hasPanic) && len(fns) > 0 {
+	if (hasSlices || hasMaps || hasChans || hasPanic) && len(fns) > 0 {
 		e.println("")
 	}
 	for i, fn := range fns {
@@ -752,7 +886,7 @@ func (e *emitter) emitPackageBody() {
 	}
 	e.indent--
 
-	if hasSlices || hasMaps || len(fns) > 0 {
+	if hasSlices || hasMaps || hasChans || len(fns) > 0 {
 		e.println("")
 	}
 	e.println("end " + pkg + ";")
@@ -844,6 +978,7 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 
 	decls, body := splitDecls(fn.Body)
 	defers := collectDefers(fn.Body)
+	gos := collectGoStmts(fn.Body)
 	usesPanic := bodyUsesPanicOrRecover(fn.Body)
 
 	// When the function uses both `defer` and `panic`/`recover`, the
@@ -862,6 +997,9 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	}
 	if len(defers) > 0 && !defersInsideWrapper {
 		e.emitDeferClosuresAndBlocks(defers)
+	}
+	if len(gos) > 0 {
+		e.emitGoClosuresAndDecl(gos)
 	}
 	e.indent--
 
@@ -965,6 +1103,34 @@ func collectDefers(body []ir.Stmt) []*ir.DeferStmt {
 		for _, s := range ss {
 			switch s := s.(type) {
 			case *ir.DeferStmt:
+				out = append(out, s)
+			case *ir.If:
+				walk(s.Then)
+				walk(s.Else)
+			case *ir.For:
+				walk(s.Body)
+			case *ir.RangeStmt:
+				walk(s.Body)
+			}
+		}
+	}
+	walk(body)
+	return out
+}
+
+// collectGoStmts returns every GoStmt under body in source order
+// (depth-first preorder, matching emitStmt's natural traversal). The
+// resulting list is used both to emit nested `Go_Closure_<N>` procs
+// in the enclosing function's declarative region and to resolve the
+// 1-based index that the inline `Spawn (Go_Closure_<N>'…)` call
+// emitted at the original source site refers to.
+func collectGoStmts(body []ir.Stmt) []*ir.GoStmt {
+	var out []*ir.GoStmt
+	var walk func([]ir.Stmt)
+	walk = func(ss []ir.Stmt) {
+		for _, s := range ss {
+			switch s := s.(type) {
+			case *ir.GoStmt:
 				out = append(out, s)
 			case *ir.If:
 				walk(s.Then)
@@ -1109,6 +1275,76 @@ func (e *emitter) emitDeferClosure(n int, d *ir.DeferStmt) {
 	e.println(fmt.Sprintf("end Defer_Closure_%d;", n))
 }
 
+// emitGoClosuresAndDecl writes the closure procedures for every
+// `go` statement in the enclosing function plus a single shared
+// `Unused_G : Gada.Async.Scheduler.Goroutine_Id;` slot the inline
+// Spawn assignments will target. Spawn returns a handle today; future
+// Park / Unpark wiring will need a real binding, but for unsynchronized
+// fire-and-forget the handle is consumed by Shutdown's reaper. Called
+// from the function's declarative region (or, in the defer + panic
+// layering case, the inner declare scope — same rule as defers).
+//
+// Closure names come from the file-wide goIndex pre-populated by the
+// walkStmt pre-pass, not from a local index — see goIndex's field
+// comment for why per-AST-node identity beats per-subprogram counters.
+func (e *emitter) emitGoClosuresAndDecl(gos []*ir.GoStmt) {
+	for _, g := range gos {
+		e.emitGoClosure(e.goIndex[g], g)
+	}
+	e.println("Unused_G : Gada.Async.Scheduler.Goroutine_Id;")
+}
+
+// emitGoClosure writes one nested parameterless procedure that the
+// matching inline `Spawn (Go_Closure_<n>'Unrestricted_Access)` call
+// will hand to the scheduler. n is the 1-based source-order index of
+// the go-statement within the enclosing function.
+//
+// Phase 3 only emits the no-arg form `go f()`. `go f(x, y)` requires
+// snapshot semantics — Go evaluates arguments at the spawn site, but
+// an Ada nested-procedure closure reads the enclosing scope at
+// goroutine execution time, so a mutation between Spawn and the
+// goroutine's first instruction would silently change what the
+// goroutine sees. Proper capture needs Scheduler.Spawn to grow a
+// per-spawn context payload (next roadmap sub-item); until then,
+// reject non-empty argument lists rather than ship subtly divergent
+// behaviour.
+func (e *emitter) emitGoClosure(n int, g *ir.GoStmt) {
+	if !e.checkGoArgsEmpty(g) {
+		return
+	}
+	e.println(fmt.Sprintf("procedure Go_Closure_%d is", n))
+	e.println("begin")
+	e.indent++
+	switch c := g.Call.(type) {
+	case *ir.Call:
+		e.emitCallStmt(c)
+	case *ir.BuiltinCall:
+		e.emitBuiltinStmt(c)
+	default:
+		e.fail(fmt.Errorf("emit: go holds unexpected stmt %T", g.Call))
+	}
+	e.indent--
+	e.println(fmt.Sprintf("end Go_Closure_%d;", n))
+}
+
+// checkGoArgsEmpty enforces the Phase 3 "no-arg only" subset for
+// `go f(...)` until Scheduler.Spawn grows a context payload. Returns
+// false (and sets e.err) when the call carries any positional args.
+func (e *emitter) checkGoArgsEmpty(g *ir.GoStmt) bool {
+	var nargs int
+	switch c := g.Call.(type) {
+	case *ir.Call:
+		nargs = len(c.Args)
+	case *ir.BuiltinCall:
+		nargs = len(c.Args)
+	}
+	if nargs > 0 {
+		e.fail(fmt.Errorf("emit: go-statement argument capture not yet supported; rewrite `go f(x, y)` as `go func() { f(x, y) }()` once closures land, or as a wrapper subprogram that takes no args (roadmap/03-concurrency.md)"))
+		return false
+	}
+	return true
+}
+
 // zeroLiteralOf returns the Ada literal for the zero value of t. Used
 // by the per-function panic-recover wrapper's exception path so a
 // value-returning function still terminates with `return`. Mirrors the
@@ -1236,6 +1472,12 @@ func inferDeclType(x ir.Expr) (string, error) {
 			return "", err
 		}
 		return pkg + ".Map", nil
+	case *ir.MakeChan:
+		pkg, err := chanPkgFor(x.Elem)
+		if err != nil {
+			return "", err
+		}
+		return pkg + ".Channel", nil
 	}
 	return "", fmt.Errorf("emit: := requires a literal or composite RHS, got %T", x)
 }
@@ -1269,6 +1511,19 @@ func (e *emitter) emitStmt(s ir.Stmt) {
 		// order). The body walk reaches here only if a DeferStmt is
 		// encountered outside the head of a function body — which
 		// emitSubprogram should have already collected. Skip silently.
+	case *ir.GoStmt:
+		// Closure was hoisted to the declarative region by
+		// emitSubprogram; the inline Spawn assignment must remain at
+		// the original position because Go's `go f()` creates the
+		// goroutine *here*, not at scope entry. The closure name is
+		// looked up from the file-wide goIndex (populated by the
+		// walkStmt pre-pass) so AST-node identity drives the number,
+		// not the order in which emitStmt happens to visit the tree.
+		e.println(fmt.Sprintf(
+			"Unused_G := Gada.Async.Scheduler.Spawn (Go_Closure_%d'Unrestricted_Access);",
+			e.goIndex[s]))
+	case *ir.ChanSend:
+		e.emitChanSend(s)
 	default:
 		e.fail(fmt.Errorf("emit: unsupported stmt %T", s))
 	}
@@ -1659,6 +1914,8 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		return e.emitSliceLit(x)
 	case *ir.MapLit:
 		return e.emitMapLit(x)
+	case *ir.MakeChan:
+		return e.emitMakeChan(x)
 	case *ir.IndexExpr:
 		return e.emitIndexExpr(x)
 	case *ir.SliceExpr:
@@ -1687,6 +1944,23 @@ func (e *emitter) emitSliceLit(s *ir.SliceLit) string {
 		parts = append(parts, e.emitExpr(el))
 	}
 	return pkg + ".From_Array ([" + strings.Join(parts, ", ") + "])"
+}
+
+// emitMakeChan dispatches `make (chan T, N)` to
+// `Channels_Of_<T>.Make (N)` and `make (chan T)` (Capacity nil) to
+// `Channels_Of_<T>.Make (1)` per the runtime's documented
+// behavioural approximation for unbuffered channels (see
+// `runtime/src/gada-async-channels-bounded.ads` § Make rationale).
+func (e *emitter) emitMakeChan(m *ir.MakeChan) string {
+	pkg, err := chanPkgFor(m.Elem)
+	if err != nil {
+		e.fail(err)
+		return ""
+	}
+	if m.Capacity == nil {
+		return pkg + ".Make (1)"
+	}
+	return pkg + ".Make (" + e.emitExpr(m.Capacity) + ")"
 }
 
 // emitIndexExpr dispatches `s[i]` (slice) to
@@ -1887,6 +2161,50 @@ func (e *emitter) slicePkgForExpr(x ir.Expr) (string, bool) {
 	return pkg, true
 }
 
+// chanPkgForExpr returns the Channels_Of_<T> prefix for x when x is
+// known to evaluate to a chan; ok=false otherwise. Same constraint as
+// slicePkgForExpr / mapPkgForExpr: bare-ident-only resolution until
+// the *types.Info plumbing arrives in a later phase. A non-Ident chan
+// operand (selector, index expr, etc.) is the caller's signal to fail
+// with a clear unsupported-shape error rather than silently lower to
+// the wrong instantiation.
+func (e *emitter) chanPkgForExpr(x ir.Expr) (string, bool) {
+	id, ok := x.(*ir.Ident)
+	if !ok {
+		return "", false
+	}
+	t, ok := e.localTypes[id.Name]
+	if !ok {
+		return "", false
+	}
+	ct, ok := t.(*ir.ChanType)
+	if !ok {
+		return "", false
+	}
+	pkg, err := chanPkgFor(ct.Elem)
+	if err != nil {
+		return "", false
+	}
+	return pkg, true
+}
+
+// emitChanSend lowers a `c <- v` SendStmt to `Channels_Of_T.Send (C, V);`.
+// The chan operand must resolve to a `chan T` declared in scope; the
+// emit-side rejection here is the second line of defence after
+// translate's transSend (which lets non-chan-typed Ident operands
+// through because translate doesn't have *types.Info wired yet — that
+// arrives in a later phase).
+func (e *emitter) emitChanSend(s *ir.ChanSend) {
+	pkg, ok := e.chanPkgForExpr(s.Chan)
+	if !ok {
+		e.fail(fmt.Errorf("emit: ChanSend on non-chan or non-ident operand not supported in Phase 3"))
+		return
+	}
+	c := e.emitExpr(s.Chan)
+	v := e.emitExpr(s.Value)
+	e.println(pkg + ".Send (" + c + ", " + v + ");")
+}
+
 // mapPkgForExpr returns the Maps_Of_<K>_To_<V> prefix for x when x
 // is known to evaluate to a map; ok=false otherwise. Same constraint
 // as slicePkgForExpr: bare-ident-only resolution until type-info
@@ -2077,6 +2395,12 @@ func typeName(t ir.Type) (string, error) {
 			return "", err
 		}
 		return pkg + ".Map", nil
+	case *ir.ChanType:
+		pkg, err := chanPkgFor(t.Elem)
+		if err != nil {
+			return "", err
+		}
+		return pkg + ".Channel", nil
 	case nil:
 		return "", fmt.Errorf("emit: missing type")
 	}

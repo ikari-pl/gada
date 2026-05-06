@@ -1,0 +1,177 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "chan_close.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "produce",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "c",
+              "type": {
+                "kind": "ChanType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "ChanSend",
+              "chan": {
+                "kind": "Ident",
+                "name": "c"
+              },
+              "value": {
+                "kind": "Lit",
+                "litKind": "int",
+                "value": "1"
+              }
+            },
+            {
+              "kind": "ChanSend",
+              "chan": {
+                "kind": "Ident",
+                "name": "c"
+              },
+              "value": {
+                "kind": "Lit",
+                "litKind": "int",
+                "value": "2"
+              }
+            },
+            {
+              "kind": "BuiltinCall",
+              "name": "close",
+              "args": [
+                {
+                  "kind": "Ident",
+                  "name": "c"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "drain",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "c",
+              "type": {
+                "kind": "ChanType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "v"
+                },
+                {
+                  "kind": "Ident",
+                  "name": "ok"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "ChanRecv",
+                  "chan": {
+                    "kind": "Ident",
+                    "name": "c"
+                  },
+                  "commaOk": true
+                }
+              ]
+            },
+            {
+              "kind": "If",
+              "cond": {
+                "kind": "UnaryOp",
+                "op": "!",
+                "x": {
+                  "kind": "Ident",
+                  "name": "ok"
+                }
+              },
+              "then": [
+                {
+                  "kind": "Return",
+                  "results": null
+                }
+              ],
+              "else": null
+            },
+            {
+              "kind": "ChanSend",
+              "chan": {
+                "kind": "Ident",
+                "name": "c"
+              },
+              "value": {
+                "kind": "Ident",
+                "name": "v"
+              }
+            },
+            {
+              "kind": "BuiltinCall",
+              "name": "close",
+              "args": [
+                {
+                  "kind": "Ident",
+                  "name": "c"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "closeString",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "c",
+              "type": {
+                "kind": "ChanType",
+                "elem": {
+                  "kind": "StringType"
+                }
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "BuiltinCall",
+              "name": "close",
+              "args": [
+                {
+                  "kind": "Ident",
+                  "name": "c"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -210,6 +210,7 @@ var builtinNames = map[string]bool{
 	"delete":  true,
 	"panic":   true,
 	"recover": true,
+	"close":   true,
 }
 
 // --- statements -----------------------------------------------------------

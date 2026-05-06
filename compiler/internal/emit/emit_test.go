@@ -50,6 +50,8 @@ var corpusFixtures = []string{
 	"chan_recv_single",
 	// Phase 3 — channel-emit (sub-item e: v, ok := <-c comma-ok receive).
 	"chan_recv_commaok",
+	// Phase 3 — channel-emit (sub-item f: close(c) builtin).
+	"chan_close",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -930,6 +932,66 @@ func TestChanRecvUnsupportedShapes(t *testing.T) {
 				RHS:    []ir.Expr{&ir.ChanRecv{Chan: idn("c"), CommaOK: true}},
 			}},
 		}, "ChanRecv"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			pkg := wrapPkg(tc.fn)
+			var buf bytes.Buffer
+			err := Package(pkg, &buf)
+			if err == nil {
+				t.Fatalf("expected emit error, got success:\n%s", buf.String())
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("wrong error (want substring %q): %v", tc.wantSub, err)
+			}
+		})
+	}
+}
+
+// TestChanCloseUnsupportedShapes pins the two reachable defensive
+// branches in emitChanClose: arg-count check (front-end *should*
+// already reject `close()` with no args or `close(c, x)` with two,
+// but Phase 2 has no `close` typecheck — the IR boundary is the
+// only place that catches a translate bug producing the wrong
+// shape) and non-chan-operand check (mirror of the receive- and
+// send-side guards).
+func TestChanCloseUnsupportedShapes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		fn      *ir.Function
+		wantSub string
+	}{
+		// Arg count: close takes exactly one chan operand. Zero args
+		// is the IR-level fabrication that emitChanClose's len check
+		// catches.
+		{"close zero args", &ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{&ir.BuiltinCall{Name: "close"}},
+		}, "exactly 1 arg"},
+		// Two args is the symmetric case; same arg-count guard.
+		{"close two args", &ir.Function{
+			Name:   "f",
+			Params: []*ir.Param{{Name: "c", Type: &ir.ChanType{Elem: &ir.IntType{}}}},
+			Body: []ir.Stmt{&ir.BuiltinCall{
+				Name: "close",
+				Args: []ir.Expr{idn("c"), litInt("0")},
+			}},
+		}, "exactly 1 arg"},
+		// Non-chan operand: close on a plain int param triggers the
+		// chanPkgForExpr-fails branch.
+		{"close on non-chan", &ir.Function{
+			Name:   "f",
+			Params: []*ir.Param{{Name: "c", Type: &ir.IntType{}}},
+			Body: []ir.Stmt{&ir.BuiltinCall{
+				Name: "close",
+				Args: []ir.Expr{idn("c")},
+			}},
+		}, "close on non-chan"},
 	}
 
 	for _, tc := range cases {

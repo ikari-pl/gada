@@ -243,6 +243,8 @@ func transStmt(s ast.Stmt) (ir.Stmt, error) {
 		return transDefer(s)
 	case *ast.GoStmt:
 		return transGo(s)
+	case *ast.SendStmt:
+		return transSend(s)
 	case *ast.ReturnStmt:
 		return transReturn(s)
 	case *ast.ExprStmt:
@@ -326,6 +328,29 @@ func transGo(s *ast.GoStmt) (*ir.GoStmt, error) {
 		return nil, err
 	}
 	return &ir.GoStmt{Call: c}, nil
+}
+
+// transSend handles Go's `c <- v` SendStmt. The Go AST keeps SendStmt
+// at statement position (it is not an expression), so the IR mirrors
+// the constraint with `*ir.ChanSend` (also Stmt-only). Both sides
+// route through the standard expression translator: Chan is typically
+// an Ident — emit's chanPkgForExpr only resolves bare-ident chans for
+// now, and a non-Ident chan operand here would still translate fine,
+// just to be rejected with a clear unsupported-shape error in emit.
+// We do not attempt to type-check that Chan resolves to a `chan T` at
+// translate time; the next phase's *types.Info plumbing will gate
+// that, and rejecting earlier here would make the error path surface
+// as "unsupported stmt" instead of the more useful emit-side message.
+func transSend(s *ast.SendStmt) (*ir.ChanSend, error) {
+	ch, err := transExpr(s.Chan)
+	if err != nil {
+		return nil, err
+	}
+	v, err := transExpr(s.Value)
+	if err != nil {
+		return nil, err
+	}
+	return &ir.ChanSend{Chan: ch, Value: v}, nil
 }
 
 // identNameOrBlank extracts a bare identifier name from a Go AST

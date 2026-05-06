@@ -58,6 +58,7 @@ func TestNodeKind(t *testing.T) {
 		{"GoStmt", &GoStmt{}, "GoStmt"},
 		{"ChanType", &ChanType{}, "ChanType"},
 		{"MakeChan", &MakeChan{}, "MakeChan"},
+		{"ChanSend", &ChanSend{}, "ChanSend"},
 	}
 
 	for _, tc := range cases {
@@ -90,6 +91,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Stmt = &RangeStmt{}
 	var _ Stmt = &DeferStmt{}
 	var _ Stmt = &GoStmt{}
+	var _ Stmt = &ChanSend{}
 
 	var _ Expr = &Ident{}
 	var _ Expr = &Lit{}
@@ -311,6 +313,27 @@ func TestChanTypeMissingElem(t *testing.T) {
 	}
 	if _, err := unmarshalType(json.RawMessage(`{"kind":"ChanType","elem":null}`)); err == nil {
 		t.Fatal("expected error for ChanType with null elem")
+	}
+}
+
+// TestChanSendMissingFields locks the two explicit-error branches in
+// ChanSend.UnmarshalJSON. Both `chan` and `value` are load-bearing —
+// a `c <- v` with either side dropped during round-trip would lower
+// to nonsense Ada (`.Send (, X);` or `.Send (C, );`) and the failure
+// would surface at gprbuild time rather than as a clear IR-level
+// regression here.
+func TestChanSendMissingFields(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		`{"kind":"ChanSend"}`,
+		`{"kind":"ChanSend","chan":null,"value":{"kind":"Lit","kind2":"int","value":"1"}}`,
+		`{"kind":"ChanSend","chan":{"kind":"Ident","name":"c"}}`,
+		`{"kind":"ChanSend","chan":{"kind":"Ident","name":"c"},"value":null}`,
+	}
+	for _, raw := range cases {
+		if _, err := unmarshalStmt(json.RawMessage(raw)); err == nil {
+			t.Fatalf("expected error for %s", raw)
+		}
 	}
 }
 
@@ -554,6 +577,7 @@ func TestSentinels(t *testing.T) {
 	(&RangeStmt{}).irStmt()
 	(&DeferStmt{}).irStmt()
 	(&GoStmt{}).irStmt()
+	(&ChanSend{}).irStmt()
 
 	(&IntType{}).irType()
 	(&StringType{}).irType()
@@ -644,6 +668,7 @@ func TestPropagatedDecodeErrors(t *testing.T) {
 		{"DeferStmt", `{"kind":"DeferStmt","call":42}`, stmtErr},
 		{"GoStmt", `{"kind":"GoStmt","call":42}`, stmtErr},
 		{"MakeChan", `{"kind":"MakeChan","elem":{"kind":"IntType"},"capacity":42}`, exprErr},
+		{"ChanSend", `{"kind":"ChanSend","chan":42,"value":{"kind":"Ident","name":"v"}}`, stmtErr},
 	}
 
 	for _, tc := range cases {
@@ -715,6 +740,8 @@ func TestPropagatedChildErrors(t *testing.T) {
 		{"ChanType.Elem bad type", `{"kind":"ChanType","elem":` + bad + `}`, func(b json.RawMessage) error { _, err := unmarshalType(b); return err }},
 		{"MakeChan.Elem bad type", `{"kind":"MakeChan","elem":` + bad + `}`, exprErr},
 		{"MakeChan.Capacity bad child", `{"kind":"MakeChan","elem":{"kind":"IntType"},"capacity":` + bad + `}`, exprErr},
+		{"ChanSend.Chan bad child", `{"kind":"ChanSend","chan":` + bad + `,"value":{"kind":"Ident","name":"v"}}`, stmtErr},
+		{"ChanSend.Value bad child", `{"kind":"ChanSend","chan":{"kind":"Ident","name":"c"},"value":` + bad + `}`, stmtErr},
 	}
 
 	for _, tc := range cases {

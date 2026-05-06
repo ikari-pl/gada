@@ -56,6 +56,8 @@ func TestCorpus(t *testing.T) {
 		"chan_type_param.go",
 		// Phase 3 — channel make fixture (channel-emit item, sub-item b).
 		"chan_make.go",
+		// Phase 3 — channel send fixture (channel-emit item, sub-item c).
+		"chan_send.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -189,6 +191,16 @@ func f(x complex128) {}`, "unsupported type"},
 func f(x func()) {}`, "unsupported type expr"},
 		{"directional chan param", `package p
 func f(x chan<- int) {}`, "directional channel types"},
+		// `c <- v` SendStmt: the Value side runs through transExpr, so
+		// any expression rejection (e.g. complex literals) surfaces here.
+		// This pins transSend's Value-error return.
+		{"chan send bad value", `package p
+func f(c chan int) { c <- 1i }`, "literal kind"},
+		// And the symmetric Chan-side rejection. The Go parser accepts a
+		// numeric literal as the SendStmt.Chan slot (typecheck would
+		// reject it later); translate's transExpr runs first and bounces.
+		{"chan send bad chan", `package p
+func f() { 1i <- 1 }`, "literal kind"},
 		{"map param bad key", `package p
 func f(x map[complex128]int) {}`, "unsupported type"},
 		{"map param bad value", `package p

@@ -304,6 +304,15 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 		// tree in a different order.
 		e.goIndex[s] = len(e.goIndex) + 1
 		e.walkStmt(s.Call)
+	case *ir.ChanSend:
+		// The chan operand's element type is what triggers the
+		// `Channels_Of_<T>` instantiation. recordChanElem fires when
+		// emit walks the *declaration* (param type or `make` literal),
+		// not the use site, so the send itself only contributes its
+		// nested expressions — recordTypeInTree on Chan is unnecessary
+		// here because the chan was already declared somewhere.
+		e.walkExpr(s.Chan)
+		e.walkExpr(s.Value)
 	case nil:
 		// optional Init/Post on bare for {}.
 	}
@@ -1513,6 +1522,8 @@ func (e *emitter) emitStmt(s ir.Stmt) {
 		e.println(fmt.Sprintf(
 			"Unused_G := Gada.Async.Scheduler.Spawn (Go_Closure_%d'Unrestricted_Access);",
 			e.goIndex[s]))
+	case *ir.ChanSend:
+		e.emitChanSend(s)
 	default:
 		e.fail(fmt.Errorf("emit: unsupported stmt %T", s))
 	}
@@ -2148,6 +2159,50 @@ func (e *emitter) slicePkgForExpr(x ir.Expr) (string, bool) {
 		return "", false
 	}
 	return pkg, true
+}
+
+// chanPkgForExpr returns the Channels_Of_<T> prefix for x when x is
+// known to evaluate to a chan; ok=false otherwise. Same constraint as
+// slicePkgForExpr / mapPkgForExpr: bare-ident-only resolution until
+// the *types.Info plumbing arrives in a later phase. A non-Ident chan
+// operand (selector, index expr, etc.) is the caller's signal to fail
+// with a clear unsupported-shape error rather than silently lower to
+// the wrong instantiation.
+func (e *emitter) chanPkgForExpr(x ir.Expr) (string, bool) {
+	id, ok := x.(*ir.Ident)
+	if !ok {
+		return "", false
+	}
+	t, ok := e.localTypes[id.Name]
+	if !ok {
+		return "", false
+	}
+	ct, ok := t.(*ir.ChanType)
+	if !ok {
+		return "", false
+	}
+	pkg, err := chanPkgFor(ct.Elem)
+	if err != nil {
+		return "", false
+	}
+	return pkg, true
+}
+
+// emitChanSend lowers a `c <- v` SendStmt to `Channels_Of_T.Send (C, V);`.
+// The chan operand must resolve to a `chan T` declared in scope; the
+// emit-side rejection here is the second line of defence after
+// translate's transSend (which lets non-chan-typed Ident operands
+// through because translate doesn't have *types.Info wired yet — that
+// arrives in a later phase).
+func (e *emitter) emitChanSend(s *ir.ChanSend) {
+	pkg, ok := e.chanPkgForExpr(s.Chan)
+	if !ok {
+		e.fail(fmt.Errorf("emit: ChanSend on non-chan or non-ident operand not supported in Phase 3"))
+		return
+	}
+	c := e.emitExpr(s.Chan)
+	v := e.emitExpr(s.Value)
+	e.println(pkg + ".Send (" + c + ", " + v + ");")
 }
 
 // mapPkgForExpr returns the Maps_Of_<K>_To_<V> prefix for x when x

@@ -348,6 +348,24 @@ type GoStmt struct {
 func (*GoStmt) irStmt()          {}
 func (*GoStmt) NodeKind() string { return "GoStmt" }
 
+// ChanSend is Go `c <- v`. Lowers in emit to
+// `Channels_Of_<T>.Send (C, V);` where T is the chan element type
+// resolved through `c`'s declared type (looked up in
+// emit.localTypes). Modelling Send as a *Stmt* — not an Expr — mirrors
+// the Go spec: SendStmt is an `ast.Stmt`, never an expression position.
+// The IR carries the operand pair separately rather than reusing
+// `*ir.Call` because a Call's Fun has no shape that could syntactically
+// represent the send arrow without a fictional builtin name; keeping
+// the variant explicit also lets emit's Stmt switch reject Send-shaped
+// nodes at any later position they appear (defer/go-target lowerings).
+type ChanSend struct {
+	Chan  Expr
+	Value Expr
+}
+
+func (*ChanSend) irStmt()          {}
+func (*ChanSend) NodeKind() string { return "ChanSend" }
+
 // BuiltinCall is a call to a Go predeclared function. Distinguished
 // from Call (which carries an arbitrary Fun expression) so the
 // emitter can dispatch by name without re-deriving builtin-ness.
@@ -532,6 +550,12 @@ func unmarshalStmt(raw json.RawMessage) (Stmt, error) {
 		return &n, nil
 	case "GoStmt":
 		var n GoStmt
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "ChanSend":
+		var n ChanSend
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1551,5 +1575,40 @@ func (s *GoStmt) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	s.Call = c
+	return nil
+}
+
+func (s *ChanSend) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind  string `json:"kind"`
+		Chan  Expr   `json:"chan"`
+		Value Expr   `json:"value"`
+	}{"ChanSend", s.Chan, s.Value})
+}
+
+func (s *ChanSend) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Chan  json.RawMessage `json:"chan"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Chan) == 0 || string(aux.Chan) == "null" {
+		return fmt.Errorf("ir: ChanSend missing chan")
+	}
+	if len(aux.Value) == 0 || string(aux.Value) == "null" {
+		return fmt.Errorf("ir: ChanSend missing value")
+	}
+	c, err := unmarshalExpr(aux.Chan)
+	if err != nil {
+		return err
+	}
+	v, err := unmarshalExpr(aux.Value)
+	if err != nil {
+		return err
+	}
+	s.Chan = c
+	s.Value = v
 	return nil
 }

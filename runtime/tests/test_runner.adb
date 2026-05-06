@@ -35,6 +35,7 @@ with Panic_Suite;
 with Maps_Suite;
 with Hash_Suite;
 with Stress_Gc_Suite;
+with Stress_Scheduler_Suite;
 with Context_Suite;
 with Scheduler_Suite;
 with Channels_Suite;
@@ -69,7 +70,8 @@ procedure Test_Runner is
       or else Pkg = "async.channels.bounded"
       or else Pkg = "async.channels.unbounded"
       or else Pkg = "async.select"
-      or else Pkg = "stress.gc");
+      or else Pkg = "stress.gc"
+      or else Pkg = "stress.scheduler");
 
    --  Suites under the `stress.*` namespace are *opt-in*: an
    --  unfiltered `make test` (the default `make ci` path) skips
@@ -132,6 +134,11 @@ procedure Test_Runner is
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);
       end if;
+      if Should_Register ("stress.scheduler") then
+         Add_Test
+           (Result,
+            new Stress_Scheduler_Suite.Stress_Scheduler_Test);
+      end if;
       return Result;
    end Gada_Suite;
 
@@ -146,7 +153,9 @@ begin
          "test_runner: unknown PKG filter '" & Selected_Pkg
          & "'. Known suites: core.io, core.memory, core.slices,"
          & " core.defer, core.panic, core.maps, core.hash,"
-         & " async.context, async.scheduler, stress.gc.");
+         & " async.context, async.scheduler, async.channels.bounded,"
+         & " async.channels.unbounded, async.select,"
+         & " stress.gc, stress.scheduler.");
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
       return;
    end if;

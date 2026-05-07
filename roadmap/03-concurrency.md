@@ -178,9 +178,34 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         *Done 2026-05-06:* The smallest of the channel-emit sub-items because all the seams already existed: translate's `builtinNames` recognises `close` (one-line addition), and emit's `emitBuiltinStmt` already had the right Stmt-position dispatch for builtins like `delete`/`panic`. New `emitChanClose` helper validates `len(Args)==1`, resolves the chan operand via the existing `chanPkgForExpr` (bare-Ident → `localTypes` → `*ir.ChanType` cast), and emits `Channels_Of_T.Close (C);` directly. The runtime's `Channels.Bounded.Close` was already implemented; no runtime change. Corpus fixture (`chan_close.go`: `produce` sends two ints then closes; `drain` does a comma-ok receive, returns on closed-empty, otherwise echoes and closes; `closeString` proves per-T instantiation) emits a 30-line showcase that exercises ChanSend, ChanRecv-comma-ok, UnaryOp `not`, early `return`, and Close all in one file. Coverage gates green: runtime/ 100% (704/704), emit 95.28% (1091/1145), translate 95.32% (346/363), compiler 94.96% (2128/2241). With (f) ticked, all six sub-items of the parent "Compiler emission — channel operations" item are done; parent ticked too.
 
 - [ ] **Compiler emission — select statement**
-      *Files:* `compiler/internal/emit/select.go`, golden tests
-      *Verify:* `cd compiler && go test ./internal/emit/... -run Select`
-      *Done when:* multi-case select with default emits correct `Gada.Async.Select` invocation.
+
+  Decomposition mirrors channel-emit's six sub-items: each step adds a
+  focused IR/translate/emit slice with its own corpus fixture. v1
+  ships against `Gada.Async.Selector`'s single-Element_Type
+  constraint (per the runtime spec); heterogeneous selects are Phase
+  4 work. Drains (`<-c` without binding inside select) are folded
+  into the recv path with empty LHS names rather than as a separate
+  IR variant.
+
+  - [ ] **(a) `*ir.SelectStmt` IR + sealed-interface + JSON**
+        *Files:* `compiler/internal/ir/ir.go` (`*ir.SelectStmt{Cases []SelectCase}` Stmt variant; `SelectCase{Kind, Chan, Value, ValueLHS, OKLHS, Body}` flat record; `SelectCaseKind` enum constants), `compiler/internal/ir/ir_test.go` (NodeKind / SealedInterfaces / sentinel rows + missing-field and propagated-bad-child guards).
+        *Verify:* `cd compiler && go test ./internal/ir/...`
+        *Done when:* a hand-built `*ir.SelectStmt` round-trips through `MarshalJSON` → `unmarshalStmt` → `reflect.DeepEqual` for at least one case of each Kind (Send, Recv with both bindings, Recv with no binding, Default).
+
+  - [ ] **(b) Translate `*ast.SelectStmt`**
+        *Files:* `compiler/internal/translate/translate.go` (`transStmt` `*ast.SelectStmt` arm + `transSelect` helper that classifies each `*ast.CommClause`: `Comm == nil` → Default; `*ast.SendStmt` → Send; `*ast.AssignStmt` with `<-` RHS → Recv with bindings; `*ast.ExprStmt` with `<-` X → Recv with no bindings), `compiler/internal/translate/testdata/select_basic.{go,golden.json}`.
+        *Verify:* `cd compiler && go test ./internal/translate/... -run TestCorpus/select_basic`
+        *Done when:* a Go fixture with one of each case kind round-trips to a `*ir.SelectStmt` whose case count, kinds, and binding names match the source.
+
+  - [ ] **(c) Emit Selectors_Of_<T> instantiation + with-clause**
+        *Files:* `compiler/internal/emit/emit.go` (`selectElems` map mirroring `chanElems`; `recordSelectElem` populator wired into `walkStmt`'s SelectStmt arm; `emitSelectorInstantiations` helper analogous to `emitChannelInstantiations`; `with Gada.Async.Selector;` in the umbrella imports when any select is present).
+        *Verify:* `cd compiler && go build ./...` (no failing tests yet — emit lowering lands in (d)).
+        *Done when:* a file containing any `select` (even with all-Default cases) emits `with Gada.Async.Selector;` plus one `package Selectors_Of_<T> is new Gada.Async.Selector (Element_Type => T, Default_Element => <zero>, Bnd => Channels_Of_<T>);` per distinct element type. v1 picks the element type from the first non-Default case's chan operand; mixed-T selects raise an explicit emit error pointing at the Phase 4 widening.
+
+  - [ ] **(d) Emit Select_One lowering with case-branching body**
+        *Files:* `compiler/internal/emit/emit.go` (`emitSelectStmt` driving the per-site lowering: per-Recv-case heap-allocated out-pointers, `Case_Array` aggregate build, `Select_One` call, Ada `case Idx is when N => …` dispatch with Recv bindings declared in their case branch), `compiler/internal/emit/emit_test.go` (`TestSelectEmitErrors` for mixed-Element_Type rejection + non-chan operand on send/recv cases), `compiler/internal/emit/testdata/select_basic.golden.adb`.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/select_basic`
+        *Done when:* a select with a Send case, a Recv case with `v, ok :=` binding, a Recv case with no binding (drain), and a Default case lowers to a `declare … begin … end;` block whose body is the `Case_Array` build, the `Select_One` call, and an Ada `case Idx is when 1 => …; when 2 => …; when 3 => …; when 4 => …; end case;` dispatch with the user-bound `v` / `ok` declared inside their case branch.
 
 - [ ] **`ping_pong` example**
       *Files:* `examples/ping_pong/ping_pong.go`, `examples/ping_pong/expected_output.txt`

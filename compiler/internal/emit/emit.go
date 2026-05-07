@@ -1645,8 +1645,11 @@ func (e *emitter) emitStmt(s ir.Stmt) {
 
 // emitBuiltinStmt handles statement-position BuiltinCalls. The only
 // stmt-position cases Phase 2 emits are `delete(m, k)` (side-effecting
-// map mutation) and `panic(x)` (deferred to Item 8). Anything else
-// falls through to the expression dispatch followed by a semicolon.
+// map mutation) and `panic(x)` (deferred to Item 8). Phase 3 widens
+// the set with `close(c)` (channel close — the only legal expression
+// position for `close` in Go is statement-position too). Anything
+// else falls through to the expression dispatch followed by a
+// semicolon.
 func (e *emitter) emitBuiltinStmt(b *ir.BuiltinCall) {
 	switch b.Name {
 	case "delete":
@@ -1662,9 +1665,31 @@ func (e *emitter) emitBuiltinStmt(b *ir.BuiltinCall) {
 		}
 		v := e.emitExpr(b.Args[0])
 		e.println("Panic_Of_Integer.Do_Panic (" + v + ");")
+	case "close":
+		e.emitChanClose(b)
 	default:
 		e.fail(fmt.Errorf("emit: builtin %q at statement position not supported in Phase 2", b.Name))
 	}
+}
+
+// emitChanClose lowers `close(c)` to `Channels_Of_T.Close (C);`. The
+// chan operand must be a bare Ident resolvable through localTypes
+// (same constraint as ChanSend / ChanRecv); selector- or call-typed
+// chans need *types.Info plumbing that arrives in a later phase.
+// Subsequent receives on the closed channel return the runtime's
+// "zero-value with OK=False" signal, matching Go's spec.
+func (e *emitter) emitChanClose(b *ir.BuiltinCall) {
+	if len(b.Args) != 1 {
+		e.fail(fmt.Errorf("emit: close takes exactly 1 arg, got %d", len(b.Args)))
+		return
+	}
+	pkg, ok := e.chanPkgForExpr(b.Args[0])
+	if !ok {
+		e.fail(fmt.Errorf("emit: close on non-chan or non-ident operand not supported in Phase 3"))
+		return
+	}
+	c := e.emitExpr(b.Args[0])
+	e.println(pkg + ".Close (" + c + ");")
 }
 
 func (e *emitter) emitAssign(a *ir.Assign) {

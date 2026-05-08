@@ -187,6 +187,15 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
   into the recv path with empty LHS names rather than as a separate
   IR variant.
 
+  **Timeout_Op is deliberately omitted from v1 compiler-emit.** The
+  runtime exposes `Timeout_Op` for the `<-time.After(d)` shape, but
+  `time.After` lives in the std lib (`stdlib/`, post-Phase-3) and
+  Phase 3's translate has no other Go-source path to surface a
+  Timeout case. The runtime primitive remains accessible to
+  hand-written Ada in the meantime; v1's IR / translate / emit
+  classify only Send / Recv / Default. Adding `time.After` lowering
+  will be its own follow-up that re-uses the existing IR.
+
   - [ ] **(a) `*ir.SelectStmt` IR + sealed-interface + JSON**
         *Files:* `compiler/internal/ir/ir.go` (`*ir.SelectStmt{Cases []SelectCase}` Stmt variant; `SelectCase{Kind, Chan, Value, ValueLHS, OKLHS, Body}` flat record; `SelectCaseKind` enum constants), `compiler/internal/ir/ir_test.go` (NodeKind / SealedInterfaces / sentinel rows + missing-field and propagated-bad-child guards).
         *Verify:* `cd compiler && go test ./internal/ir/...`
@@ -200,12 +209,12 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
   - [ ] **(c) Emit Selectors_Of_<T> instantiation + with-clause**
         *Files:* `compiler/internal/emit/emit.go` (`selectElems` map mirroring `chanElems`; `recordSelectElem` populator wired into `walkStmt`'s SelectStmt arm; `emitSelectorInstantiations` helper analogous to `emitChannelInstantiations`; `with Gada.Async.Selector;` in the umbrella imports when any select is present).
         *Verify:* `cd compiler && go build ./...` (no failing tests yet — emit lowering lands in (d)).
-        *Done when:* a file containing any `select` (even with all-Default cases) emits `with Gada.Async.Selector;` plus one `package Selectors_Of_<T> is new Gada.Async.Selector (Element_Type => T, Default_Element => <zero>, Bnd => Channels_Of_<T>);` per distinct element type. v1 picks the element type from the first non-Default case's chan operand; mixed-T selects raise an explicit emit error pointing at the Phase 4 widening.
+        *Done when:* a file containing a `select` whose cases name at least one chan operand emits `with Gada.Async.Selector;` plus one `package Selectors_Of_<T> is new Gada.Async.Selector (Element_Type => T, Default_Element => <zero>, Bnd => Channels_Of_<T>);` per distinct element type. v1 picks the element type from the first non-Default case's chan operand; mixed-T selects raise an explicit emit error pointing at the Phase 4 widening. Degenerate selects with only a `default:` case (Go accepts these, though they are useless) skip the instantiation entirely — emit lowers them to the default body inline since `Select_One` itself is unnecessary when no case can ever block.
 
   - [ ] **(d) Emit Select_One lowering with case-branching body**
         *Files:* `compiler/internal/emit/emit.go` (`emitSelectStmt` driving the per-site lowering: per-Recv-case heap-allocated out-pointers, `Case_Array` aggregate build, `Select_One` call, Ada `case Idx is when N => …` dispatch with Recv bindings declared in their case branch), `compiler/internal/emit/emit_test.go` (`TestSelectEmitErrors` for mixed-Element_Type rejection + non-chan operand on send/recv cases), `compiler/internal/emit/testdata/select_basic.golden.adb`.
         *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/select_basic`
-        *Done when:* a select with a Send case, a Recv case with `v, ok :=` binding, a Recv case with no binding (drain), and a Default case lowers to a `declare … begin … end;` block whose body is the `Case_Array` build, the `Select_One` call, and an Ada `case Idx is when 1 => …; when 2 => …; when 3 => …; when 4 => …; end case;` dispatch with the user-bound `v` / `ok` declared inside their case branch.
+        *Done when:* a select with a Send case, a Recv case with `v, ok :=` binding, a Recv case with no binding (drain), and a Default case lowers to a `declare … begin … end;` block whose body is the `Case_Array` build, the `Select_One` call, and an Ada `case Idx is when 1 => …; when 2 => …; when 3 => …; when 4 => …; end case;` dispatch. Ada syntax forbids declarations directly inside a `case` branch, so each Recv case with bindings emits a per-branch nested `declare V : T := V_<i>.all; Ok : Boolean := OK_<i>.all; begin <user body> end;` block. Cases without bindings (Send, Default, drain) emit their body directly under `when N =>` with no nested declare.
 
 - [ ] **`ping_pong` example**
       *Files:* `examples/ping_pong/ping_pong.go`, `examples/ping_pong/expected_output.txt`

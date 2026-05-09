@@ -244,6 +244,8 @@ func transStmt(s ast.Stmt) (ir.Stmt, error) {
 		return transDefer(s)
 	case *ast.GoStmt:
 		return transGo(s)
+	case *ast.SelectStmt:
+		return transSelect(s)
 	case *ast.SendStmt:
 		return transSend(s)
 	case *ast.ReturnStmt:
@@ -352,6 +354,128 @@ func transSend(s *ast.SendStmt) (*ir.ChanSend, error) {
 		return nil, err
 	}
 	return &ir.ChanSend{Chan: ch, Value: v}, nil
+}
+
+// transSelect lowers Go's `select { case … }` statement. Each
+// `*ast.CommClause` becomes one `ir.SelectCase`, classified by the
+// shape of its `Comm` slot:
+//
+//   - `Comm == nil`                            → SelectCaseDefault
+//   - `*ast.SendStmt{Chan, Value}`             → SelectCaseSend
+//   - `*ast.AssignStmt{Tok:DEFINE, LHS, RHS:[<-c]}` → SelectCaseRecv with
+//     ValueLHS (and OKLHS when len(LHS)==2)
+//   - `*ast.ExprStmt{X:UnaryExpr{Op:ARROW}}`   → SelectCaseRecv with
+//     empty ValueLHS / OKLHS (drain shape)
+//
+// `=`-form (assigning to an outer-scope variable) is rejected
+// explicitly: v1's emit hoists Recv-bound names into the per-branch
+// `declare` scope, which only matches the `:=` semantics. The same
+// constraint as the head-of-body recv lowerings; `=` shapes can land
+// once we have *types.Info to resolve outer-scope names.
+//
+// transSelect does not enforce single-Element_Type across cases —
+// that constraint lives at the emit boundary (where the per-T
+// `Selectors_Of_<T>` instantiation is selected), so a future
+// type-erased select can lift it without changing translate.
+func transSelect(s *ast.SelectStmt) (*ir.SelectStmt, error) {
+	// Go's parser populates SelectStmt.Body.List exclusively with
+	// *ast.CommClause entries — a non-CommClause would be a parser
+	// invariant violation, not a translatable input. We type-assert
+	// directly without a fallback for that reason.
+	cases := make([]ir.SelectCase, 0, len(s.Body.List))
+	for _, raw := range s.Body.List {
+		clause := raw.(*ast.CommClause)
+		body, err := transStmtList(clause.Body)
+		if err != nil {
+			return nil, err
+		}
+		c, err := transSelectCommClauseHead(clause.Comm, body)
+		if err != nil {
+			return nil, err
+		}
+		cases = append(cases, c)
+	}
+	return &ir.SelectStmt{Cases: cases}, nil
+}
+
+// transSelectCommClauseHead classifies one CommClause's `Comm` field
+// (the `case <stuff>:` line). Split out so transSelect's loop stays
+// readable and the per-shape error messages stay close to the
+// pattern that produced them.
+func transSelectCommClauseHead(comm ast.Stmt, body []ir.Stmt) (ir.SelectCase, error) {
+	if comm == nil {
+		return ir.SelectCase{Kind: ir.SelectCaseDefault, Body: body}, nil
+	}
+	switch c := comm.(type) {
+	case *ast.SendStmt:
+		ch, err := transExpr(c.Chan)
+		if err != nil {
+			return ir.SelectCase{}, err
+		}
+		v, err := transExpr(c.Value)
+		if err != nil {
+			return ir.SelectCase{}, err
+		}
+		return ir.SelectCase{
+			Kind:  ir.SelectCaseSend,
+			Chan:  ch,
+			Value: v,
+			Body:  body,
+		}, nil
+	case *ast.AssignStmt:
+		if c.Tok != token.DEFINE {
+			return ir.SelectCase{}, fmt.Errorf("translate: select recv case must use `:=` not `=` in v1 (assign-to-outer-scope arrives with type-info plumbing)")
+		}
+		// Go's parser guarantees exactly 1 Rhs and 1 or 2 Lhs in a
+		// CommClause AssignStmt (the grammar for `case A := <-C:` /
+		// `case A, B := <-C:`); a malformed shape would be a parser
+		// bug, not a translatable input. We index Rhs[0] / Lhs[0] /
+		// Lhs[1] directly without defensive bounds checks for that
+		// reason — keeping the code honest about what the upstream
+		// guarantees rather than papering over impossible inputs.
+		recv, ok := c.Rhs[0].(*ast.UnaryExpr)
+		if !ok || recv.Op != token.ARROW {
+			return ir.SelectCase{}, fmt.Errorf("translate: select recv case rhs must be `<-c`, got %T", c.Rhs[0])
+		}
+		ch, err := transExpr(recv.X)
+		if err != nil {
+			return ir.SelectCase{}, err
+		}
+		// Same parser-invariant for identNameOrBlank: `:=` lhs only
+		// admits Ident (or `_`) at parse time, so the helper cannot
+		// fail here. Threading the err through would add a branch
+		// neither valid Go nor invalid Go can reach.
+		valueLHS, _ := identNameOrBlank(c.Lhs[0])
+		var okLHS string
+		if len(c.Lhs) == 2 {
+			okLHS, _ = identNameOrBlank(c.Lhs[1])
+		}
+		return ir.SelectCase{
+			Kind:     ir.SelectCaseRecv,
+			Chan:     ch,
+			ValueLHS: valueLHS,
+			OKLHS:    okLHS,
+			Body:     body,
+		}, nil
+	case *ast.ExprStmt:
+		// Drain shape: `case <-c:` with no LHS binding. The runtime's
+		// Recv_Op handles this via Recv_V_Out / Recv_OK_Out being null.
+		recv, ok := c.X.(*ast.UnaryExpr)
+		if !ok || recv.Op != token.ARROW {
+			return ir.SelectCase{}, fmt.Errorf("translate: select drain case must be `case <-c:`, got %T", c.X)
+		}
+		ch, err := transExpr(recv.X)
+		if err != nil {
+			return ir.SelectCase{}, err
+		}
+		return ir.SelectCase{
+			Kind: ir.SelectCaseRecv,
+			Chan: ch,
+			Body: body,
+		}, nil
+	default:
+		return ir.SelectCase{}, fmt.Errorf("translate: unsupported select case shape %T", comm)
+	}
 }
 
 // identNameOrBlank extracts a bare identifier name from a Go AST

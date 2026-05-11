@@ -1002,7 +1002,10 @@ func TestSelectorInstantiationsPrelude(t *testing.T) {
 	// the fn.Body pre-scan in collectSliceElems. A `c := make(chan T,
 	// N)` define is the only IR shape that exercises that branch;
 	// select cases referencing the local resolve through the same
-	// chanIdentTypes map.
+	// chanIdentTypes map. Assertions mirror the chan-param case
+	// exactly so a regression that breaks the local-resolution path
+	// surfaces with the same failure shape as a regression that
+	// breaks the param-resolution path.
 	t.Run("chan local operand", func(t *testing.T) {
 		t.Parallel()
 		pkg := wrapPkg(&ir.Function{
@@ -1028,8 +1031,19 @@ func TestSelectorInstantiationsPrelude(t *testing.T) {
 			t.Fatalf("emit: %v", err)
 		}
 		got := buf.String()
-		if !strings.Contains(got, "package Selectors_Of_Integer is new Gada.Async.Selector") {
-			t.Fatalf("missing Selectors_Of_Integer instantiation in output:\n%s", got)
+		for _, want := range []string{
+			"with Gada.Async.Channels.Bounded;",
+			"with Gada.Async.Selector;",
+			"package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);",
+			"package Selectors_Of_Integer is new Gada.Async.Selector",
+			"(Element_Type    => Integer,",
+			"Default_Element => 0,",
+			"Bnd             => Channels_Of_Integer);",
+			"null;  --  sub-item (d):",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("missing %q in output:\n%s", want, got)
+			}
 		}
 	})
 }

@@ -372,7 +372,7 @@ func TestChanSendMissingFields(t *testing.T) {
 func TestSelectStmtRoundTrip(t *testing.T) {
 	t.Parallel()
 	original := &SelectStmt{
-		Cases: []SelectCase{
+		Cases: []*SelectCase{
 			{
 				Kind:  SelectCaseSend,
 				Chan:  &Ident{Name: "ch1"},

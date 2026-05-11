@@ -382,7 +382,7 @@ func transSelect(s *ast.SelectStmt) (*ir.SelectStmt, error) {
 	// *ast.CommClause entries — a non-CommClause would be a parser
 	// invariant violation, not a translatable input. We type-assert
 	// directly without a fallback for that reason.
-	cases := make([]ir.SelectCase, 0, len(s.Body.List))
+	cases := make([]*ir.SelectCase, 0, len(s.Body.List))
 	for _, raw := range s.Body.List {
 		clause := raw.(*ast.CommClause)
 		body, err := transStmtList(clause.Body)
@@ -402,21 +402,21 @@ func transSelect(s *ast.SelectStmt) (*ir.SelectStmt, error) {
 // (the `case <stuff>:` line). Split out so transSelect's loop stays
 // readable and the per-shape error messages stay close to the
 // pattern that produced them.
-func transSelectCommClauseHead(comm ast.Stmt, body []ir.Stmt) (ir.SelectCase, error) {
+func transSelectCommClauseHead(comm ast.Stmt, body []ir.Stmt) (*ir.SelectCase, error) {
 	if comm == nil {
-		return ir.SelectCase{Kind: ir.SelectCaseDefault, Body: body}, nil
+		return &ir.SelectCase{Kind: ir.SelectCaseDefault, Body: body}, nil
 	}
 	switch c := comm.(type) {
 	case *ast.SendStmt:
 		ch, err := transExpr(c.Chan)
 		if err != nil {
-			return ir.SelectCase{}, err
+			return nil, err
 		}
 		v, err := transExpr(c.Value)
 		if err != nil {
-			return ir.SelectCase{}, err
+			return nil, err
 		}
-		return ir.SelectCase{
+		return &ir.SelectCase{
 			Kind:  ir.SelectCaseSend,
 			Chan:  ch,
 			Value: v,
@@ -424,7 +424,7 @@ func transSelectCommClauseHead(comm ast.Stmt, body []ir.Stmt) (ir.SelectCase, er
 		}, nil
 	case *ast.AssignStmt:
 		if c.Tok != token.DEFINE {
-			return ir.SelectCase{}, fmt.Errorf("translate: select recv case must use `:=` not `=` in v1 (assign-to-outer-scope arrives with type-info plumbing)")
+			return nil, fmt.Errorf("translate: select recv case must use `:=` not `=` in v1 (assign-to-outer-scope arrives with type-info plumbing)")
 		}
 		// Go's parser guarantees exactly 1 Rhs and 1 or 2 Lhs in a
 		// CommClause AssignStmt (the grammar for `case A := <-C:` /
@@ -435,11 +435,11 @@ func transSelectCommClauseHead(comm ast.Stmt, body []ir.Stmt) (ir.SelectCase, er
 		// guarantees rather than papering over impossible inputs.
 		recv, ok := c.Rhs[0].(*ast.UnaryExpr)
 		if !ok || recv.Op != token.ARROW {
-			return ir.SelectCase{}, fmt.Errorf("translate: select recv case rhs must be `<-c`, got %T", c.Rhs[0])
+			return nil, fmt.Errorf("translate: select recv case rhs must be `<-c`, got %T", c.Rhs[0])
 		}
 		ch, err := transExpr(recv.X)
 		if err != nil {
-			return ir.SelectCase{}, err
+			return nil, err
 		}
 		// Same parser-invariant for identNameOrBlank: `:=` lhs only
 		// admits Ident (or `_`) at parse time, so the helper cannot
@@ -450,7 +450,7 @@ func transSelectCommClauseHead(comm ast.Stmt, body []ir.Stmt) (ir.SelectCase, er
 		if len(c.Lhs) == 2 {
 			okLHS, _ = identNameOrBlank(c.Lhs[1])
 		}
-		return ir.SelectCase{
+		return &ir.SelectCase{
 			Kind:     ir.SelectCaseRecv,
 			Chan:     ch,
 			ValueLHS: valueLHS,
@@ -462,19 +462,19 @@ func transSelectCommClauseHead(comm ast.Stmt, body []ir.Stmt) (ir.SelectCase, er
 		// Recv_Op handles this via Recv_V_Out / Recv_OK_Out being null.
 		recv, ok := c.X.(*ast.UnaryExpr)
 		if !ok || recv.Op != token.ARROW {
-			return ir.SelectCase{}, fmt.Errorf("translate: select drain case must be `case <-c:`, got %T", c.X)
+			return nil, fmt.Errorf("translate: select drain case must be `case <-c:`, got %T", c.X)
 		}
 		ch, err := transExpr(recv.X)
 		if err != nil {
-			return ir.SelectCase{}, err
+			return nil, err
 		}
-		return ir.SelectCase{
+		return &ir.SelectCase{
 			Kind: ir.SelectCaseRecv,
 			Chan: ch,
 			Body: body,
 		}, nil
 	default:
-		return ir.SelectCase{}, fmt.Errorf("translate: unsupported select case shape %T", comm)
+		return nil, fmt.Errorf("translate: unsupported select case shape %T", comm)
 	}
 }
 

@@ -130,11 +130,29 @@ type emitter struct {
 	mapPairOrder        []string
 	chanElems           map[string]ir.Type // mirror of sliceElems but for `chan T` — drives one `package Channels_Of_<T> is new Gada.Async.Channels.Bounded (Element_Type => T);` per distinct chan element-type per file. Keyed by Ada base name (e.g. "Integer"). Inserted by recordChanElem; insertion order preserved in chanElemOrder.
 	chanElemOrder       []string
-	localTypes          map[string]ir.Type
-	rangeCounter        int
-	goIndex             map[*ir.GoStmt]int // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
-	pendingRecvs        []pendingChanRecv  // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
-	err                 error
+
+	// chanIdentTypes maps a file-wide Ident name → the chan element
+	// type it refers to. Populated by the pre-scan from every chan-
+	// typed function parameter and every `c := make(chan T, …)`
+	// head-of-body local. SelectStmt's chan operand is always an
+	// Ident in v1, so this lookup is sufficient to derive the
+	// element type a select needs without per-subprogram
+	// localTypes plumbing (which only arrives during emitSubprogram
+	// and isn't available during the file pre-walk).
+	chanIdentTypes map[string]ir.Type
+
+	// selectorElems is the subset of chan element types that any
+	// select statement in the file actually references. Drives the
+	// `Selectors_Of_<T>` instantiation list emitted alongside
+	// Channels_Of_<T>. Subset-of (not equal-to) chanElems because a
+	// chan type used only outside select doesn't need a Selector.
+	selectorElems     map[string]ir.Type
+	selectorElemOrder []string
+	localTypes        map[string]ir.Type
+	rangeCounter      int
+	goIndex           map[*ir.GoStmt]int // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
+	pendingRecvs      []pendingChanRecv  // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
+	err               error
 }
 
 // pendingChanRecv pairs a `v := <-c` (sub-item d) or `v, ok := <-c`
@@ -155,12 +173,14 @@ type pendingChanRecv struct {
 
 func newEmitter(pkg string, f *ir.File) *emitter {
 	e := &emitter{
-		pkgName:    pkg,
-		file:       f,
-		sliceElems: map[string]ir.Type{},
-		mapPairs:   map[string]*ir.MapType{},
-		chanElems:  map[string]ir.Type{},
-		goIndex:    map[*ir.GoStmt]int{},
+		pkgName:        pkg,
+		file:           f,
+		sliceElems:     map[string]ir.Type{},
+		mapPairs:       map[string]*ir.MapType{},
+		chanElems:      map[string]ir.Type{},
+		chanIdentTypes: map[string]ir.Type{},
+		selectorElems:  map[string]ir.Type{},
+		goIndex:        map[*ir.GoStmt]int{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
@@ -185,11 +205,58 @@ func (e *emitter) collectSliceElems() {
 		}
 		for _, p := range fn.Params {
 			e.recordTypeInTree(p.Type)
+			// Chan-typed parameters become file-wide chanIdentTypes
+			// entries so SelectStmt can resolve its operand's element
+			// type during walkStmt — that pre-walk runs before
+			// localTypes is populated for any subprogram.
+			if ct, ok := p.Type.(*ir.ChanType); ok && p.Name != "" {
+				e.chanIdentTypes[p.Name] = ct.Elem
+			}
 		}
 		for _, p := range fn.Results {
 			e.recordTypeInTree(p.Type)
 		}
+		// Same lift for `c := make(chan T, …)` head-of-body locals.
+		// Falls back silently if the leading `:=` isn't a chan-make
+		// shape; any non-chan local doesn't pollute the map.
+		for _, s := range fn.Body {
+			a, ok := s.(*ir.Assign)
+			if !ok || !a.Define {
+				break
+			}
+			if len(a.LHS) != 1 || len(a.RHS) != 1 {
+				continue
+			}
+			id, ok := a.LHS[0].(*ir.Ident)
+			if !ok {
+				continue
+			}
+			if mc, ok := a.RHS[0].(*ir.MakeChan); ok {
+				e.chanIdentTypes[id.Name] = mc.Elem
+			}
+		}
 		e.walkStmts(fn.Body)
+	}
+}
+
+// recordSelectorElem mirrors recordChanElem but for selects. Called
+// from walkStmt's SelectStmt arm for each Send / Recv case so the
+// emitted Selectors_Of_<T> instantiation list is the minimal set
+// the file's selects actually reference — not every chan type in
+// the file (a "with Gada.Async.Selector;" + unused instantiation
+// surface would trigger -gnatwa noise and obscure the runtime spec
+// alignment).
+func (e *emitter) recordSelectorElem(elem ir.Type) {
+	if elem == nil {
+		return
+	}
+	name, err := elemBaseName(elem)
+	if err != nil {
+		return
+	}
+	if _, present := e.selectorElems[name]; !present {
+		e.selectorElems[name] = elem
+		e.selectorElemOrder = append(e.selectorElemOrder, name)
 	}
 }
 
@@ -330,6 +397,31 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 		// here because the chan was already declared somewhere.
 		e.walkExpr(s.Chan)
 		e.walkExpr(s.Value)
+	case *ir.SelectStmt:
+		// Each non-Default case carries a chan operand (an Ident)
+		// whose element type drives the Selectors_Of_<T>
+		// instantiation. Resolve via chanIdentTypes (populated by
+		// collectSliceElems's pre-scan over function params and
+		// head-of-body chan-make defines). v1's runtime requires a
+		// single Element_Type per select, but enforcing that rule
+		// lives in sub-item (d)'s emit-time check — recording
+		// every non-Default case's element here is correct because
+		// the recordSelectorElem helper deduplicates by Ada base
+		// name.
+		for _, c := range s.Cases {
+			if c.Kind != ir.SelectCaseDefault {
+				if id, ok := c.Chan.(*ir.Ident); ok {
+					if t, present := e.chanIdentTypes[id.Name]; present {
+						e.recordSelectorElem(t)
+					}
+				}
+				e.walkExpr(c.Chan)
+			}
+			if c.Kind == ir.SelectCaseSend {
+				e.walkExpr(c.Value)
+			}
+			e.walkStmts(c.Body)
+		}
 	case nil:
 		// optional Init/Post on bare for {}.
 	}
@@ -406,6 +498,9 @@ func (e *emitter) run() error {
 	if len(e.chanElemOrder) > 0 {
 		e.println("with Gada.Async.Channels.Bounded;")
 	}
+	if len(e.selectorElemOrder) > 0 {
+		e.println("with Gada.Async.Selector;")
+	}
 	if e.needsCoreDefer {
 		e.println("with Gada.Core.Defer;")
 	}
@@ -416,8 +511,8 @@ func (e *emitter) run() error {
 		e.println("with Gada.Async.Scheduler;")
 	}
 	if e.needsCoreIO || len(e.sliceElemOrder) > 0 || len(e.mapPairOrder) > 0 ||
-		len(e.chanElemOrder) > 0 || e.needsCoreDefer || e.needsCorePanic ||
-		e.needsAsyncScheduler {
+		len(e.chanElemOrder) > 0 || len(e.selectorElemOrder) > 0 ||
+		e.needsCoreDefer || e.needsCorePanic || e.needsAsyncScheduler {
 		e.println("")
 	}
 	if e.pkgName == "main" {
@@ -457,6 +552,26 @@ func (e *emitter) emitChannelInstantiations() {
 	for _, k := range e.chanElemOrder {
 		e.println("package Channels_Of_" + k +
 			" is new Gada.Async.Channels.Bounded (Element_Type => " + k + ");")
+	}
+}
+
+// emitSelectorInstantiations writes one
+// `package Selectors_Of_<T> is new Gada.Async.Selector (...)` block
+// per distinct element type recorded by walkStmt's SelectStmt arm.
+// The generic's three formals — Element_Type, Default_Element, and
+// Bnd (the matching Channels_Of_<T> instantiation) — bind to the
+// corresponding chan element type's natural zero (driven by
+// zeroLiteralOf) and the already-emitted Channels_Of_<T> package.
+// Reading like the runtime spec it instantiates is intentional: the
+// per-formal `=>` alignment + line-per-parameter shape mirrors
+// emitMapInstantiations, which set the convention.
+func (e *emitter) emitSelectorInstantiations() {
+	for _, k := range e.selectorElemOrder {
+		elem := e.selectorElems[k]
+		e.println("package Selectors_Of_" + k + " is new Gada.Async.Selector")
+		e.println("  (Element_Type    => " + k + ",")
+		e.println("   Default_Element => " + zeroLiteralOf(elem) + ",")
+		e.println("   Bnd             => Channels_Of_" + k + ");")
 	}
 }
 
@@ -716,8 +831,9 @@ func (e *emitter) emitMainProcedure() {
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0
 	hasChans := len(e.chanElemOrder) > 0
+	hasSelectors := len(e.selectorElemOrder) > 0
 	hasPanic := e.needsCorePanic
-	hasDeclSection := hasSlices || hasMaps || hasChans || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0
+	hasDeclSection := hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0
 
 	e.println("procedure Main is")
 	if hasDeclSection {
@@ -740,13 +856,19 @@ func (e *emitter) emitMainProcedure() {
 	if hasChans {
 		e.emitChannelInstantiations()
 	}
-	if (hasSlices || hasMaps || hasChans) && hasPanic {
+	if (hasSlices || hasMaps || hasChans) && hasSelectors {
+		e.println("")
+	}
+	if hasSelectors {
+		e.emitSelectorInstantiations()
+	}
+	if (hasSlices || hasMaps || hasChans || hasSelectors) && hasPanic {
 		e.println("")
 	}
 	if hasPanic {
 		e.emitPanicInstantiation()
 	}
-	if (hasSlices || hasMaps || hasChans || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
+	if (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
 		e.println("")
 	}
 	for i, fn := range others {
@@ -869,10 +991,11 @@ func (e *emitter) emitPackageBody() {
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0
 	hasChans := len(e.chanElemOrder) > 0
+	hasSelectors := len(e.selectorElemOrder) > 0
 	hasPanic := e.needsCorePanic
 
 	e.println("package body " + pkg + " is")
-	if hasSlices || hasMaps || hasChans || hasPanic || len(fns) > 0 {
+	if hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(fns) > 0 {
 		e.println("")
 	}
 
@@ -892,13 +1015,19 @@ func (e *emitter) emitPackageBody() {
 	if hasChans {
 		e.emitChannelInstantiations()
 	}
-	if (hasSlices || hasMaps || hasChans) && hasPanic {
+	if (hasSlices || hasMaps || hasChans) && hasSelectors {
+		e.println("")
+	}
+	if hasSelectors {
+		e.emitSelectorInstantiations()
+	}
+	if (hasSlices || hasMaps || hasChans || hasSelectors) && hasPanic {
 		e.println("")
 	}
 	if hasPanic {
 		e.emitPanicInstantiation()
 	}
-	if (hasSlices || hasMaps || hasChans || hasPanic) && len(fns) > 0 {
+	if (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) && len(fns) > 0 {
 		e.println("")
 	}
 	for i, fn := range fns {
@@ -909,7 +1038,7 @@ func (e *emitter) emitPackageBody() {
 	}
 	e.indent--
 
-	if hasSlices || hasMaps || hasChans || len(fns) > 0 {
+	if hasSlices || hasMaps || hasChans || hasSelectors || len(fns) > 0 {
 		e.println("")
 	}
 	e.println("end " + pkg + ";")
@@ -1638,6 +1767,20 @@ func (e *emitter) emitStmt(s ir.Stmt) {
 			e.goIndex[s]))
 	case *ir.ChanSend:
 		e.emitChanSend(s)
+	case *ir.SelectStmt:
+		// Sub-item (c) ships the Selectors_Of_<T> instantiation and
+		// the with-clause emission only. The per-site Select_One
+		// lowering — Case_Array build, Idx case-branching, Recv-
+		// binding declares — arrives in sub-item (d). Until then,
+		// emit a placeholder so a select-containing file produces
+		// well-formed (if degenerate) Ada at the file level: the
+		// declarative region and surrounding subprogram emit
+		// cleanly, the body stub is replaced wholesale when (d)
+		// lands. The "sub-item (d)" marker in the comment is what
+		// a future bisect uses to find the placeholder if it ever
+		// leaks into a release.
+		_ = s
+		e.println("null;  --  sub-item (d): select-stmt body lowering")
 	default:
 		e.fail(fmt.Errorf("emit: unsupported stmt %T", s))
 	}

@@ -951,6 +951,89 @@ func TestChanRecvUnsupportedShapes(t *testing.T) {
 	}
 }
 
+// TestSelectorInstantiationsPrelude pins sub-item (c)'s output: a
+// file with a SelectStmt whose case operand is a chan-typed Ident
+// emits the `with Gada.Async.Selector;` umbrella and one
+// `package Selectors_Of_<T> is new Gada.Async.Selector (…)` block
+// per distinct element type the select references. The per-site
+// Select_One lowering arrives in sub-item (d); this test only
+// validates the file-level prelude, so we accept the
+// `null;  --  sub-item (d): …` body placeholder in the surrounding
+// procedure body.
+func TestSelectorInstantiationsPrelude(t *testing.T) {
+	t.Parallel()
+
+	// Case A: chan-typed PARAMETER drives chanIdentTypes via the
+	// fn.Params pre-scan in collectSliceElems. One Recv case is
+	// enough to drive the Selectors_Of_<T> recording path.
+	t.Run("chan param operand", func(t *testing.T) {
+		t.Parallel()
+		pkg := wrapPkg(&ir.Function{
+			Name:   "f",
+			Params: []*ir.Param{{Name: "c", Type: &ir.ChanType{Elem: &ir.IntType{}}}},
+			Body: []ir.Stmt{&ir.SelectStmt{
+				Cases: []*ir.SelectCase{
+					{Kind: ir.SelectCaseRecv, Chan: idn("c")},
+				},
+			}},
+		})
+		var buf bytes.Buffer
+		if err := Package(pkg, &buf); err != nil {
+			t.Fatalf("emit: %v", err)
+		}
+		got := buf.String()
+		for _, want := range []string{
+			"with Gada.Async.Channels.Bounded;",
+			"with Gada.Async.Selector;",
+			"package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);",
+			"package Selectors_Of_Integer is new Gada.Async.Selector",
+			"(Element_Type    => Integer,",
+			"Default_Element => 0,",
+			"Bnd             => Channels_Of_Integer);",
+			"null;  --  sub-item (d):",
+		} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("missing %q in output:\n%s", want, got)
+			}
+		}
+	})
+
+	// Case B: chan-typed HEAD-OF-BODY LOCAL drives chanIdentTypes via
+	// the fn.Body pre-scan in collectSliceElems. A `c := make(chan T,
+	// N)` define is the only IR shape that exercises that branch;
+	// select cases referencing the local resolve through the same
+	// chanIdentTypes map.
+	t.Run("chan local operand", func(t *testing.T) {
+		t.Parallel()
+		pkg := wrapPkg(&ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{
+				&ir.Assign{
+					Define: true,
+					LHS:    []ir.Expr{idn("c")},
+					RHS: []ir.Expr{&ir.MakeChan{
+						Elem:     &ir.IntType{},
+						Capacity: litInt("4"),
+					}},
+				},
+				&ir.SelectStmt{
+					Cases: []*ir.SelectCase{
+						{Kind: ir.SelectCaseRecv, Chan: idn("c")},
+					},
+				},
+			},
+		})
+		var buf bytes.Buffer
+		if err := Package(pkg, &buf); err != nil {
+			t.Fatalf("emit: %v", err)
+		}
+		got := buf.String()
+		if !strings.Contains(got, "package Selectors_Of_Integer is new Gada.Async.Selector") {
+			t.Fatalf("missing Selectors_Of_Integer instantiation in output:\n%s", got)
+		}
+	})
+}
+
 // TestChanCloseUnsupportedShapes pins the two reachable defensive
 // branches in emitChanClose: arg-count check (front-end *should*
 // already reject `close()` with no args or `close(c, x)` with two,

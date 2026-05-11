@@ -60,6 +60,7 @@ func TestNodeKind(t *testing.T) {
 		{"MakeChan", &MakeChan{}, "MakeChan"},
 		{"ChanSend", &ChanSend{}, "ChanSend"},
 		{"ChanRecv", &ChanRecv{}, "ChanRecv"},
+		{"SelectStmt", &SelectStmt{}, "SelectStmt"},
 	}
 
 	for _, tc := range cases {
@@ -93,6 +94,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Stmt = &DeferStmt{}
 	var _ Stmt = &GoStmt{}
 	var _ Stmt = &ChanSend{}
+	var _ Stmt = &SelectStmt{}
 
 	var _ Expr = &Ident{}
 	var _ Expr = &Lit{}
@@ -360,6 +362,86 @@ func TestChanSendMissingFields(t *testing.T) {
 	}
 }
 
+// TestSelectStmtRoundTrip pins the round-trip property the
+// decomposition's sub-item (a) Done-when names: at least one case
+// of each Kind (Send, Recv with both bindings, Recv with no
+// binding, Default) survives MarshalJSON → unmarshalStmt →
+// reflect.DeepEqual. The Recv-with-comma-ok case carries
+// non-empty ValueLHS / OKLHS so the field-shape is exercised
+// alongside the Kind dispatch.
+func TestSelectStmtRoundTrip(t *testing.T) {
+	t.Parallel()
+	original := &SelectStmt{
+		Cases: []SelectCase{
+			{
+				Kind:  SelectCaseSend,
+				Chan:  &Ident{Name: "ch1"},
+				Value: &Lit{Kind: LitInt, Value: "1"},
+				Body:  []Stmt{},
+			},
+			{
+				Kind:     SelectCaseRecv,
+				Chan:     &Ident{Name: "ch2"},
+				ValueLHS: "v",
+				OKLHS:    "ok",
+				Body:     []Stmt{},
+			},
+			{
+				Kind: SelectCaseRecv,
+				Chan: &Ident{Name: "ch3"},
+				Body: []Stmt{},
+			},
+			{
+				Kind: SelectCaseDefault,
+				Body: []Stmt{},
+			},
+		},
+	}
+	raw, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	got, err := unmarshalStmt(json.RawMessage(raw))
+	if err != nil {
+		t.Fatalf("unmarshalStmt: %v", err)
+	}
+	if !reflect.DeepEqual(original, got) {
+		t.Fatalf("round-trip mismatch:\noriginal: %#v\n     got: %#v", original, got)
+	}
+}
+
+// TestSelectCaseMalformed locks the explicit-error branches in
+// SelectCase.UnmarshalJSON. Missing kind, unknown kind, bad child
+// in Chan / Value / Body all surface at the IR boundary rather
+// than as opaque emit-time errors.
+func TestSelectCaseMalformed(t *testing.T) {
+	t.Parallel()
+
+	// Helper: wrap a raw SelectCase fragment in a SelectStmt envelope
+	// and run it through unmarshalStmt. The cases array's [0] entry
+	// is what we vary.
+	bad := `{"kind":"Bogus"}`
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"missing kind", `{"kind":"SelectStmt","cases":[{}]}`},
+		{"unknown kind", `{"kind":"SelectStmt","cases":[{"kind":"Bogus"}]}`},
+		{"chan bad child", `{"kind":"SelectStmt","cases":[{"kind":"Send","chan":` + bad + `,"value":{"kind":"Lit","litKind":"int","value":"1"}}]}`},
+		{"value bad child", `{"kind":"SelectStmt","cases":[{"kind":"Send","chan":{"kind":"Ident","name":"c"},"value":` + bad + `}]}`},
+		{"body bad child", `{"kind":"SelectStmt","cases":[{"kind":"Default","body":[` + bad + `]}]}`},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := unmarshalStmt(json.RawMessage(tc.raw)); err == nil {
+				t.Fatalf("expected error for %s, got nil", tc.raw)
+			}
+		})
+	}
+}
+
 // TestSliceLitMissingElem mirrors the SliceType guard for SliceLit:
 // the element type must always be present so the emitter can pick
 // the right Slices_Of_<T> instantiation.
@@ -602,6 +684,7 @@ func TestSentinels(t *testing.T) {
 	(&GoStmt{}).irStmt()
 	(&ChanSend{}).irStmt()
 	(&ChanRecv{}).irExpr()
+	(&SelectStmt{}).irStmt()
 
 	(&IntType{}).irType()
 	(&StringType{}).irType()

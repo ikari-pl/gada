@@ -387,6 +387,66 @@ type ChanRecv struct {
 func (*ChanRecv) irExpr()          {}
 func (*ChanRecv) NodeKind() string { return "ChanRecv" }
 
+// SelectCaseKind discriminates the three case shapes of a Go
+// `select` statement. Timeout_Op (the `<-time.After(d)` shape) is
+// deliberately omitted from v1: the Selector runtime exposes it,
+// but Phase 3 has no Go-source path to produce one (it requires
+// `time.After` from std lib, post-Phase-3). When that path lands,
+// it adds a fourth constant here without otherwise reshaping
+// SelectCase.
+type SelectCaseKind string
+
+const (
+	// SelectCaseSend is `case ch <- v: …`. Chan and Value populated;
+	// ValueLHS / OKLHS empty; Body holds the case body.
+	SelectCaseSend SelectCaseKind = "Send"
+
+	// SelectCaseRecv covers all three Go recv shapes inside a select:
+	//   case <-ch:           ValueLHS = "" OKLHS = "" (drain)
+	//   case v := <-ch:      ValueLHS = "v" OKLHS = ""
+	//   case v, ok := <-ch:  ValueLHS = "v" OKLHS = "ok"
+	// Folding "drain" into Recv with empty LHS names (rather than a
+	// separate IR variant) keeps emit's per-case dispatch flat — the
+	// runtime's Recv_Op handles all three at the Case_Item level via
+	// Recv_V_Out / Recv_OK_Out being null when the user discards.
+	SelectCaseRecv SelectCaseKind = "Recv"
+
+	// SelectCaseDefault is `default: …`. Only Body populated; Chan,
+	// Value, ValueLHS, OKLHS all empty/nil.
+	SelectCaseDefault SelectCaseKind = "Default"
+)
+
+// SelectCase is one case in a select. Flat record (rather than a
+// discriminated union) because the case array is built up by
+// generated code one element at a time on the Ada side; a flat
+// shape mirrors how `Gada.Async.Selector.Case_Item` is laid out
+// and removes one level of pattern-matching from emit.
+type SelectCase struct {
+	Kind SelectCaseKind
+
+	// Send / Recv: chan operand. Send: also Value to send.
+	Chan  Expr
+	Value Expr
+
+	// Recv only. Empty strings = unbound (drain or single-value).
+	ValueLHS string
+	OKLHS    string
+
+	// Case body. Always present (may be empty for `case X:` with
+	// no following statements; Go accepts an empty case body).
+	Body []Stmt
+}
+
+// SelectStmt is Go's `select { case … }` statement. The case list
+// preserves source order; emit relies on that to assign 1-based
+// Case_Array indices that match the user's `case` ordering.
+type SelectStmt struct {
+	Cases []SelectCase
+}
+
+func (*SelectStmt) irStmt()          {}
+func (*SelectStmt) NodeKind() string { return "SelectStmt" }
+
 // BuiltinCall is a call to a Go predeclared function. Distinguished
 // from Call (which carries an arbitrary Fun expression) so the
 // emitter can dispatch by name without re-deriving builtin-ness.
@@ -577,6 +637,12 @@ func unmarshalStmt(raw json.RawMessage) (Stmt, error) {
 		return &n, nil
 	case "ChanSend":
 		var n ChanSend
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "SelectStmt":
+		var n SelectStmt
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1665,5 +1731,89 @@ func (e *ChanRecv) UnmarshalJSON(b []byte) error {
 	}
 	e.Chan = c
 	e.CommaOK = aux.CommaOK
+	return nil
+}
+
+// SelectCase Marshal/Unmarshal. Chan and Value are optional (only
+// populated for Send / Recv); Body is always present (potentially
+// an empty list for `case X:` with no body statements). Kind is
+// the load-bearing discriminator; missing-Kind unmarshal fails
+// loudly so a regression doesn't silently default to Default.
+func (sc SelectCase) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind     SelectCaseKind `json:"kind"`
+		Chan     Expr           `json:"chan,omitempty"`
+		Value    Expr           `json:"value,omitempty"`
+		ValueLHS string         `json:"valueLhs,omitempty"`
+		OKLHS    string         `json:"okLhs,omitempty"`
+		Body     []Stmt         `json:"body"`
+	}{sc.Kind, sc.Chan, sc.Value, sc.ValueLHS, sc.OKLHS, sc.Body})
+}
+
+func (sc *SelectCase) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Kind     SelectCaseKind    `json:"kind"`
+		Chan     json.RawMessage   `json:"chan"`
+		Value    json.RawMessage   `json:"value"`
+		ValueLHS string            `json:"valueLhs"`
+		OKLHS    string            `json:"okLhs"`
+		Body     []json.RawMessage `json:"body"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if aux.Kind == "" {
+		return fmt.Errorf("ir: SelectCase missing kind")
+	}
+	switch aux.Kind {
+	case SelectCaseSend, SelectCaseRecv, SelectCaseDefault:
+		// ok
+	default:
+		return fmt.Errorf("ir: SelectCase unknown kind %q", aux.Kind)
+	}
+	sc.Kind = aux.Kind
+	sc.ValueLHS = aux.ValueLHS
+	sc.OKLHS = aux.OKLHS
+	c, err := unmarshalOptionalExpr(aux.Chan)
+	if err != nil {
+		return err
+	}
+	sc.Chan = c
+	v, err := unmarshalOptionalExpr(aux.Value)
+	if err != nil {
+		return err
+	}
+	sc.Value = v
+	body, err := unmarshalStmtList(aux.Body)
+	if err != nil {
+		return err
+	}
+	sc.Body = body
+	return nil
+}
+
+func (s *SelectStmt) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind  string       `json:"kind"`
+		Cases []SelectCase `json:"cases"`
+	}{"SelectStmt", s.Cases})
+}
+
+func (s *SelectStmt) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Cases []json.RawMessage `json:"cases"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	cases := make([]SelectCase, 0, len(aux.Cases))
+	for i, raw := range aux.Cases {
+		var sc SelectCase
+		if err := sc.UnmarshalJSON(raw); err != nil {
+			return fmt.Errorf("ir: SelectStmt.Cases[%d]: %w", i, err)
+		}
+		cases = append(cases, sc)
+	}
+	s.Cases = cases
 	return nil
 }

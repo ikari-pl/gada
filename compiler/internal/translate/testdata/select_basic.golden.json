@@ -1,0 +1,138 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "select_basic.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "selectAll",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "c1",
+              "type": {
+                "kind": "ChanType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            },
+            {
+              "kind": "Param",
+              "name": "c2",
+              "type": {
+                "kind": "ChanType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "SelectStmt",
+              "cases": [
+                {
+                  "kind": "Recv",
+                  "chan": {
+                    "kind": "Ident",
+                    "name": "c1"
+                  },
+                  "valueLhs": "v",
+                  "body": [
+                    {
+                      "kind": "ChanSend",
+                      "chan": {
+                        "kind": "Ident",
+                        "name": "c2"
+                      },
+                      "value": {
+                        "kind": "Ident",
+                        "name": "v"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "Recv",
+                  "chan": {
+                    "kind": "Ident",
+                    "name": "c1"
+                  },
+                  "valueLhs": "v",
+                  "okLhs": "ok",
+                  "body": [
+                    {
+                      "kind": "If",
+                      "cond": {
+                        "kind": "Ident",
+                        "name": "ok"
+                      },
+                      "then": [
+                        {
+                          "kind": "ChanSend",
+                          "chan": {
+                            "kind": "Ident",
+                            "name": "c2"
+                          },
+                          "value": {
+                            "kind": "Ident",
+                            "name": "v"
+                          }
+                        }
+                      ],
+                      "else": null
+                    }
+                  ]
+                },
+                {
+                  "kind": "Recv",
+                  "chan": {
+                    "kind": "Ident",
+                    "name": "c1"
+                  },
+                  "body": [
+                    {
+                      "kind": "ChanSend",
+                      "chan": {
+                        "kind": "Ident",
+                        "name": "c2"
+                      },
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "0"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "Send",
+                  "chan": {
+                    "kind": "Ident",
+                    "name": "c2"
+                  },
+                  "value": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "42"
+                  },
+                  "body": null
+                },
+                {
+                  "kind": "Default",
+                  "body": null
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

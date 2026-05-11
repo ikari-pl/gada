@@ -439,9 +439,14 @@ type SelectCase struct {
 
 // SelectStmt is Go's `select { case … }` statement. The case list
 // preserves source order; emit relies on that to assign 1-based
-// Case_Array indices that match the user's `case` ordering.
+// Case_Array indices that match the user's `case` ordering. Cases
+// is `[]*SelectCase` (not `[]SelectCase`) to match the rest of the
+// package's record-typed list-field convention — `File.Decls`,
+// `Function.Params`, `MapLit.Entries` are all pointer slices, and
+// using value slices here would force a sub-slicing copy whenever
+// emit wants to mutate a case in place.
 type SelectStmt struct {
-	Cases []SelectCase
+	Cases []*SelectCase
 }
 
 func (*SelectStmt) irStmt()          {}
@@ -1739,7 +1744,10 @@ func (e *ChanRecv) UnmarshalJSON(b []byte) error {
 // an empty list for `case X:` with no body statements). Kind is
 // the load-bearing discriminator; missing-Kind unmarshal fails
 // loudly so a regression doesn't silently default to Default.
-func (sc SelectCase) MarshalJSON() ([]byte, error) {
+// Pointer receiver matches the rest of the package's MarshalJSON
+// impls — value receivers would copy the embedded interface fields
+// at every encode.
+func (sc *SelectCase) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Kind     SelectCaseKind `json:"kind"`
 		Chan     Expr           `json:"chan,omitempty"`
@@ -1794,8 +1802,8 @@ func (sc *SelectCase) UnmarshalJSON(b []byte) error {
 
 func (s *SelectStmt) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Kind  string       `json:"kind"`
-		Cases []SelectCase `json:"cases"`
+		Kind  string        `json:"kind"`
+		Cases []*SelectCase `json:"cases"`
 	}{"SelectStmt", s.Cases})
 }
 
@@ -1806,9 +1814,19 @@ func (s *SelectStmt) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &aux); err != nil {
 		return err
 	}
-	cases := make([]SelectCase, 0, len(aux.Cases))
+	// Preserve nil-vs-empty distinction per the package docstring:
+	// a missing or null "cases" field round-trips back to nil, not
+	// to an empty slice. Without this guard, `make(..., 0, 0)`
+	// would silently promote a nil source to an empty slice and
+	// reflect.DeepEqual would fail across round-trips of select
+	// fixtures whose Cases happen to be nil during construction.
+	if aux.Cases == nil {
+		s.Cases = nil
+		return nil
+	}
+	cases := make([]*SelectCase, 0, len(aux.Cases))
 	for i, raw := range aux.Cases {
-		var sc SelectCase
+		sc := &SelectCase{}
 		if err := sc.UnmarshalJSON(raw); err != nil {
 			return fmt.Errorf("ir: SelectStmt.Cases[%d]: %w", i, err)
 		}

@@ -66,6 +66,8 @@ func TestCorpus(t *testing.T) {
 		"chan_recv_commaok.go",
 		// Phase 3 — channel close fixture (channel-emit item, sub-item f).
 		"chan_close.go",
+		// Phase 3 — select-stmt fixture (select-emit item, sub-item b).
+		"select_basic.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -209,6 +211,29 @@ func f(c chan int) { c <- 1i }`, "literal kind"},
 		// reject it later); translate's transExpr runs first and bounces.
 		{"chan send bad chan", `package p
 func f() { 1i <- 1 }`, "literal kind"},
+		// select-stmt error paths. v1 supports only the Go-source
+		// shapes the runtime can lower (Send / Recv-with-`:=` /
+		// Default); other shapes hit the translate-side rejections.
+		{"select recv with =", `package p
+func f(c chan int, v int) { select { case v = <-c: } }`, "must use `:=`"},
+		{"select send bad chan", `package p
+func f() { select { case 1i <- 1: } }`, "literal kind"},
+		{"select send bad value", `package p
+func f(c chan int) { select { case c <- 1i: } }`, "literal kind"},
+		{"select recv non-arrow rhs", `package p
+func f() int { select { case v := 5: _ = v } ; return 0 }`, "must be `<-c`"},
+		{"select drain non-arrow", `package p
+func f() { select { case 1: } }`, "must be `case <-c:`"},
+		{"select bad body", `package p
+func f(c chan int) { select { case <-c: switch{} } }`, "unsupported stmt"},
+		// transSelectCommClauseHead's transExpr(recv.X) error path
+		// for both AssignStmt and ExprStmt arms — `<-1i` parses (the
+		// parser doesn't typecheck) but transExpr on an imag literal
+		// rejects loudly.
+		{"select recv arrow bad chan", `package p
+func f() { select { case v := <-1i: _ = v } }`, "literal kind"},
+		{"select drain arrow bad chan", `package p
+func f() { select { case <-1i: } }`, "literal kind"},
 		{"map param bad key", `package p
 func f(x map[complex128]int) {}`, "unsupported type"},
 		{"map param bad value", `package p

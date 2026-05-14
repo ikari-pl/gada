@@ -533,7 +533,7 @@ package body Channels_Suite is
       --  reads after — Receive raises before writing them.
       begin
          Bound.Send (Bound.No_Channel, 1);
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          declare
             V  : Integer;
@@ -541,10 +541,10 @@ package body Channels_Suite is
          begin
             Bound.Receive (Bound.No_Channel, V, OK);
          end;
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          Bound.Close (Bound.No_Channel);
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          declare
             X : constant Natural := Bound.Length (Bound.No_Channel);
@@ -552,7 +552,7 @@ package body Channels_Suite is
          begin
             null;
          end;
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          declare
             X : constant Positive := Bound.Capacity (Bound.No_Channel);
@@ -560,7 +560,7 @@ package body Channels_Suite is
          begin
             null;
          end;
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          declare
             X : constant Boolean := Bound.Is_Closed (Bound.No_Channel);
@@ -568,7 +568,7 @@ package body Channels_Suite is
          begin
             null;
          end;
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          declare
             X : constant Natural :=
@@ -577,7 +577,7 @@ package body Channels_Suite is
          begin
             null;
          end;
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          declare
             X : constant Natural :=
@@ -586,7 +586,7 @@ package body Channels_Suite is
          begin
             null;
          end;
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       Assert (Hits = 8,
               "Expected 8 Constraint_Error raises on No_Channel ops, got"
               & Hits'Image);
@@ -720,17 +720,17 @@ package body Channels_Suite is
          Bound.Try_Send (C, 99, Sent);
       exception
          when Bound.Channel_Closed =>
-            Hits := Hits + 1;
+            Hits := @ + 1;
       end;
       Assert (Hits = 1, "Try_Send on closed channel must raise");
 
       --  Try_Send / Try_Receive on No_Channel raise Constraint_Error.
       begin
          Bound.Try_Send (Bound.No_Channel, 0, Sent);
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          Bound.Try_Receive (Bound.No_Channel, V, OK, Got);
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       Assert (Hits = 3,
               "Try_Send/Try_Receive on No_Channel must raise "
               & "Constraint_Error; Hits =" & Hits'Image);

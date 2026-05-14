@@ -41,13 +41,13 @@ package body Scheduler_Suite is
 
    procedure Increment_Once is
    begin
-      Counter := Counter + 1;
+      Counter := @ + 1;
    end Increment_Once;
 
    procedure Yield_Then_Mark is
    begin
       for Iteration in 1 .. Yield_Iterations loop
-         Yields_Run := Yields_Run + 1;
+         Yields_Run := @ + 1;
          Gada.Async.Scheduler.Yield;
       end loop;
       Yield_Done := True;
@@ -86,7 +86,7 @@ package body Scheduler_Suite is
       procedure Note (Tid : Ada.Task_Identification.Task_Id) is
       begin
          if Len < Max_Recorded then
-            Len := Len + 1;
+            Len := @ + 1;
             Tids (Len) := Tid;
          end if;
       end Note;
@@ -106,7 +106,7 @@ package body Scheduler_Suite is
                   end if;
                end loop;
                if not Already_Seen then
-                  Count := Count + 1;
+                  Count := @ + 1;
                end if;
             end;
          end loop;
@@ -148,7 +148,7 @@ package body Scheduler_Suite is
       procedure Mark (Stage : Character) is
       begin
          if Last < Buf'Last then
-            Last := Last + 1;
+            Last := @ + 1;
             Buf (Last) := Stage;
          end if;
       end Mark;

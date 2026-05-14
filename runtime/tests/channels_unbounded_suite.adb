@@ -368,7 +368,7 @@ package body Channels_Unbounded_Suite is
    begin
       begin
          Unbnd.Send (Unbnd.No_Channel, 1);
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          declare
             V  : Integer;
@@ -376,10 +376,10 @@ package body Channels_Unbounded_Suite is
          begin
             Unbnd.Receive (Unbnd.No_Channel, V, OK);
          end;
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          Unbnd.Close (Unbnd.No_Channel);
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          declare
             X : constant Natural := Unbnd.Length (Unbnd.No_Channel);
@@ -387,7 +387,7 @@ package body Channels_Unbounded_Suite is
          begin
             null;
          end;
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          declare
             X : constant Boolean := Unbnd.Is_Closed (Unbnd.No_Channel);
@@ -395,7 +395,7 @@ package body Channels_Unbounded_Suite is
          begin
             null;
          end;
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       begin
          declare
             X : constant Natural :=
@@ -404,7 +404,7 @@ package body Channels_Unbounded_Suite is
          begin
             null;
          end;
-      exception when Constraint_Error => Hits := Hits + 1; end;
+      exception when Constraint_Error => Hits := @ + 1; end;
       Assert (Hits = 6,
               "Expected 6 Constraint_Error raises on No_Channel ops, got"
               & Hits'Image);

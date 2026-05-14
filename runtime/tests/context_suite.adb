@@ -53,7 +53,7 @@ package body Context_Suite is
    procedure Ping is
    begin
       while Iter_Count < Target_Iter loop
-         Iter_Count := Iter_Count + 1;
+         Iter_Count := @ + 1;
          Switch_To (Pong_Ctx);
       end loop;
       --  Done — yield back to the test driver. After this Switch_To

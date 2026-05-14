@@ -201,7 +201,7 @@ package body Gada.Async.Channels.Unbounded is
                Tail.Next := New_Node;
             end if;
             Tail  := New_Node;
-            Count := Count + 1;
+            Count := @ + 1;
          end;
          Stored := True;
       end Send_Or_Handoff;
@@ -222,7 +222,7 @@ package body Gada.Async.Channels.Unbounded is
             if Head = null then
                Tail := null;
             end if;
-            Count := Count - 1;
+            Count := @ - 1;
             Free_Node (Old_Head);
             Got := True;
             Closed := False;
@@ -259,7 +259,7 @@ package body Gada.Async.Channels.Unbounded is
             if Head = null then
                Tail := null;
             end if;
-            Count := Count - 1;
+            Count := @ - 1;
             Free_Node (Old_Head);
             Got    := True;
             Closed := False;

@@ -29,7 +29,7 @@ package body Gada.Core.Panic is
            with "Gada.Core.Panic: pending-panic stack overflow"
                 & " (depth >" & Max_Pending_Panics'Image & ")";
       end if;
-      Pending_Count := Pending_Count + 1;
+      Pending_Count := @ + 1;
       Pending (Pending_Count) := Value;
       raise Panicking;
    end Do_Panic;
@@ -42,7 +42,7 @@ package body Gada.Core.Panic is
       end if;
       V := Pending (Pending_Count);
       Pending (Pending_Count) := Default;  -- drop reference
-      Pending_Count := Pending_Count - 1;
+      Pending_Count := @ - 1;
       return V;
    end Recover;
 

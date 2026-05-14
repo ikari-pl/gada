@@ -234,8 +234,8 @@ package body Gada.Core.Maps is
                return -1;
             end if;
          end;
-         Probe_Step := Probe_Step + 1;
-         Group_Idx  := (Group_Idx + Probe_Step) and Mask;
+         Probe_Step := @ + 1;
+         Group_Idx  := (@ + Probe_Step) and Mask;
       end loop;
    end Probe_For_Lookup;
 
@@ -302,8 +302,8 @@ package body Gada.Core.Maps is
                return;
             end if;
          end;
-         Probe_Step := Probe_Step + 1;
-         Group_Idx  := (Group_Idx + Probe_Step) and Mask;
+         Probe_Step := @ + 1;
+         Group_Idx  := (@ + Probe_Step) and Mask;
       end loop;
    end Probe_For_Insert;
 
@@ -385,9 +385,9 @@ package body Gada.Core.Maps is
          Slots (Slot_Idx) := (Key => K, Val => V, Full_Hash => H_Full);
          Ctrl (Slot_Idx)  := H2 (H_Full);
          if not Was_Present then
-            M.Size := M.Size + 1;
+            M.Size := @ + 1;
             if Was_Tomb then
-               M.Tombstones := M.Tombstones - 1;
+               M.Tombstones := @ - 1;
             end if;
          end if;
       end;
@@ -502,10 +502,10 @@ package body Gada.Core.Maps is
             Ctrl (Idx) := Empty_Ctrl;
          else
             Ctrl (Idx)   := Tomb_Ctrl;
-            M.Tombstones := M.Tombstones + 1;
+            M.Tombstones := @ + 1;
          end if;
       end;
-      M.Size := M.Size - 1;
+      M.Size := @ - 1;
    end Delete;
 
    ---------------------------------------------------------------
@@ -567,7 +567,7 @@ package body Gada.Core.Maps is
             if Is_Live (Ctrl (Idx)) then
                return (Index => Idx);
             end if;
-            Idx := Idx + 1;
+            Idx := @ + 1;
          end loop;
       end;
    end First;
@@ -586,7 +586,7 @@ package body Gada.Core.Maps is
             if Is_Live (Ctrl (Idx)) then
                return (Index => Idx);
             end if;
-            Idx := Idx + 1;
+            Idx := @ + 1;
          end loop;
          return No_Element;
       end;

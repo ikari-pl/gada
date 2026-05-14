@@ -248,7 +248,7 @@ package body Gada.Async.Selector is
       --  uniqueness alone defeats the same-clock-tick collision
       --  that Gemini's PR #6 R2 review flagged. Wraparound at
       --  2^31 calls is far beyond any realistic select density.
-      Seed_Counter := Seed_Counter + 1;
+      Seed_Counter := @ + 1;
       Reset (Gen, Initiator => Integer (Seed_Counter and 16#7FFF_FFFF#));
 
       --  Build the index permutation. We start with the identity

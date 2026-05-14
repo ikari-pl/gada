@@ -202,8 +202,8 @@ package body Gada.Async.Channels.Bounded is
          --  Buffered store: if there's a free slot, append.
          if Count < Cap then
             Buf (Tail) := V;
-            Tail := (if Tail = Cap then 1 else Tail + 1);
-            Count := Count + 1;
+            Tail := (if @ = Cap then 1 else @ + 1);
+            Count := @ + 1;
             Stored := True;
             return;
          end if;
@@ -243,8 +243,8 @@ package body Gada.Async.Channels.Bounded is
          --  parked sender into the freed slot.
          if Count > 0 then
             V := Buf (Head);
-            Head := (if Head = Cap then 1 else Head + 1);
-            Count := Count - 1;
+            Head := (if @ = Cap then 1 else @ + 1);
+            Count := @ - 1;
 
             --  Promote parked sender (FIFO). Preserves "send order =
             --  receive order" across the buffered + queued combined
@@ -255,8 +255,8 @@ package body Gada.Async.Channels.Bounded is
                begin
                   Senders.Delete_First;
                   Buf (Tail) := S.Value;
-                  Tail := (if Tail = Cap then 1 else Tail + 1);
-                  Count := Count + 1;
+                  Tail := (if @ = Cap then 1 else @ + 1);
+                  Count := @ + 1;
                   Scheduler.Unpark (S.G);
                end;
             end if;
@@ -291,16 +291,16 @@ package body Gada.Async.Channels.Bounded is
          --  between Try_Buffered_Receive and us.
          if Count > 0 then
             V := Buf (Head);
-            Head := (if Head = Cap then 1 else Head + 1);
-            Count := Count - 1;
+            Head := (if @ = Cap then 1 else @ + 1);
+            Count := @ - 1;
             if not Senders.Is_Empty then
                declare
                   S : constant Wait_Slot_Access := Senders.First_Element;
                begin
                   Senders.Delete_First;
                   Buf (Tail) := S.Value;
-                  Tail := (if Tail = Cap then 1 else Tail + 1);
-                  Count := Count + 1;
+                  Tail := (if @ = Cap then 1 else @ + 1);
+                  Count := @ + 1;
                   Scheduler.Unpark (S.G);
                end;
             end if;

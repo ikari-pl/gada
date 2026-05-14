@@ -175,13 +175,20 @@ reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE
 #         One because the outer loop filters those kinds before
 #         calling Try_One_Case. Kept for Ada exhaustiveness; the
 #         `Fired := False` write is defensive belt-and-braces.
-#   304 — `end;` of Select_One's inner declare block, after the
+#   306 — `end;` of Select_One's inner declare block, after the
 #         infinite `loop ... end loop;`. The loop only exits via
 #         `return`; the end-block is never reached. Unreachable
 #         terminator in the same shape as Gada.Async.Context's
-#         Trampoline tail loop (gada-async-context.adb:215).
+#         Trampoline tail loop (gada-async-context.adb:215). Shifted
+#         from 304 to 306 in the Ada 2022 sweep — Select_One's
+#         Order identity-initialisation became an iterated component
+#         association (`Order : Index_Array (...) := [for I in ... =>
+#         ...]`) and the polling loop adopted Ada 2022's iterator
+#         filter (`for I in Order'Range when ... loop`), trimming
+#         two lines net while making the structure read directly as
+#         "permutation indices, skipping Default/Timeout cases".
 # Rationale: runtime/COVERAGE.md (gada-async-selector).
 [[exclude]]
 file = "runtime/src/gada-async-selector.adb"
-lines = [102, 107, 163, 164, 165, 304]
+lines = [102, 107, 163, 164, 165, 306]
 reason = "Selector defensive/unreachable arms — see runtime/COVERAGE.md"

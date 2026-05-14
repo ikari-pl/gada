@@ -356,11 +356,10 @@ package body Gada.Core.Maps is
       Old_Slots : Slot_Array (0 .. Old_Cap - 1)
         with Address => Old_Slots_Buf, Import => True;
    begin
-      for I in 0 .. Old_Cap - 1 loop
-         if Is_Live (Old_Ctrl (I)) then
-            Insert
-              (Target, Old_Slots (I).Key, Old_Slots (I).Val);
-         end if;
+      --  Ada 2022 iterator filter — `when Is_Live (…)` skips
+      --  tombstones and empty slots without a nested `if` in the body.
+      for I in 0 .. Old_Cap - 1 when Is_Live (Old_Ctrl (I)) loop
+         Insert (Target, Old_Slots (I).Key, Old_Slots (I).Val);
       end loop;
    end Rehash_Into;
 
@@ -490,14 +489,13 @@ package body Gada.Core.Maps is
          --  intact.
          Group_Start : constant Natural :=
            (Idx / Group_Size) * Group_Size;
-         Saw_Empty   : Boolean := False;
+         --  Ada 2022 existential quantifier — replaces a five-line
+         --  for-loop-with-exit by an expression that reads as the
+         --  predicate it actually evaluates.
+         Saw_Empty   : constant Boolean :=
+           (for some I in 0 .. Group_Size - 1 =>
+              Ctrl (Group_Start + I) = Empty_Ctrl);
       begin
-         for I in 0 .. Group_Size - 1 loop
-            if Ctrl (Group_Start + I) = Empty_Ctrl then
-               Saw_Empty := True;
-               exit;
-            end if;
-         end loop;
          if Saw_Empty then
             Ctrl (Idx) := Empty_Ctrl;
          else

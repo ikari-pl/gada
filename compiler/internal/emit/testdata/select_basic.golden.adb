@@ -16,7 +16,8 @@ package body P is
          V_1_1 : constant Selectors_Of_Integer.Element_Ptr := new Integer'(0);
          V_1_2 : constant Selectors_Of_Integer.Element_Ptr := new Integer'(0);
          OK_1_2 : constant Selectors_Of_Integer.Boolean_Ptr := new Boolean'(False);
-         Sel_Cases_1 : Selectors_Of_Integer.Case_Array (1 .. 5);
+         OK_1_3 : constant Selectors_Of_Integer.Boolean_Ptr := new Boolean'(False);
+         Sel_Cases_1 : Selectors_Of_Integer.Case_Array (1 .. 6);
          Sel_Idx_1 : Positive;
       begin
          Sel_Cases_1 (1) := (Kind             => Selectors_Of_Integer.Recv_Op,
@@ -35,15 +36,21 @@ package body P is
                          Chan             => C1,
                          Send_V           => 0,
                          Recv_V_Out       => null,
+                         Recv_OK_Out      => OK_1_3,
+                         Timeout_Duration => 0.0);
+         Sel_Cases_1 (4) := (Kind             => Selectors_Of_Integer.Recv_Op,
+                         Chan             => C1,
+                         Send_V           => 0,
+                         Recv_V_Out       => null,
                          Recv_OK_Out      => null,
                          Timeout_Duration => 0.0);
-         Sel_Cases_1 (4) := (Kind             => Selectors_Of_Integer.Send_Op,
+         Sel_Cases_1 (5) := (Kind             => Selectors_Of_Integer.Send_Op,
                          Chan             => C2,
                          Send_V           => 42,
                          Recv_V_Out       => null,
                          Recv_OK_Out      => null,
                          Timeout_Duration => 0.0);
-         Sel_Cases_1 (5) := (Kind             => Selectors_Of_Integer.Default_Op,
+         Sel_Cases_1 (6) := (Kind             => Selectors_Of_Integer.Default_Op,
                          Chan             => Channels_Of_Integer.No_Channel,
                          Send_V           => 0,
                          Recv_V_Out       => null,
@@ -67,10 +74,18 @@ package body P is
                   end if;
                end;
             when 3 =>
-               Channels_Of_Integer.Send (C2, 0);
+               declare
+                  Ok : Boolean := OK_1_3.all;
+               begin
+                  if Ok then
+                     Channels_Of_Integer.Send (C2, 0);
+                  end if;
+               end;
             when 4 =>
-               null;
+               Channels_Of_Integer.Send (C2, 0);
             when 5 =>
+               null;
+            when 6 =>
                null;
          end case;
       end;

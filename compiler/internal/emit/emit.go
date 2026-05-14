@@ -2638,17 +2638,26 @@ func (e *emitter) emitSelectStmt(s *ir.SelectStmt) {
 	// Declarative region of the select's wrapping declare scope.
 	e.println("declare")
 	e.indent++
-	// Heap-allocated out-pointers for Recv-bound cases. Drains
-	// (Recv with empty ValueLHS / OKLHS) and Send / Default get
-	// null in the aggregate; no heap allocation needed for them.
+	// Heap-allocated out-pointers for Recv-bound cases. The two
+	// bindings are independent: `v := <-c` binds V only, `v, ok
+	// := <-c` binds both, `_, ok := <-c` binds Ok only (value
+	// discarded). Drains (`<-c` with no LHS) and Send / Default
+	// get null in the aggregate; no heap allocation needed for
+	// them. Gating each pointer on its own LHS slot (rather than
+	// piggy-backing OKLHS on ValueLHS) matches Go's tuple-
+	// destructuring semantics — and avoids the bug PR #17's
+	// review caught where `_, ok := <-c` lost the OK binding.
 	for i, c := range s.Cases {
-		if c.Kind == ir.SelectCaseRecv && c.ValueLHS != "" {
+		if c.Kind != ir.SelectCaseRecv {
+			continue
+		}
+		if c.ValueLHS != "" {
 			e.println(fmt.Sprintf("V_%d_%d : constant %s.Element_Ptr := new %s'(%s);",
 				n, i+1, pkg, tName, zero))
-			if c.OKLHS != "" {
-				e.println(fmt.Sprintf("OK_%d_%d : constant %s.Boolean_Ptr := new Boolean'(False);",
-					n, i+1, pkg))
-			}
+		}
+		if c.OKLHS != "" {
+			e.println(fmt.Sprintf("OK_%d_%d : constant %s.Boolean_Ptr := new Boolean'(False);",
+				n, i+1, pkg))
 		}
 	}
 	e.println(fmt.Sprintf("%s : %s.Case_Array (1 .. %d);", selCases, pkg, len(s.Cases)))
@@ -2700,7 +2709,7 @@ func (e *emitter) emitSelectCaseAssign(selCases string, idx, n int, c *ir.Select
 			recvV = fmt.Sprintf("V_%d_%d", n, idx)
 		}
 		recvOK := "null"
-		if c.ValueLHS != "" && c.OKLHS != "" {
+		if c.OKLHS != "" {
 			recvOK = fmt.Sprintf("OK_%d_%d", n, idx)
 		}
 		e.println(prefix + "Kind             => " + pkg + ".Recv_Op,")
@@ -2727,12 +2736,20 @@ func (e *emitter) emitSelectCaseAssign(selCases string, idx, n int, c *ir.Select
 // `case` statements forbid declarations directly under `when N =>`,
 // they need a declare scope).
 func (e *emitter) emitSelectCaseBody(c *ir.SelectCase, n, idx int, tName string) {
-	hasBindings := c.Kind == ir.SelectCaseRecv && c.ValueLHS != ""
+	// Each LHS slot is independent. A Recv case with either V or
+	// Ok (or both) needs a per-branch declare scope; a drain case
+	// (neither bound) emits its body directly under `when N =>`.
+	// `_, ok := <-c` is the case that exposed PR #17's bug —
+	// gating the declare on `ValueLHS != ""` alone dropped the
+	// Ok declaration. Gating on either-or restores the contract.
+	hasBindings := c.Kind == ir.SelectCaseRecv && (c.ValueLHS != "" || c.OKLHS != "")
 	if hasBindings {
 		e.println("declare")
 		e.indent++
-		e.println(adaIdent(c.ValueLHS) + " : " + tName + " := V_" +
-			fmt.Sprint(n) + "_" + fmt.Sprint(idx) + ".all;")
+		if c.ValueLHS != "" {
+			e.println(adaIdent(c.ValueLHS) + " : " + tName + " := V_" +
+				fmt.Sprint(n) + "_" + fmt.Sprint(idx) + ".all;")
+		}
 		if c.OKLHS != "" {
 			e.println(adaIdent(c.OKLHS) + " : Boolean := OK_" +
 				fmt.Sprint(n) + "_" + fmt.Sprint(idx) + ".all;")

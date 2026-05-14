@@ -150,6 +150,7 @@ type emitter struct {
 	selectorElemOrder []string
 	localTypes        map[string]ir.Type
 	rangeCounter      int
+	selectCounter     int                // file-wide 1..N numbering for each emitted select site; suffixes Sel_Cases_<n> / Sel_Idx_<n> / V_<n>_<i> / OK_<n>_<i> to keep nested selects from shadowing each other's locals (Ada would shadow legally, but unique names keep gprbuild diagnostics actionable).
 	goIndex           map[*ir.GoStmt]int // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
 	pendingRecvs      []pendingChanRecv  // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
 	err               error
@@ -1768,19 +1769,7 @@ func (e *emitter) emitStmt(s ir.Stmt) {
 	case *ir.ChanSend:
 		e.emitChanSend(s)
 	case *ir.SelectStmt:
-		// Sub-item (c) ships the Selectors_Of_<T> instantiation and
-		// the with-clause emission only. The per-site Select_One
-		// lowering — Case_Array build, Idx case-branching, Recv-
-		// binding declares — arrives in sub-item (d). Until then,
-		// emit a placeholder so a select-containing file produces
-		// well-formed (if degenerate) Ada at the file level: the
-		// declarative region and surrounding subprogram emit
-		// cleanly, the body stub is replaced wholesale when (d)
-		// lands. The "sub-item (d)" marker in the comment is what
-		// a future bisect uses to find the placeholder if it ever
-		// leaks into a release.
-		_ = s
-		e.println("null;  --  sub-item (d): select-stmt body lowering")
+		e.emitSelectStmt(s)
 	default:
 		e.fail(fmt.Errorf("emit: unsupported stmt %T", s))
 	}
@@ -2539,6 +2528,247 @@ func (e *emitter) emitChanRecvBlock(pr pendingChanRecv) {
 	e.println(pr.Pkg + ".Receive (" + c + ", " + adaIdent(pr.LHSName) + ", Discard_OK);")
 	e.indent--
 	e.println("end;")
+}
+
+// emitSelectStmt lowers a Go `select { … }` to a `declare … begin
+// … end;` scope that builds a `Case_Array`, calls `Select_One`, and
+// dispatches on the returned 1-based index via an Ada `case`
+// statement. Sub-item (d) is the last piece of Phase 3's
+// channel-emit work; the runtime's `Gada.Async.Selector` did the
+// heavy lifting (see runtime/src/gada-async-selector.adb).
+//
+// v1 contract per the runtime spec:
+//   - Single Element_Type per select. All non-Default cases must
+//     reference chans of the same element type. Heterogeneous
+//     selects require type-erasure (Phase 4).
+//   - Recv-bound locals (V_<n>_<i>, OK_<n>_<i>) are heap-allocated
+//     via `new T'(zero)` because the runtime's Element_Ptr /
+//     Boolean_Ptr have library-level accessibility — `'Access` of
+//     stack locals would not satisfy.
+//   - Per-branch declare scope for Recv cases with bindings.
+//     Cases without bindings (Send / Default / drain) emit their
+//     body directly under `when N =>`.
+//
+// Degenerate all-Default selects (Go accepts these, though they
+// are useless) skip the runtime entirely — emit lowers them to
+// the default body inline since `Select_One` is unnecessary when
+// no case can ever block.
+func (e *emitter) emitSelectStmt(s *ir.SelectStmt) {
+	if len(s.Cases) == 0 {
+		// Empty `select {}` is Go's deadlock-forever shape.
+		// Translate may produce this from `select {}`; the runtime
+		// raises Selector_Error on empty Case_Array. Lower
+		// explicitly so the source-level intent is preserved.
+		e.println("raise Program_Error with \"select with no cases (deadlock-forever)\";")
+		return
+	}
+
+	// All-Default degenerate: skip the runtime call entirely.
+	nonDefault := 0
+	for _, c := range s.Cases {
+		if c.Kind != ir.SelectCaseDefault {
+			nonDefault++
+		}
+	}
+	if nonDefault == 0 {
+		// Multiple defaults are a Go compile error; v1 emit picks
+		// the first and emits its body inline. The Selector
+		// runtime would raise on multi-Default Case_Arrays
+		// regardless, so the choice here is moot for well-formed
+		// inputs.
+		for _, c := range s.Cases {
+			if c.Kind == ir.SelectCaseDefault {
+				if len(c.Body) == 0 {
+					e.println("null;")
+					return
+				}
+				for _, st := range c.Body {
+					e.emitStmt(st)
+				}
+				return
+			}
+		}
+	}
+
+	// Single-Element_Type validation: every non-Default case's chan
+	// operand must resolve to the same element-type base name.
+	var elemType ir.Type
+	var elemBase string
+	for _, c := range s.Cases {
+		if c.Kind == ir.SelectCaseDefault {
+			continue
+		}
+		id, ok := c.Chan.(*ir.Ident)
+		if !ok {
+			e.fail(fmt.Errorf("emit: select case chan operand must be a bare identifier in Phase 3"))
+			return
+		}
+		t, ok := e.chanIdentTypes[id.Name]
+		if !ok {
+			e.fail(fmt.Errorf("emit: select case references undeclared chan ident %q", id.Name))
+			return
+		}
+		name, err := elemBaseName(t)
+		if err != nil {
+			e.fail(err)
+			return
+		}
+		if elemBase == "" {
+			elemType = t
+			elemBase = name
+		} else if name != elemBase {
+			e.fail(fmt.Errorf("emit: heterogeneous select (mixed Element_Type %q and %q) not supported in Phase 3; Phase 4 widens via type-erasure", elemBase, name))
+			return
+		}
+	}
+	pkg := "Selectors_Of_" + elemBase
+	chanPkg := "Channels_Of_" + elemBase
+	tName, err := typeName(elemType)
+	if err != nil {
+		e.fail(err)
+		return
+	}
+	zero := zeroLiteralOf(elemType)
+
+	e.selectCounter++
+	n := e.selectCounter
+	selCases := fmt.Sprintf("Sel_Cases_%d", n)
+	selIdx := fmt.Sprintf("Sel_Idx_%d", n)
+
+	// Declarative region of the select's wrapping declare scope.
+	e.println("declare")
+	e.indent++
+	// Heap-allocated out-pointers for Recv-bound cases. The two
+	// bindings are independent: `v := <-c` binds V only, `v, ok
+	// := <-c` binds both, `_, ok := <-c` binds Ok only (value
+	// discarded). Drains (`<-c` with no LHS) and Send / Default
+	// get null in the aggregate; no heap allocation needed for
+	// them. Gating each pointer on its own LHS slot (rather than
+	// piggy-backing OKLHS on ValueLHS) matches Go's tuple-
+	// destructuring semantics — and avoids the bug PR #17's
+	// review caught where `_, ok := <-c` lost the OK binding.
+	for i, c := range s.Cases {
+		if c.Kind != ir.SelectCaseRecv {
+			continue
+		}
+		if c.ValueLHS != "" {
+			e.println(fmt.Sprintf("V_%d_%d : constant %s.Element_Ptr := new %s'(%s);",
+				n, i+1, pkg, tName, zero))
+		}
+		if c.OKLHS != "" {
+			e.println(fmt.Sprintf("OK_%d_%d : constant %s.Boolean_Ptr := new Boolean'(False);",
+				n, i+1, pkg))
+		}
+	}
+	e.println(fmt.Sprintf("%s : %s.Case_Array (1 .. %d);", selCases, pkg, len(s.Cases)))
+	e.println(fmt.Sprintf("%s : Positive;", selIdx))
+	e.indent--
+
+	// Body: populate the case array, call Select_One, dispatch.
+	e.println("begin")
+	e.indent++
+	for i, c := range s.Cases {
+		e.emitSelectCaseAssign(selCases, i+1, n, c, pkg, chanPkg, zero)
+	}
+	e.println(fmt.Sprintf("%s := %s.Select_One (%s);", selIdx, pkg, selCases))
+	e.println(fmt.Sprintf("case %s is", selIdx))
+	e.indent++
+	for i, c := range s.Cases {
+		e.println(fmt.Sprintf("when %d =>", i+1))
+		e.indent++
+		e.emitSelectCaseBody(c, n, i+1, tName)
+		e.indent--
+	}
+	e.indent--
+	e.println("end case;")
+	e.indent--
+	e.println("end;")
+}
+
+// emitSelectCaseAssign writes one positional-by-name Case_Item
+// aggregate into Sel_Cases_<n>(idx). The five fields are always
+// present in the same order; Kind-irrelevant fields take their
+// zero-equivalent so the record is fully populated regardless of
+// the case shape.
+func (e *emitter) emitSelectCaseAssign(selCases string, idx, n int, c *ir.SelectCase, pkg, chanPkg, zero string) {
+	prefix := fmt.Sprintf("%s (%d) := (", selCases, idx)
+	switch c.Kind {
+	case ir.SelectCaseSend:
+		chExpr := e.emitExpr(c.Chan)
+		vExpr := e.emitExpr(c.Value)
+		e.println(prefix + "Kind             => " + pkg + ".Send_Op,")
+		e.println("                Chan             => " + chExpr + ",")
+		e.println("                Send_V           => " + vExpr + ",")
+		e.println("                Recv_V_Out       => null,")
+		e.println("                Recv_OK_Out      => null,")
+		e.println("                Timeout_Duration => 0.0);")
+	case ir.SelectCaseRecv:
+		chExpr := e.emitExpr(c.Chan)
+		recvV := "null"
+		if c.ValueLHS != "" {
+			recvV = fmt.Sprintf("V_%d_%d", n, idx)
+		}
+		recvOK := "null"
+		if c.OKLHS != "" {
+			recvOK = fmt.Sprintf("OK_%d_%d", n, idx)
+		}
+		e.println(prefix + "Kind             => " + pkg + ".Recv_Op,")
+		e.println("                Chan             => " + chExpr + ",")
+		e.println("                Send_V           => " + zero + ",")
+		e.println("                Recv_V_Out       => " + recvV + ",")
+		e.println("                Recv_OK_Out      => " + recvOK + ",")
+		e.println("                Timeout_Duration => 0.0);")
+	case ir.SelectCaseDefault:
+		e.println(prefix + "Kind             => " + pkg + ".Default_Op,")
+		e.println("                Chan             => " + chanPkg + ".No_Channel,")
+		e.println("                Send_V           => " + zero + ",")
+		e.println("                Recv_V_Out       => null,")
+		e.println("                Recv_OK_Out      => null,")
+		e.println("                Timeout_Duration => 0.0);")
+	}
+}
+
+// emitSelectCaseBody writes the per-branch statements that run
+// when Sel_Idx_<n> matches `idx`. Recv cases with bindings wrap
+// the user body in a `declare V : T := V_<n>_<idx>.all; Ok :
+// Boolean := OK_<n>_<idx>.all; begin … end;` block so the user's
+// `v` / `ok` names are visible only inside their case branch (Ada
+// `case` statements forbid declarations directly under `when N =>`,
+// they need a declare scope).
+func (e *emitter) emitSelectCaseBody(c *ir.SelectCase, n, idx int, tName string) {
+	// Each LHS slot is independent. A Recv case with either V or
+	// Ok (or both) needs a per-branch declare scope; a drain case
+	// (neither bound) emits its body directly under `when N =>`.
+	// `_, ok := <-c` is the case that exposed PR #17's bug —
+	// gating the declare on `ValueLHS != ""` alone dropped the
+	// Ok declaration. Gating on either-or restores the contract.
+	hasBindings := c.Kind == ir.SelectCaseRecv && (c.ValueLHS != "" || c.OKLHS != "")
+	if hasBindings {
+		e.println("declare")
+		e.indent++
+		if c.ValueLHS != "" {
+			e.println(adaIdent(c.ValueLHS) + " : " + tName + " := V_" +
+				fmt.Sprint(n) + "_" + fmt.Sprint(idx) + ".all;")
+		}
+		if c.OKLHS != "" {
+			e.println(adaIdent(c.OKLHS) + " : Boolean := OK_" +
+				fmt.Sprint(n) + "_" + fmt.Sprint(idx) + ".all;")
+		}
+		e.indent--
+		e.println("begin")
+		e.indent++
+	}
+	if len(c.Body) == 0 {
+		e.println("null;")
+	} else {
+		for _, st := range c.Body {
+			e.emitStmt(st)
+		}
+	}
+	if hasBindings {
+		e.indent--
+		e.println("end;")
+	}
 }
 
 func (e *emitter) emitChanSend(s *ir.ChanSend) {

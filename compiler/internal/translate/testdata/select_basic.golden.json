@@ -96,6 +96,38 @@
                     "kind": "Ident",
                     "name": "c1"
                   },
+                  "okLhs": "ok",
+                  "body": [
+                    {
+                      "kind": "If",
+                      "cond": {
+                        "kind": "Ident",
+                        "name": "ok"
+                      },
+                      "then": [
+                        {
+                          "kind": "ChanSend",
+                          "chan": {
+                            "kind": "Ident",
+                            "name": "c2"
+                          },
+                          "value": {
+                            "kind": "Lit",
+                            "litKind": "int",
+                            "value": "0"
+                          }
+                        }
+                      ],
+                      "else": null
+                    }
+                  ]
+                },
+                {
+                  "kind": "Recv",
+                  "chan": {
+                    "kind": "Ident",
+                    "name": "c1"
+                  },
                   "body": [
                     {
                       "kind": "ChanSend",

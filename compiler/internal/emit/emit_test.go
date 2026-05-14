@@ -52,6 +52,8 @@ var corpusFixtures = []string{
 	"chan_recv_commaok",
 	// Phase 3 — channel-emit (sub-item f: close(c) builtin).
 	"chan_close",
+	// Phase 3 — select-emit (sub-item d: full Select_One lowering).
+	"select_basic",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -951,15 +953,15 @@ func TestChanRecvUnsupportedShapes(t *testing.T) {
 	}
 }
 
-// TestSelectorInstantiationsPrelude pins sub-item (c)'s output: a
-// file with a SelectStmt whose case operand is a chan-typed Ident
-// emits the `with Gada.Async.Selector;` umbrella and one
-// `package Selectors_Of_<T> is new Gada.Async.Selector (…)` block
-// per distinct element type the select references. The per-site
-// Select_One lowering arrives in sub-item (d); this test only
-// validates the file-level prelude, so we accept the
-// `null;  --  sub-item (d): …` body placeholder in the surrounding
-// procedure body.
+// TestSelectorInstantiationsPrelude pins the file-level prelude
+// landed in sub-item (c): a SelectStmt whose case operand is a
+// chan-typed Ident emits the `with Gada.Async.Selector;` umbrella
+// and one `package Selectors_Of_<T> is new Gada.Async.Selector (…)`
+// block per distinct element type the select references. Sub-item
+// (d) replaced the original `null;` body placeholder with the real
+// Case_Array build + Select_One call, so the assertions also check
+// for the Sel_Cases_1 declaration as a proxy for the body lowering
+// having fired — the full body shape lives in select_basic.golden.adb.
 func TestSelectorInstantiationsPrelude(t *testing.T) {
 	t.Parallel()
 
@@ -990,7 +992,7 @@ func TestSelectorInstantiationsPrelude(t *testing.T) {
 			"(Element_Type    => Integer,",
 			"Default_Element => 0,",
 			"Bnd             => Channels_Of_Integer);",
-			"null;  --  sub-item (d):",
+			"Sel_Cases_1 : Selectors_Of_Integer.Case_Array",
 		} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("missing %q in output:\n%s", want, got)
@@ -1039,11 +1041,159 @@ func TestSelectorInstantiationsPrelude(t *testing.T) {
 			"(Element_Type    => Integer,",
 			"Default_Element => 0,",
 			"Bnd             => Channels_Of_Integer);",
-			"null;  --  sub-item (d):",
+			"Sel_Cases_1 : Selectors_Of_Integer.Case_Array",
 		} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("missing %q in output:\n%s", want, got)
 			}
+		}
+	})
+}
+
+// TestSelectStmtEdgeCases covers the five reachable code paths in
+// emitSelectStmt that aren't exercised by the select_basic corpus
+// fixture: empty select, all-Default degenerate (both with and
+// without a body), non-Ident chan operand, undeclared chan operand,
+// and heterogeneous-Element_Type rejection. Together with the
+// corpus golden they take emitSelectStmt to full coverage.
+func TestSelectStmtEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	// 1. Empty select. Go's `select {}` is the deadlock-forever
+	//    shape; emit lowers to Program_Error so the source intent
+	//    is preserved.
+	t.Run("empty select", func(t *testing.T) {
+		t.Parallel()
+		pkg := wrapPkg(&ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{&ir.SelectStmt{Cases: nil}},
+		})
+		var buf bytes.Buffer
+		if err := Package(pkg, &buf); err != nil {
+			t.Fatalf("emit: %v", err)
+		}
+		if !strings.Contains(buf.String(), "raise Program_Error with \"select with no cases") {
+			t.Fatalf("missing empty-select Program_Error in output:\n%s", buf.String())
+		}
+	})
+
+	// 2. All-Default degenerate with non-empty body. Emit skips
+	//    Select_One and inlines the default body directly.
+	t.Run("all-default with body", func(t *testing.T) {
+		t.Parallel()
+		pkg := wrapPkg(&ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{&ir.SelectStmt{
+				Cases: []*ir.SelectCase{
+					{Kind: ir.SelectCaseDefault, Body: []ir.Stmt{
+						&ir.ExprStmt{X: idn("x")},
+					}},
+				},
+			}},
+		})
+		var buf bytes.Buffer
+		if err := Package(pkg, &buf); err != nil {
+			t.Fatalf("emit: %v", err)
+		}
+		out := buf.String()
+		if strings.Contains(out, "Select_One") {
+			t.Fatalf("all-default select should skip Select_One:\n%s", out)
+		}
+		if strings.Contains(out, "Sel_Cases") {
+			t.Fatalf("all-default select should skip Case_Array build:\n%s", out)
+		}
+	})
+
+	// 3. All-Default degenerate with empty body. Falls through to
+	//    `null;` to satisfy Ada's "block needs a statement" rule.
+	t.Run("all-default with empty body", func(t *testing.T) {
+		t.Parallel()
+		pkg := wrapPkg(&ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{&ir.SelectStmt{
+				Cases: []*ir.SelectCase{
+					{Kind: ir.SelectCaseDefault, Body: nil},
+				},
+			}},
+		})
+		var buf bytes.Buffer
+		if err := Package(pkg, &buf); err != nil {
+			t.Fatalf("emit: %v", err)
+		}
+		if strings.Contains(buf.String(), "Select_One") {
+			t.Fatalf("all-default empty-body select should skip Select_One:\n%s", buf.String())
+		}
+	})
+
+	// 4. Non-Ident chan operand. Sub-item-(d) emit rejects with a
+	//    clear error pointing at the Phase 4 widening.
+	t.Run("non-ident chan operand", func(t *testing.T) {
+		t.Parallel()
+		pkg := wrapPkg(&ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{&ir.SelectStmt{
+				Cases: []*ir.SelectCase{
+					{Kind: ir.SelectCaseRecv, Chan: litInt("0")},
+				},
+			}},
+		})
+		var buf bytes.Buffer
+		err := Package(pkg, &buf)
+		if err == nil {
+			t.Fatalf("expected emit error, got success:\n%s", buf.String())
+		}
+		if !strings.Contains(err.Error(), "bare identifier") {
+			t.Fatalf("wrong error: %v", err)
+		}
+	})
+
+	// 5. Undeclared chan ident. The ident isn't a function
+	//    parameter and isn't a head-of-body `make` local, so
+	//    chanIdentTypes has no entry for it.
+	t.Run("undeclared chan ident", func(t *testing.T) {
+		t.Parallel()
+		pkg := wrapPkg(&ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{&ir.SelectStmt{
+				Cases: []*ir.SelectCase{
+					{Kind: ir.SelectCaseRecv, Chan: idn("c")},
+				},
+			}},
+		})
+		var buf bytes.Buffer
+		err := Package(pkg, &buf)
+		if err == nil {
+			t.Fatalf("expected emit error, got success:\n%s", buf.String())
+		}
+		if !strings.Contains(err.Error(), "undeclared chan ident") {
+			t.Fatalf("wrong error: %v", err)
+		}
+	})
+
+	// 6. Heterogeneous select: two chan params with different
+	//    element types. v1 rejects pointing at Phase 4 widening.
+	t.Run("mixed element types", func(t *testing.T) {
+		t.Parallel()
+		pkg := wrapPkg(&ir.Function{
+			Name: "f",
+			Params: []*ir.Param{
+				{Name: "ci", Type: &ir.ChanType{Elem: &ir.IntType{}}},
+				{Name: "cs", Type: &ir.ChanType{Elem: &ir.StringType{}}},
+			},
+			Body: []ir.Stmt{&ir.SelectStmt{
+				Cases: []*ir.SelectCase{
+					{Kind: ir.SelectCaseRecv, Chan: idn("ci")},
+					{Kind: ir.SelectCaseRecv, Chan: idn("cs")},
+				},
+			}},
+		})
+		var buf bytes.Buffer
+		err := Package(pkg, &buf)
+		if err == nil {
+			t.Fatalf("expected emit error, got success:\n%s", buf.String())
+		}
+		if !strings.Contains(err.Error(), "heterogeneous select") {
+			t.Fatalf("wrong error: %v", err)
 		}
 	})
 }

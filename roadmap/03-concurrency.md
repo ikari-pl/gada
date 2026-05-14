@@ -264,7 +264,18 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         `go fn(…)` with a non-empty arg list. Ping-pong's two relay
         goroutines must receive their chans (and a `done` chan for
         the ponger) by value through the spawn boundary.
-        *Files:* `compiler/internal/emit/emit.go` (new
+        *Files:* `runtime/src/gada-async-scheduler.{ads,adb}`
+        (extend `Spawn` to accept an opaque closure pointer
+        alongside the existing `Goroutine_Body` access — either
+        as an overload `Spawn (Body : Goroutine_Body; Closure :
+        System.Address)` or as a generic-instantiated variant per
+        closure type; the worker procedure receives the closure
+        pointer back via a thread-local set during dispatch, then
+        unchecked-converts to the per-spawn record type),
+        `runtime/tests/test_async_scheduler.adb` (AUnit case
+        asserting the closure-payload round-trips correctly across
+        100 concurrent spawns with distinct arg tuples),
+        `compiler/internal/emit/emit.go` (new
         `emitGoClosureWithArgs` path generating a per-spawn
         `Go_Closure_<n>` record type carrying the formal-parameter
         copies, an `Allocate_Closure_<n>` helper for heap
@@ -273,10 +284,7 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         function body; `checkGoArgsEmpty` becomes a no-op), new
         `compiler/internal/translate/testdata/go_with_args.{go,golden.json}`
         + `compiler/internal/emit/testdata/go_with_args.golden.adb`
-        showcase fixture, runtime AUnit case under
-        `async.scheduler` asserting per-spawn argument-value
-        delivery across 100 concurrent spawns with distinct arg
-        tuples.
+        showcase fixture.
         *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/go_with_args && make -C runtime test PKG=async.scheduler`
         *Done when:* a `go relay(c1, c2)` with two `chan int`
         operands lowers to (i) one `Go_Closure_<n>` record decl
@@ -299,9 +307,11 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         maps to `Ada.Text_IO.Put (render (a))` for each argument
         with a space separator between consecutive args (matching
         Go's variadic Println spec), followed by `New_Line`.
-        Int args go through `Trim (Integer'Image (n), Left)` to
-        strip the leading-space Ada inserts for non-negative
-        integers, matching Go's bare-digit rendering.
+        Int args use Ada 2022's `Object'Image` attribute (`N'Image`
+        on the object, not `Integer'Image (N)` on the type) — the
+        Object form does not prepend the leading space that the
+        Type form does for non-negative values, so the rendering
+        matches Go's bare-digit output without a `Trim` step.
         *Files:* `compiler/internal/emit/emit.go` (new
         `emitFmtPrintln` helper handling 1..N args of any
         currently-supported scalar type; existing single-string

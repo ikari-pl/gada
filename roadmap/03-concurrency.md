@@ -220,6 +220,63 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         *Done when:* a select with a Send case, a Recv case with `v, ok :=` binding, a Recv case with no binding (drain), and a Default case lowers to a `declare … begin … end;` block whose body is the `Case_Array` build, the `Select_One` call, and an Ada `case Idx is when 1 => …; when 2 => …; when 3 => …; when 4 => …; end case;` dispatch. Ada syntax forbids declarations directly inside a `case` branch, so each Recv case with bindings emits a per-branch nested `declare V : T := V_<i>.all; Ok : Boolean := OK_<i>.all; begin <user body> end;` block. Cases without bindings (Send, Default, drain) emit their body directly under `when N =>` with no nested declare.
         *Done 2026-05-11:* The full select lowering is one wrapping `declare … begin … end;` per select site, scoping the per-Recv-case heap-allocated out-pointers (`V_<n>_<i>`, `OK_<n>_<i>` — library-level accessibility on the runtime's `Element_Ptr` / `Boolean_Ptr` forces heap allocation, not stack `'Access`), the `Sel_Cases_<n>` Case_Array, and `Sel_Idx_<n>`. Body region: per-case aggregate assignments populate all five fields of each Case_Item (Kind, Chan, Send_V, Recv_V_Out, Recv_OK_Out, Timeout_Duration) — irrelevant fields get null / zero / 0.0 rather than being omitted, matching the runtime test pattern verbatim. `Select_One` returns the 1-based fired index; an Ada `case` statement dispatches. Recv cases with bindings wrap the user body in their own `declare V : T := V_<n>_<i>.all; …; begin … end;` because Ada `when N => …` forbids declarations directly. The drain case (`<-c` with no LHS) uses the same Recv_Op aggregate but with both pointers null — the runtime skips writeback when either is null. Single-Element_Type validation walks all non-Default cases and asserts their chan operands resolve to the same element-base name; heterogeneous selects fail with an explicit error pointing at Phase 4's type-erasure widening. Degenerate all-Default selects skip Select_One and emit the default body inline. Empty `select {}` (Go's deadlock-forever shape) lowers to `raise Program_Error with "select with no cases…";`. The `selectCounter` field is file-wide so nested selects produce unique Sel_Cases_<n> / V_<n>_<i> names; Ada would shadow legally but unique names keep gprbuild diagnostics actionable. Showcase output: `select_basic.golden.adb` for the corpus fixture (one chan-int select with all five case shapes) is 70 lines of dense, aligned-aggregate Ada that reads like the runtime spec it instantiates. Coverage gates green: runtime/ 100% (704/704), emit 95.52% (1257/1316), translate 95.57% (388/406), compiler 95.08% (2376/2499). With (d) ticked, all four sub-items of the parent "Compiler emission — select statement" item are done; parent ticked too.
 
+- [ ] **Promote `Gada.Core.Panic` Pending stack to per-goroutine storage**
+      *Why:* The body's design note
+      (`runtime/src/gada-core-panic.adb:8-9`) already promises this:
+      *"v1 single-threaded runtime: one global stack. Phase 3
+      promotes this to per-task storage when the goroutine
+      scheduler lands."* The scheduler has landed (sub-items 3a-3f
+      DONE) but the promotion is overdue — the global
+      `Pending_Count : Natural` and the `Pending : array (1 ..
+      Max_Pending_Panics) of Payload_Type` survive untouched into
+      the multi-worker Phase 3 runtime, where two goroutines
+      panicking concurrently race on `Pending_Count` increment and
+      on the `Pending (Pending_Count)` slot index. Surfaced by
+      Gemini's PR #19 review against the Ada 2022 sweep that
+      touched these two increments.
+
+      Bare `pragma Thread_Local_Storage` is **not** the right shape
+      — see `docs/incidents/2026-05-03-scheduler-3b-multi-worker-
+      race`: TLS would re-open the libco-pinning trap. A goroutine
+      that pushes a panic on worker A and resumes on worker B
+      would observe an empty pending-panic stack in worker B's TLS
+      slot because the cothread carried no state across the OS-
+      thread boundary. The correct lowering is per-goroutine
+      storage hung off `Gada.Async.Scheduler.Goroutine_Record`,
+      with `Gada.Core.Panic.Do_Panic` / `Recover` /
+      `Is_Panicking` reading from the currently-active goroutine's
+      record via a scheduler-side accessor. The record travels with
+      the cothread automatically — same mechanism the scheduler
+      already uses for the body-procedure dispatch in 3a.
+
+      *Files:* `runtime/src/gada-async-scheduler.{ads,adb}` (extend
+      `Goroutine_Record` with a `Panic_Stack` field — a
+      `Panic_Stack_Type` containing the existing `Pending` array
+      and `Pending_Count`; add a `Current_Panic_Stack` accessor
+      returning a reference to the active goroutine's stack),
+      `runtime/src/gada-core-panic.{ads,adb}` (delete the
+      package-body `Pending`/`Pending_Count` globals;
+      `Do_Panic` / `Recover` / `Is_Panicking` consult
+      `Scheduler.Current_Panic_Stack` instead — single seam,
+      one line per operation), `runtime/tests/test_panic_per_goroutine.adb`
+      (new AUnit case spawning 100 goroutines that each push 1-3
+      panics concurrently and asserts each goroutine's stack is
+      private to that goroutine, with no cross-talk on
+      `Pending_Count` or stack contents).
+
+      *Verify:* `make -C runtime test PKG=core.panic && make -C
+      runtime test PKG=async.scheduler`
+
+      *Done when:* (i) the package-body `Pending`/`Pending_Count`
+      are gone from `Gada.Core.Panic`; (ii) the new AUnit case
+      demonstrates isolation across 100 concurrent panicking
+      goroutines on a multi-worker scheduler (`Workers => 4`);
+      (iii) the v1 single-threaded `defer_panic_suite` continues
+      to pass unchanged; (iv) the design-note comment at the top
+      of `gada-core-panic.adb` is updated to describe the
+      per-goroutine layout (and references back to this roadmap
+      item for the rationale).
+
 - [ ] **`ping_pong` example**
       *Files:* `examples/ping_pong/ping_pong.go`, `examples/ping_pong/expected_output.txt`
       *Verify:* `make example HELLO=ping_pong` (must complete in < 5s wall-clock)

@@ -269,14 +269,21 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         alongside the existing `Goroutine_Body` access — either
         as an overload `Spawn (Body : Goroutine_Body; Closure :
         System.Address)` or as a generic-instantiated variant per
-        closure type; the worker procedure receives the closure
-        pointer back via a thread-local set during dispatch, then
-        unchecked-converts to the per-spawn record type),
-        `runtime/tests/test_async_scheduler.adb` (AUnit case
-        asserting the closure-payload round-trips correctly across
-        100 concurrent spawns with distinct arg tuples),
-        `compiler/internal/emit/emit.go` (new
-        `emitGoClosureWithArgs` path generating a per-spawn
+        closure type; add a public getter `function Closure (G :
+        Goroutine_Id) return System.Address` on the spec so the
+        emitted `Go_Worker_<n>` procedure — which lives in the
+        transpiled program's package, not in `Gada.Async.Scheduler`
+        — can retrieve the per-spawn closure pointer without
+        reaching into `Goroutine_Record`'s private fields; the
+        worker reads `Scheduler.Closure (Scheduler.Current)` once
+        at entry and unchecked-converts to its per-spawn record
+        type), `runtime/tests/scheduler_suite.adb` (extend the
+        existing AUnit suite — same `<package>_suite.adb`
+        convention as channels_suite / channels_unbounded_suite /
+        selector_suite — with cases asserting the closure-payload
+        round-trips correctly across 100 concurrent spawns with
+        distinct arg tuples), `compiler/internal/emit/emit.go`
+        (new `emitGoClosureWithArgs` path generating a per-spawn
         `Go_Closure_<n>` record type carrying the formal-parameter
         copies, an `Allocate_Closure_<n>` helper for heap
         allocation, and a `Go_Worker_<n>` procedure that unpacks
@@ -288,14 +295,21 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/go_with_args && make -C runtime test PKG=async.scheduler`
         *Done when:* a `go relay(c1, c2)` with two `chan int`
         operands lowers to (i) one `Go_Closure_<n>` record decl
-        per distinct call-site signature, (ii) one `Go_Worker_<n>`
-        procedure per call-site that unpacks the record into
-        locals matching the user's parameter names, (iii) one
-        `Spawn (Go_Worker_<n>'Access, Closure_<n>)` call at the
-        go-statement site, with the closure heap-allocated through
-        a per-call `Allocate_Closure_<n>` helper. AUnit case
-        spawns 100 workers with distinct `(int, int)` arg pairs
-        and asserts the per-spawn args land at the expected
+        per call-site (per-call-site keyed by `emit.goIndex`, not
+        per distinct signature — the v1 emit deliberately picks
+        the simpler per-call-site shape to avoid type-matching
+        across call-sites; deduplication is a later perf pass if
+        the binary-size cost shows up in measurement),
+        (ii) one `Go_Worker_<n>` procedure per call-site that
+        unpacks the record into locals matching the user's
+        parameter names, (iii) one `Spawn (Go_Worker_<n>'Access,
+        Closure_<n>)` call at the go-statement site, with the
+        closure heap-allocated through a per-call
+        `Allocate_Closure_<n>` helper, plus the scheduler's
+        public `Closure` getter retrievable from
+        `Go_Worker_<n>`. AUnit cases in `scheduler_suite.adb`
+        spawn 100 workers with distinct `(int, int)` arg pairs
+        and assert the per-spawn args land at the expected
         positions inside each worker.
 
   - [ ] **(b) Compiler-emit: multi-arg `fmt.Println` with int rendering**

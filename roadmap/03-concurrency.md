@@ -236,46 +236,106 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
       touched these two increments.
 
       Bare `pragma Thread_Local_Storage` is **not** the right shape
-      — see `docs/incidents/2026-05-03-scheduler-3b-multi-worker-
-      race`: TLS would re-open the libco-pinning trap. A goroutine
-      that pushes a panic on worker A and resumes on worker B
-      would observe an empty pending-panic stack in worker B's TLS
-      slot because the cothread carried no state across the OS-
-      thread boundary. The correct lowering is per-goroutine
-      storage hung off `Gada.Async.Scheduler.Goroutine_Record`,
-      with `Gada.Core.Panic.Do_Panic` / `Recover` /
-      `Is_Panicking` reading from the currently-active goroutine's
-      record via a scheduler-side accessor. The record travels with
-      the cothread automatically — same mechanism the scheduler
+      for two distinct reasons, both load-bearing:
+
+        - **Multiplexing**: GADA is M:N. Multiple goroutines share
+          the same worker (and therefore the same OS thread). They
+          would all share the same TLS slot. If Goroutine A pushes
+          a panic and then yields, Goroutine B running on the same
+          worker observes — or worse, overwrites — Goroutine A's
+          panic state on its next `Do_Panic`/`Recover`. TLS
+          partitions by *OS thread*, but panic state needs to
+          partition by *goroutine*. This is the primary objection;
+          it holds even on a single-worker build.
+
+        - **Migration**: even if multiplexing weren't a problem,
+          docs/incidents/2026-05-03-scheduler-3b-multi-worker-race
+          documents the libco-pinning trap that emerges once you
+          unpin: a goroutine that pushes a panic on worker A and
+          resumes on worker B would observe an empty TLS slot in
+          worker B because the cothread carried no state across
+          the OS-thread boundary. Pinning is the current
+          invariant, but it's an invariant we depend on, not one
+          we want panic correctness to depend on too.
+
+      The correct lowering is per-goroutine storage hung off
+      `Gada.Async.Scheduler.Goroutine_Record`, with
+      `Gada.Core.Panic.Do_Panic` / `Recover` / `Is_Panicking`
+      reading from the currently-active goroutine's record via a
+      scheduler-side accessor. The record travels with the
+      cothread automatically — same mechanism the scheduler
       already uses for the body-procedure dispatch in 3a.
 
+      **Layering**: `Gada.Core.Panic` is generic over
+      `Payload_Type`; `Gada.Async.Scheduler` is non-generic and
+      sits at a layer Gada.Core.Panic depends on, not the other
+      way around. The scheduler therefore **cannot** carry a
+      concrete `Panic_Stack_Type` field on `Goroutine_Record` —
+      that would force the scheduler to know the panic payload's
+      generic type. The right shape is an opaque slot:
+      `Goroutine_Record` carries a `Local_Storage : System.Address
+      := Null_Address`, and the per-Payload_Type
+      `Gada.Core.Panic` instantiation manages its own
+      heap-allocated state behind that pointer (allocate on first
+      `Do_Panic`/`Push` per goroutine; the scheduler frees the
+      slot when the goroutine is reaped). This generalises beyond
+      panic — other future per-goroutine state (recover stacks,
+      thread-local-equivalent maps, race-detector shadow data)
+      uses the same slot via the same registration shape.
+
+      **Main task**: the non-goroutine context (the main Ada task
+      that runs before any `Scheduler.Spawn`) must remain
+      panic-capable — the v1 single-threaded `defer_panic_suite`
+      runs panics from main, and that must still pass post-change.
+      Handled by giving the scheduler a `Main_Local_Storage :
+      System.Address := Null_Address` package-body global, used as
+      a fallback when `Scheduler.Current = No_Goroutine`. The
+      `Get_Local_Storage` / `Set_Local_Storage` accessors route
+      to this fallback automatically in main context. Multiplexing
+      isn't a concern for the main fallback because Ada's main
+      task is genuinely a single thread; the rest of the runtime
+      will not race with itself there.
+
       *Files:* `runtime/src/gada-async-scheduler.{ads,adb}` (extend
-      `Goroutine_Record` with a `Panic_Stack` field — a
-      `Panic_Stack_Type` containing the existing `Pending` array
-      and `Pending_Count`; add a `Current_Panic_Stack` accessor
-      returning a reference to the active goroutine's stack),
+      `Goroutine_Record` with an opaque `Local_Storage :
+      System.Address := Null_Address` field — **no dependency on
+      Gada.Core.Panic's generic parameter**; add public
+      `Get_Local_Storage` / `Set_Local_Storage (Addr :
+      System.Address)` accessors that operate on
+      `Scheduler.Current`'s slot, transparently routing to a
+      package-body `Main_Local_Storage` global when
+      `Scheduler.Current = No_Goroutine`),
       `runtime/src/gada-core-panic.{ads,adb}` (delete the
-      package-body `Pending`/`Pending_Count` globals;
-      `Do_Panic` / `Recover` / `Is_Panicking` consult
-      `Scheduler.Current_Panic_Stack` instead — single seam,
-      one line per operation), `runtime/tests/test_panic_per_goroutine.adb`
-      (new AUnit case spawning 100 goroutines that each push 1-3
-      panics concurrently and asserts each goroutine's stack is
-      private to that goroutine, with no cross-talk on
-      `Pending_Count` or stack contents).
+      package-body `Pending`/`Pending_Count` globals; per
+      `Payload_Type` instantiation owns a heap-allocated
+      `Panic_State_Type` record behind
+      `Scheduler.Get_Local_Storage`; first `Do_Panic` /
+      `Is_Panicking` on a goroutine allocates and `Set_Local_
+      Storage`s the per-instantiation record),
+      `runtime/tests/scheduler_suite.adb` (extend existing suite —
+      same `<package>_suite.adb` convention used throughout the
+      runtime — with the 100-goroutines-concurrent-panic isolation
+      case + the main-context fallback case asserting
+      `Get_Local_Storage` returns the `Main_Local_Storage` global
+      when called outside any spawned goroutine).
 
       *Verify:* `make -C runtime test PKG=core.panic && make -C
       runtime test PKG=async.scheduler`
 
       *Done when:* (i) the package-body `Pending`/`Pending_Count`
-      are gone from `Gada.Core.Panic`; (ii) the new AUnit case
-      demonstrates isolation across 100 concurrent panicking
-      goroutines on a multi-worker scheduler (`Workers => 4`);
-      (iii) the v1 single-threaded `defer_panic_suite` continues
-      to pass unchanged; (iv) the design-note comment at the top
-      of `gada-core-panic.adb` is updated to describe the
-      per-goroutine layout (and references back to this roadmap
-      item for the rationale).
+      are gone from `Gada.Core.Panic`; (ii) the new AUnit cases
+      demonstrate (a) isolation across 100 concurrent panicking
+      goroutines on a multi-worker scheduler (`Workers => 4`),
+      and (b) the main-task fallback — `Do_Panic` / `Recover`
+      from outside any spawned goroutine routes correctly via
+      `Main_Local_Storage`; (iii) the v1 single-threaded
+      `defer_panic_suite` continues to pass unchanged (the
+      main-task fallback is *what* keeps it passing); (iv) the
+      design-note comment at the top of `gada-core-panic.adb` is
+      updated to describe the opaque-per-goroutine layout, the
+      multiplexing rationale for not using TLS, and the
+      main-task-fallback mechanism (with a reference back to this
+      roadmap item).
 
 - [ ] **`ping_pong` example**
 

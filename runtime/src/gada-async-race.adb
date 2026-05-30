@@ -39,42 +39,35 @@ package body Gada.Async.Race is
    --  Stable short tag for a goroutine handle. We do not expose the
    --  underlying pointer identity (private), so the report renders a
    --  goroutine as either "none" (No_Goroutine) or "g#<n>" where <n>
-   --  distinguishes the two holders within a single report. Image is a
-   --  diagnostic aid, not a stable cross-run identifier.
+   --  distinguishes the two holders within a single report — Image is a
+   --  diagnostic aid, not a stable cross-run identifier. Written as an
+   --  expression function (no begin/end body) so there is no implicit
+   --  fall-through block at `end Holder_Tag;` for gcov to count as an
+   --  unreachable line — the same shape that keeps Image at 100% below.
    function Holder_Tag
-     (R    : Race_Report;
-      Who  : Gada.Async.Scheduler.Goroutine_Id;
-      Slot : Positive) return String;
-
-   function Holder_Tag
-     (R    : Race_Report;
-      Who  : Gada.Async.Scheduler.Goroutine_Id;
+     (Who  : Gada.Async.Scheduler.Goroutine_Id;
       Slot : Positive) return String
-   is
-      pragma Unreferenced (R);
-   begin
-      if Who = Gada.Async.Scheduler.No_Goroutine then
-         return "none";
-      else
-         return "g#" & Ada.Strings.Fixed.Trim (Slot'Image, Ada.Strings.Left);
-      end if;
-   end Holder_Tag;
+   is (if Who = Gada.Async.Scheduler.No_Goroutine then "none"
+       else "g#" & Ada.Strings.Fixed.Trim (Slot'Image, Ada.Strings.Left));
 
    -----------
    -- Image --
    -----------
 
+   --  Expression function (not a begin/end body): a body would leave an
+   --  implicit fall-through basic block at `end Image;` that gcov counts
+   --  but the two-return control flow never reaches — the same
+   --  unreachable-terminator shape excluded for Gada.Async.Selector's
+   --  Select_One end-block. Folding to an expression function removes
+   --  that block entirely, keeping the unit at 100% line coverage with
+   --  no exclusion. Both arms are exercised by race_suite's Image test.
    function Image (R : Race_Report) return String is
-   begin
-      if not R.Detected then
-         return "no race";
-      end if;
-      return "data race: "
-        & Holder_Tag (R, R.First_Holder, 1) & " (" & R.First_Mode'Image
+     (if not R.Detected then "no race"
+      else "data race: "
+        & Holder_Tag (R.First_Holder, 1) & " (" & R.First_Mode'Image
         & ") concurrent with "
-        & Holder_Tag (R, R.Second_Holder, 2) & " (" & R.Second_Mode'Image
-        & ")";
-   end Image;
+        & Holder_Tag (R.Second_Holder, 2) & " (" & R.Second_Mode'Image
+        & ")");
 
    -----------------
    -- Checked_Cell --

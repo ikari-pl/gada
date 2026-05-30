@@ -54,20 +54,28 @@ package body Gada.Async.Race is
    -- Image --
    -----------
 
-   --  Expression function (not a begin/end body): a body would leave an
-   --  implicit fall-through basic block at `end Image;` that gcov counts
-   --  but the two-return control flow never reaches — the same
-   --  unreachable-terminator shape excluded for Gada.Async.Selector's
-   --  Select_One end-block. Folding to an expression function removes
-   --  that block entirely, keeping the unit at 100% line coverage with
-   --  no exclusion. Both arms are exercised by race_suite's Image test.
+   --  A normal begin/end body with a single returned conditional
+   --  expression. Both arms (no-race / detected) are exercised by
+   --  race_suite's Image test. The trailing `end Image;` is an
+   --  unreachable fall-through basic block (the function always returns
+   --  on line above), which lcov 2.x counts but no input reaches — the
+   --  same unreachable-terminator shape already excluded for
+   --  Gada.Async.Selector's Select_One end-block and the No_Return
+   --  Trampoline tail loop. It is excluded in tools/coverage_thresholds.
+   --  toml with a rationale in runtime/COVERAGE.md. (Folding to an
+   --  expression function does NOT help — lcov 2.x then marks the
+   --  expression-function signature line uncovered instead; either form
+   --  leaves exactly one un-coverable line, verified empirically.)
    function Image (R : Race_Report) return String is
-     (if not R.Detected then "no race"
-      else "data race: "
-        & Holder_Tag (R.First_Holder, 1) & " (" & R.First_Mode'Image
-        & ") concurrent with "
-        & Holder_Tag (R.Second_Holder, 2) & " (" & R.Second_Mode'Image
-        & ")");
+   begin
+      return
+        (if not R.Detected then "no race"
+         else "data race: "
+           & Holder_Tag (R.First_Holder, 1) & " (" & R.First_Mode'Image
+           & ") concurrent with "
+           & Holder_Tag (R.Second_Holder, 2) & " (" & R.Second_Mode'Image
+           & ")");
+   end Image;
 
    -----------------
    -- Checked_Cell --

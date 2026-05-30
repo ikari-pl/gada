@@ -190,5 +190,5 @@ reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE
 # Rationale: runtime/COVERAGE.md (gada-async-selector).
 [[exclude]]
 file = "runtime/src/gada-async-selector.adb"
-lines = [102, 107, 163, 164, 165, 306]
+lines = [104, 109, 165, 166, 167, 322]
 reason = "Selector defensive/unreachable arms — see runtime/COVERAGE.md"

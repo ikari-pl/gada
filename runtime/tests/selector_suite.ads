@@ -36,6 +36,8 @@ package Selector_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Blocks_Until_Sibling_Sends
      (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Select_From_Goroutine_Yields
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_More_Than_Max_Cases_Raises
      (T : in out AUnit.Test_Cases.Test_Case'Class);
 

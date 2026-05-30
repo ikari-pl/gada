@@ -13,7 +13,7 @@ enumeration; output matches the expected fixture.
 
 ## Items
 
-- [ ] **Type metadata schema**
+- [x] **Type metadata schema**
       *Files:* `runtime/src/gada-reflect.ads` (namespace parent),
       `runtime/src/gada-reflect-types.ads`,
       `runtime/src/gada-reflect-types.adb`,
@@ -23,6 +23,24 @@ enumeration; output matches the expected fixture.
       schema ships as `Gada.Reflect.Types`).
       *Verify:* `make -C runtime test PKG=reflect.type`
       *Done when:* type records carry name, kind, fields, methods, and are equality-comparable.
+      *Done 2026-05-30:* `Gada.Reflect` is a namespace parent; the schema
+      ships as `Gada.Reflect.Types`. `Type_Descriptor` is a private value
+      carrying a `Type_Id` (per-program identity the compiler assigns),
+      `Name`, a `Type_Kind` (the Go reflect.Kind subset GADA supports —
+      literals suffixed `_Kind` to dodge the `interface` reserved word
+      and the `String`/`Float` predefined names), ordered `Add_Field` /
+      `Add_Method` lists, and `Elem` / `Key` Type_Id links for the
+      composite kinds (Slice/Pointer/Chan element, Map value+key). Types
+      reference each other *by Id*, not by embedding, so the table is
+      flat and cycle-safe. The predefined `"="` is deep value equality
+      across all components (Unbounded_String by content, the field /
+      method vectors element-wise) — that is the equality-comparable
+      contract; type identity is `Id (A) = Id (B)`. Five AUnit cases
+      (scalar, struct fields+methods, composite elem/key, value
+      equality, out-of-range Constraint_Error) cover the package 100%
+      (28/28 body lines); runtime/ stays 100% (806/806). `make ci`
+      green. The TypeOf/ValueOf entry points and the compiler's
+      Register_Type emission (later items) build on this.
 
 - [ ] **Compiler — emit type metadata for every defined type**
       *Files:* `compiler/internal/emit/typemeta.go`, golden tests

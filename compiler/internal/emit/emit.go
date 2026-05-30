@@ -1576,12 +1576,26 @@ func (e *emitter) emitGoClosureWithArgs(n int, g *ir.GoStmt) {
 			e.fail(err)
 			return
 		}
-		names[i] = adaIdent(p.Name)
+		if p.Name == "" {
+			// Unnamed Go parameter (`func f(int)`): synthesize a stable
+			// component name so the record/aggregate/call stay valid Ada
+			// rather than emitting an empty identifier. Positional at the
+			// spawn site, so the synthetic name is never user-visible.
+			names[i] = fmt.Sprintf("Anon_%d", i+1)
+		} else {
+			names[i] = adaIdent(p.Name)
+		}
 		types[i] = t
 	}
 
 	rec := fmt.Sprintf("Go_Closure_%d", n)
 	acc := rec + "_Access"
+	// Per-call-site unique pointer-variable name. NOT `Go_C`: a Go
+	// parameter literally named `go_c` capitalises to `Go_C` and would
+	// collide with the pointer in the same scope (Gemini PR #23). The
+	// `_Obj` suffix on the already-unique closure type name keeps it
+	// collision-free against any parameter-derived local.
+	objVar := rec + "_Obj"
 
 	// --- per-spawn closure record + access + conversions ---
 	e.println(fmt.Sprintf("type %s is record", rec))
@@ -1612,14 +1626,13 @@ func (e *emitter) emitGoClosureWithArgs(n int, g *ir.GoStmt) {
 	e.println(fmt.Sprintf(
 		"function Allocate_Closure_%d (%s) return System.Address is",
 		n, strings.Join(params, "; ")))
-	e.indent++
-	e.println(fmt.Sprintf(
-		"Go_C : constant %s := new %s'(%s);",
-		acc, rec, strings.Join(assocs, ", ")))
-	e.indent--
 	e.println("begin")
 	e.indent++
-	e.println(fmt.Sprintf("return Closure_Addr_%d (Go_C);", n))
+	// Allocate + address-convert in one expression — no named local, so
+	// nothing here can collide with a parameter named `go_c` etc.
+	e.println(fmt.Sprintf(
+		"return Closure_Addr_%d (new %s'(%s));",
+		n, rec, strings.Join(assocs, ", ")))
 	e.indent--
 	e.println(fmt.Sprintf("end Allocate_Closure_%d;", n))
 
@@ -1627,15 +1640,15 @@ func (e *emitter) emitGoClosureWithArgs(n int, g *ir.GoStmt) {
 	e.println(fmt.Sprintf("procedure Go_Worker_%d is", n))
 	e.indent++
 	e.println(fmt.Sprintf(
-		"Go_C : %s := To_%s (Gada.Async.Scheduler.Closure (Gada.Async.Scheduler.Current));",
-		acc, rec))
+		"%s : %s := To_%s (Gada.Async.Scheduler.Closure (Gada.Async.Scheduler.Current));",
+		objVar, acc, rec))
 	for i := range names {
-		e.println(fmt.Sprintf("%s : constant %s := Go_C.%s;", names[i], types[i], names[i]))
+		e.println(fmt.Sprintf("%s : constant %s := %s.%s;", names[i], types[i], objVar, names[i]))
 	}
 	e.indent--
 	e.println("begin")
 	e.indent++
-	e.println(fmt.Sprintf("Free_%s (Go_C);", rec))
+	e.println(fmt.Sprintf("Free_%s (%s);", rec, objVar))
 	e.println(fmt.Sprintf("%s (%s);", adaIdent(ident.Name), strings.Join(names, ", ")))
 	e.indent--
 	e.println(fmt.Sprintf("end Go_Worker_%d;", n))

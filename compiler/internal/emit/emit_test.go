@@ -2153,3 +2153,35 @@ func idn(s string) *ir.Ident { return &ir.Ident{Name: s} }
 // coverage). String / bool / float literals are constructed inline at
 // the few call sites that need them so the helper stays single-purpose.
 func litInt(v string) *ir.Lit { return &ir.Lit{Kind: ir.LitInt, Value: v} }
+
+// TestGoArgsUnnamedParam covers the synthetic-name path in
+// emitGoClosureWithArgs: a callee with an unnamed parameter (Go's
+// `func f(int)`) must still emit a valid closure record component,
+// named Anon_<i>, rather than an empty identifier.
+func TestGoArgsUnnamedParam(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(
+		&ir.Function{
+			Name:   "g",
+			Params: []*ir.Param{{Name: "", Type: &ir.IntType{}}},
+		},
+		&ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{&ir.GoStmt{Call: &ir.Call{
+				Fun:  idn("g"),
+				Args: []ir.Expr{litInt("5")},
+			}}},
+		},
+	)
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Anon_1 : Integer;") {
+		t.Fatalf("expected synthetic Anon_1 component for unnamed param, got:\n%s", out)
+	}
+	if !strings.Contains(out, "G (Anon_1);") {
+		t.Fatalf("expected call G (Anon_1), got:\n%s", out)
+	}
+}

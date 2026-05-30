@@ -31,16 +31,15 @@ package body P is
       function Closure_Addr_1 is new Ada.Unchecked_Conversion (Go_Closure_1_Access, System.Address);
       procedure Free_Go_Closure_1 is new Ada.Unchecked_Deallocation (Go_Closure_1, Go_Closure_1_Access);
       function Allocate_Closure_1 (Ping : Channels_Of_Integer.Channel; Pong : Channels_Of_Integer.Channel) return System.Address is
-         Go_C : constant Go_Closure_1_Access := new Go_Closure_1'(Ping => Ping, Pong => Pong);
       begin
-         return Closure_Addr_1 (Go_C);
+         return Closure_Addr_1 (new Go_Closure_1'(Ping => Ping, Pong => Pong));
       end Allocate_Closure_1;
       procedure Go_Worker_1 is
-         Go_C : Go_Closure_1_Access := To_Go_Closure_1 (Gada.Async.Scheduler.Closure (Gada.Async.Scheduler.Current));
-         Ping : constant Channels_Of_Integer.Channel := Go_C.Ping;
-         Pong : constant Channels_Of_Integer.Channel := Go_C.Pong;
+         Go_Closure_1_Obj : Go_Closure_1_Access := To_Go_Closure_1 (Gada.Async.Scheduler.Closure (Gada.Async.Scheduler.Current));
+         Ping : constant Channels_Of_Integer.Channel := Go_Closure_1_Obj.Ping;
+         Pong : constant Channels_Of_Integer.Channel := Go_Closure_1_Obj.Pong;
       begin
-         Free_Go_Closure_1 (Go_C);
+         Free_Go_Closure_1 (Go_Closure_1_Obj);
          Relay (Ping, Pong);
       end Go_Worker_1;
       Unused_G : Gada.Async.Scheduler.Goroutine_Id;

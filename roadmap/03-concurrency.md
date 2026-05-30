@@ -574,12 +574,43 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         `expected_output.txt` is empty; total wall-clock is
         under 5 s on the dev host.
 
-- [ ] **Race detector integration (best-effort)**
-      *Files:* `runtime/src/gada-async-race.ads`
+- [x] **Race detector integration (best-effort)**
+      *Files:* `runtime/src/gada-async-race.ads` + `.adb`,
+      `runtime/tests/race_suite.{ads,adb}`,
+      `docs/adr/0010-race-detection-best-effort.md`
       *Verify:* `make -C runtime test PKG=async.race`
       *Done when:* an intentional data race is detected and reported (or documented as a known limitation in an ADR).
+      *Done 2026-05-30:* Shipped the **detect** side of the OR, not the
+      stub fallback. `Gada.Async.Race` is a best-effort *cooperative
+      checked-cell* monitor: a generic `Checked_Cell` wraps one value
+      behind a protected `Monitor`; callers bracket each access with
+      `Begin_Access (Read|Write, Who)` / `End_Access (Who)`, and the
+      monitor latches a `Race_Report` the instant a *distinct* goroutine
+      opens an overlapping section where at least one side is a Write —
+      Go's data-race definition narrowed to one instrumented cell. What
+      it catches: write/write and read/write overlap on a wrapped cell
+      from two goroutines. What it deliberately does NOT catch (no
+      shadow memory, no happens-before vector clocks): anything not
+      routed through a `Checked_Cell`, read/read overlap (benign), and
+      ordering established outside the Begin/End bracket — a sound,
+      complete TSan-style detector is a research effort past 1.0, the
+      same stance `CLAUDE.md` takes on the precise GC. Full envelope +
+      the rejected alternatives (full TSan, pure stub, lockset, raise-on-
+      detect) in **ADR-0010**. `race_suite` (10 cases) drives the
+      detector deterministically from the main task AND end-to-end via
+      two real goroutines holding overlapping Write sections behind a
+      protected-entry rendezvous (`Test_Goroutine_Driven_Intentional_
+      Race`): `make -C runtime test PKG=async.race` → 10/10 green, race
+      detected, synchronized + read/read access NOT flagged. Layering:
+      Async unit, depends only on `Gada.Async.Scheduler` for goroutine
+      identity; SPARK posture `Off` (protected-object tasking), recorded
+      in `runtime/PROOF.md` alongside the scheduler row. The `Monitor` is
+      Ravenscar-shaped, so the row could flip if the scheduler picks
+      Ravenscar (ADR-0009).
 
-- [ ] **Goroutine leak test**
+- [x] **Goroutine leak test**
       *Files:* `runtime/tests/stress_goroutines.adb`
       *Verify:* `make -C runtime test PKG=stress.goroutines`
       *Done when:* spawning + completing 100k goroutines leaves runtime task count back at baseline.
+
+      *Done 2026-05-30:* Realised as `runtime/tests/stress_goroutines_suite.{ads,adb}` (suite type `Stress_Goroutines_Test`), wired into `runtime/tests/test_runner.adb` under the opt-in `stress.*` namespace exactly like `stress.gc` / `stress.scheduler` — the default `make test` / `make ci` skip it; only `make -C runtime test PKG=stress.goroutines` selects it. The single test spawns 100_000 spawn-and-return goroutines at the *default* worker width (`Init` => `Number_Of_CPUs`, real multi-worker concurrency, unlike `stress.scheduler`'s deliberately single-worker shape) and asserts on two observable baseline proxies, since the scheduler's private state (`Run_Queue`, `The_Workers`, the `Goroutine_Record` free-list) is not readable from a test: **(1) exactness** — a protected `Run_Counter` (serialised increments, because an Atomic Natural's read-modify-write would lose increments under multi-worker fan-out) tallies exactly 100_000 completed bodies, so a dropped goroutine undershoots and a record reused-while-live double-runs and overshoots; **(2) clean second cycle** — a follow-up 1_000-goroutine `Init`/`Spawn`/`Shutdown` burst still tallies exactly, proving the first `Shutdown` returned the pool to the not-initialised baseline (`The_Workers := null`, every record `Free_Goroutine`'d on the DONE reap arm) and nothing bled across the barrier. A direct OS task-count probe is intentionally not asserted on — the AdaCore FSF runtime spins helper tasks lazily on macOS, so it is non-deterministic; the exactness + clean-second-cycle proxies are the contract. `make -C runtime test PKG=stress.goroutines` reports 1/1 test, 0 failed assertions, 0 unexpected errors; the 100k burst completes in well under a second wall-clock. `make ci` stays fully green (116/116 non-stress tests, runtime/ coverage 100%, coverage-gate PASSED, roadmap consistency OK) — the new files live under `runtime/tests/` which the 100%-line gate (scoped to `runtime/src/`) does not count.

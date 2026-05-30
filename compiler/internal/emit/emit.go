@@ -2298,6 +2298,10 @@ func matchTrivialFor(f *ir.For) (string, ir.Expr, ir.Expr, bool) {
 }
 
 func (e *emitter) emitCallStmt(c *ir.Call) {
+	if isFmtPrintln(c.Fun) {
+		e.emitFmtPrintln(c)
+		return
+	}
 	fun := e.emitExpr(c.Fun)
 	args := make([]string, 0, len(c.Args))
 	for _, a := range c.Args {
@@ -2308,6 +2312,37 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 		return
 	}
 	e.println(fun + " (" + strings.Join(args, ", ") + ");")
+}
+
+// isFmtPrintln reports whether x is the `fmt.Println` selector. The
+// call is intercepted in statement position by emitCallStmt so a
+// multi-argument `fmt.Println(a, b, …)` lowers to a space-separated run
+// of Print calls rather than a single (ill-typed) Println call.
+func isFmtPrintln(x ir.Expr) bool {
+	s, ok := x.(*ir.Selector)
+	if !ok {
+		return false
+	}
+	id, ok := s.X.(*ir.Ident)
+	return ok && id.Name == "fmt" && s.Sel == "Println"
+}
+
+// emitFmtPrintln lowers `fmt.Println(a, b, …)` to Go's variadic-Println
+// shape: each operand rendered via Gada.Core.IO.Print, a single space
+// between consecutive operands, and a terminating New_Line. Ada's
+// overload resolution selects Print (String) vs Print (Integer) from
+// each rendered operand's type, so emit stays type-agnostic here; an
+// operand of an as-yet-unsupported scalar type surfaces as a gprbuild
+// overload error (Float/Bool faithful rendering is Phase 4 work). The
+// zero-argument form `fmt.Println()` emits just New_Line.
+func (e *emitter) emitFmtPrintln(c *ir.Call) {
+	for i, a := range c.Args {
+		if i > 0 {
+			e.println(`Print (" ");`)
+		}
+		e.println("Print (" + e.emitExpr(a) + ");")
+	}
+	e.println("New_Line;")
 }
 
 // emitExprStmt renders Go's bare expression-statement (e.g. a stray
@@ -3050,9 +3085,9 @@ func (e *emitter) emitUnaryOp(u *ir.UnaryOp) string {
 // won't produce compilable Ada until later phases plumb proper
 // package translation.
 func (e *emitter) emitSelector(s *ir.Selector) string {
-	if id, ok := s.X.(*ir.Ident); ok && id.Name == "fmt" && s.Sel == "Println" {
-		return "Println"
-	}
+	// `fmt.Println` in statement position is intercepted by emitCallStmt
+	// (-> emitFmtPrintln), so it never reaches here. Any other selector
+	// renders as the Ada dotted form.
 	return e.emitExpr(s.X) + "." + s.Sel
 }
 

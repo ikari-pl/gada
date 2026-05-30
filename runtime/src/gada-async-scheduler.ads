@@ -42,6 +42,8 @@
 --  to depend on `Gada.Async.Context`. Channels, select, and timers
 --  build on Park/Unpark exposed here, not on the raw context API.
 
+with System;
+
 package Gada.Async.Scheduler is
 
    --  Opaque handle to a scheduled goroutine. Returned by Spawn,
@@ -70,6 +72,30 @@ package Gada.Async.Scheduler is
    --  Calling Spawn before Init is a precondition violation.
    function Spawn (Body_Proc : Goroutine_Body) return Goroutine_Id
      with Pre => Body_Proc /= null;
+
+   --  Closure-carrying Spawn. Identical to the no-arg form but stashes
+   --  an opaque per-spawn payload pointer the goroutine body can read
+   --  back via Closure (Current). This is the seam the compiler lowers
+   --  `go f(x, y)` onto: the generated Allocate_Closure_<n> helper
+   --  heap-allocates a record holding x and y *at the spawn site*
+   --  (matching Go's "args evaluated at the go statement" rule), passes
+   --  its address here, and the generated Go_Worker_<n> reads it back,
+   --  unpacks the fields into locals, and calls f. The scheduler treats
+   --  Closure as opaque — it never dereferences it. Closure may be
+   --  Null_Address (it is, for the no-arg form, which delegates here).
+   function Spawn
+     (Body_Proc : Goroutine_Body;
+      Closure   : System.Address) return Goroutine_Id
+     with Pre => Body_Proc /= null;
+
+   --  Return the opaque closure pointer stashed by the Spawn that
+   --  created G, or Null_Address if G was spawned via the no-arg form
+   --  (or is No_Goroutine). Generated Go_Worker_<n> code calls
+   --  Closure (Current) once at entry and unchecked-converts the result
+   --  to its per-spawn record-access type. Distinct from Get_Local_
+   --  Storage: the closure is set *once at spawn* and read at entry,
+   --  whereas local storage is mutated *during* the goroutine's run.
+   function Closure (G : Goroutine_Id) return System.Address;
 
    --  Return a handle to the goroutine currently running on the
    --  caller's OS thread. Returns No_Goroutine outside a goroutine

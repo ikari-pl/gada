@@ -38,6 +38,7 @@ dev host.
 | `Gada.Async.Context` | Raw `System.Address`, `Convention => C` trampoline, `access procedure` dispatch, libco binding. | Forbidden constructs across the board. The public spec is intentionally narrow so future binding wrappers can opt in even if the body cannot. |
 | `Gada.Async.Context.Libco` | C bindings (libco). | `Convention => C` subprograms are excluded from SPARK by definition. |
 | `Gada.Async.Scheduler` (Phase 3) | Tasking outside Ravenscar profile (TBD by scheduler design). | If the scheduler design picks Ravenscar, this row may be revisited under a follow-up ADR. |
+| `Gada.Async.Race` (Phase 3) | Protected-object tasking + `access`-handle cell state; an Async-layer unit (ADR-0008 §3 opt-out set). | Best-effort race detector, see ADR-0010. The protected `Monitor` is Ravenscar-shaped, so this row could be revisited alongside `Gada.Async.Scheduler` if/when the scheduler picks Ravenscar. |
 
 ## Opt-in candidates (deferred)
 

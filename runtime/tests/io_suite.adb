@@ -51,6 +51,53 @@ package body IO_Suite is
       return Result (1 .. Natural (Last));
    end Read_File_Contents;
 
+   function Capture (Op : access procedure) return String;
+   --  Run Op with the default output redirected to a temp file, restore
+   --  the original output, and return the captured bytes. Op is an
+   --  anonymous access-to-procedure so a test's nested print sequence
+   --  can be passed by 'Access; it is invoked directly (no libco), so
+   --  the static link is valid. The temp file is deleted before return.
+
+   function Capture (Op : access procedure) return String is
+      Tmp_Path : constant String := Ada.Directories.Compose
+        (Containing_Directory => Ada.Directories.Current_Directory,
+         Name                 => "gada_io_capture",
+         Extension            => "out");
+
+      File  : Ada.Text_IO.File_Type;
+      Saved : constant Ada.Text_IO.File_Access :=
+        Ada.Text_IO.Current_Output;
+   begin
+      Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Tmp_Path);
+      Ada.Text_IO.Set_Output (File);
+
+      --  If Op raises, restore the default output *before* propagating —
+      --  otherwise Current_Output is left pointing at this (closing)
+      --  file and every later test fails with Status_Error. (PR #24
+      --  review.)
+      begin
+         Op.all;
+      exception
+         when others =>
+            Ada.Text_IO.Set_Output (Saved.all);
+            Ada.Text_IO.Close (File);
+            raise;
+      end;
+
+      Ada.Text_IO.Flush (File);
+      Ada.Text_IO.Set_Output (Saved.all);
+      Ada.Text_IO.Close (File);
+
+      return Result : constant String := Read_File_Contents (Tmp_Path) do
+         begin
+            Ada.Directories.Delete_File (Tmp_Path);
+         exception
+            when others =>
+               null;
+         end;
+      end return;
+   end Capture;
+
    --------------------------------------------------------------------
    --  Tests
    --------------------------------------------------------------------
@@ -102,6 +149,83 @@ package body IO_Suite is
       end;
    end Test_Println_Hello;
 
+   --  NOTE on capture: Ada.Text_IO appends a line terminator when a
+   --  file is closed on an unterminated line, so a bare Print (no
+   --  New_Line) cannot be distinguished from Print+LF through the
+   --  file-capture path. Every sequence below therefore ends in
+   --  New_Line — which collapses to exactly one LF on close (the same
+   --  property Test_Println_Hello relies on) — and asserts the content
+   --  plus that single LF. Adjacency of two Prints proves Print adds no
+   --  terminator of its own; this is also exactly how the compiler
+   --  emits multi-arg fmt.Println (a run of Print ending in New_Line).
+   procedure Test_Print_String_No_Newline
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      procedure Op;
+      procedure Op is
+      begin
+         Gada.Core.IO.Print ("a");
+         Gada.Core.IO.Print ("b");
+         Gada.Core.IO.New_Line;
+      end Op;
+   begin
+      --  "ab" & LF, not "a\nb\n": Print writes its text and nothing more.
+      AUnit.Assertions.Assert
+        (Capture (Op'Access) = "ab" & Ada.Characters.Latin_1.LF,
+         "Print (String) must emit just the text, no terminator");
+   end Test_Print_String_No_Newline;
+
+   procedure Test_Print_Integer_Trims_Leading_Blank
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      procedure Op;
+      procedure Op is
+      begin
+         Gada.Core.IO.Print (1_000_000);
+         Gada.Core.IO.New_Line;
+      end Op;
+   begin
+      --  Integer'Image (1_000_000) is " 1000000"; Print must drop the
+      --  leading blank so the bytes are Go's bare "1000000".
+      AUnit.Assertions.Assert
+        (Capture (Op'Access) = "1000000" & Ada.Characters.Latin_1.LF,
+         "Print (Integer) must drop Image's leading sign-position blank");
+   end Test_Print_Integer_Trims_Leading_Blank;
+
+   procedure Test_Print_Integer_Negative
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      procedure Op;
+      procedure Op is
+      begin
+         Gada.Core.IO.Print (-42);
+         Gada.Core.IO.New_Line;
+      end Op;
+   begin
+      --  Negative values have no leading blank to trim; the '-' stays.
+      AUnit.Assertions.Assert
+        (Capture (Op'Access) = "-42" & Ada.Characters.Latin_1.LF,
+         "Print (Integer) keeps the minus sign on negative values");
+   end Test_Print_Integer_Negative;
+
+   procedure Test_New_Line_Emits_LF
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      procedure Op;
+      procedure Op is
+      begin
+         Gada.Core.IO.New_Line;
+      end Op;
+   begin
+      AUnit.Assertions.Assert
+        (Capture (Op'Access) = (1 => Ada.Characters.Latin_1.LF),
+         "New_Line must emit exactly one LF");
+   end Test_New_Line_Emits_LF;
+
    --------------------------------------------------------------------
    --  AUnit registration plumbing
    --------------------------------------------------------------------
@@ -112,6 +236,19 @@ package body IO_Suite is
       Register_Routine
         (T, Test_Println_Hello'Access,
          "Gada.Core.IO.Println emits 'hello, GADA' + LF");
+      Register_Routine
+        (T, Test_Print_String_No_Newline'Access,
+         "Gada.Core.IO.Print (String) writes text with no terminator");
+      Register_Routine
+        (T, Test_Print_Integer_Trims_Leading_Blank'Access,
+         "Gada.Core.IO.Print (Integer) renders bare digits (no leading "
+         & "blank)");
+      Register_Routine
+        (T, Test_Print_Integer_Negative'Access,
+         "Gada.Core.IO.Print (Integer) keeps the minus sign on negatives");
+      Register_Routine
+        (T, Test_New_Line_Emits_LF'Access,
+         "Gada.Core.IO.New_Line emits exactly one LF");
    end Register_Tests;
 
    overriding function Name (T : IO_Test) return AUnit.Message_String is

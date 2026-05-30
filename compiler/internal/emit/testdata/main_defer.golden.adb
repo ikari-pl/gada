@@ -5,10 +5,12 @@ procedure Main is
 
    procedure Defer_Closure_1 is
    begin
-      Println ("end");
+      Print ("end");
+      New_Line;
    end Defer_Closure_1;
    Defer_1 : Gada.Core.Defer.Defer_Block (Op => Defer_Closure_1'Unrestricted_Access);
 
 begin
-   Println ("hello");
+   Print ("hello");
+   New_Line;
 end Main;

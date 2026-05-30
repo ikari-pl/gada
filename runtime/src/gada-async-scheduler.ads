@@ -42,6 +42,8 @@
 --  to depend on `Gada.Async.Context`. Channels, select, and timers
 --  build on Park/Unpark exposed here, not on the raw context API.
 
+with System;
+
 package Gada.Async.Scheduler is
 
    --  Opaque handle to a scheduled goroutine. Returned by Spawn,
@@ -70,6 +72,30 @@ package Gada.Async.Scheduler is
    --  Calling Spawn before Init is a precondition violation.
    function Spawn (Body_Proc : Goroutine_Body) return Goroutine_Id
      with Pre => Body_Proc /= null;
+
+   --  Closure-carrying Spawn. Identical to the no-arg form but stashes
+   --  an opaque per-spawn payload pointer the goroutine body can read
+   --  back via Closure (Current). This is the seam the compiler lowers
+   --  `go f(x, y)` onto: the generated Allocate_Closure_<n> helper
+   --  heap-allocates a record holding x and y *at the spawn site*
+   --  (matching Go's "args evaluated at the go statement" rule), passes
+   --  its address here, and the generated Go_Worker_<n> reads it back,
+   --  unpacks the fields into locals, and calls f. The scheduler treats
+   --  Closure as opaque — it never dereferences it. Closure may be
+   --  Null_Address (it is, for the no-arg form, which delegates here).
+   function Spawn
+     (Body_Proc : Goroutine_Body;
+      Closure   : System.Address) return Goroutine_Id
+     with Pre => Body_Proc /= null;
+
+   --  Return the opaque closure pointer stashed by the Spawn that
+   --  created G, or Null_Address if G was spawned via the no-arg form
+   --  (or is No_Goroutine). Generated Go_Worker_<n> code calls
+   --  Closure (Current) once at entry and unchecked-converts the result
+   --  to its per-spawn record-access type. Distinct from Get_Local_
+   --  Storage: the closure is set *once at spawn* and read at entry,
+   --  whereas local storage is mutated *during* the goroutine's run.
+   function Closure (G : Goroutine_Id) return System.Address;
 
    --  Return a handle to the goroutine currently running on the
    --  caller's OS thread. Returns No_Goroutine outside a goroutine
@@ -151,6 +177,40 @@ package Gada.Async.Scheduler is
    --  arrangement.
    procedure Enter_Syscall;
    procedure Exit_Syscall (G : Goroutine_Id);
+
+   --  ## Per-goroutine local storage (Phase 3 panic-promotion seam)
+   --
+   --  An opaque one-pointer slot hung off each goroutine, plus a
+   --  main-task fallback for the non-goroutine context. `Get_Local_
+   --  Storage` returns the slot of the goroutine currently running on
+   --  the caller's OS thread (`Current`); `Set_Local_Storage` writes
+   --  it. Outside any goroutine (the main task before/after Spawn) both
+   --  route to a package-body `Main_Local_Storage` global instead.
+   --
+   --  The slot is deliberately a bare `System.Address`, not a typed
+   --  field: `Gada.Core.Panic` — the first consumer — is generic over
+   --  its payload type and sits at a layer the scheduler must not know
+   --  about. The consumer allocates a typed record, stores its
+   --  `'Address` here, and hands `Set_Local_Storage` a `Finalizer` the
+   --  scheduler invokes when the goroutine is reaped, so the typed
+   --  block is reclaimed without the scheduler ever naming its type.
+   --  This generalises beyond panic: any future per-goroutine state
+   --  (recover stacks, race-detector shadow data) registers the same
+   --  way. v1 has a single slot and a single consumer; multiplexing
+   --  several consumers onto one slot is a later concern.
+   --
+   --  Why not `pragma Thread_Local_Storage`? GADA is M:N — many
+   --  goroutines share one worker (one OS thread). TLS partitions by
+   --  OS thread, but panic state must partition by *goroutine*: two
+   --  goroutines on the same worker would otherwise clobber each
+   --  other's panic stack across a Yield. The per-record slot travels
+   --  with the cothread automatically, exactly like Body_Proc does.
+   type Storage_Finalizer is access procedure (Addr : System.Address);
+
+   function Get_Local_Storage return System.Address;
+   procedure Set_Local_Storage
+     (Addr      : System.Address;
+      Finalizer : Storage_Finalizer := null);
 
    --  Block until every spawned goroutine has finished, then tear
    --  down the worker pool. After Shutdown returns, Init must be

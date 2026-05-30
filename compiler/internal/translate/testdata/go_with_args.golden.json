@@ -1,0 +1,147 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "go_with_args.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "relay",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "ping",
+              "type": {
+                "kind": "ChanType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            },
+            {
+              "kind": "Param",
+              "name": "pong",
+              "type": {
+                "kind": "ChanType",
+                "elem": {
+                  "kind": "IntType"
+                }
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "v"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "ChanRecv",
+                  "chan": {
+                    "kind": "Ident",
+                    "name": "ping"
+                  },
+                  "commaOk": false
+                }
+              ]
+            },
+            {
+              "kind": "ChanSend",
+              "chan": {
+                "kind": "Ident",
+                "name": "pong"
+              },
+              "value": {
+                "kind": "Ident",
+                "name": "v"
+              }
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "start",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "a"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "MakeChan",
+                  "elem": {
+                    "kind": "IntType"
+                  },
+                  "capacity": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "1"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "b"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "MakeChan",
+                  "elem": {
+                    "kind": "IntType"
+                  },
+                  "capacity": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "1"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "GoStmt",
+              "call": {
+                "kind": "Call",
+                "fun": {
+                  "kind": "Ident",
+                  "name": "relay"
+                },
+                "args": [
+                  {
+                    "kind": "Ident",
+                    "name": "a"
+                  },
+                  {
+                    "kind": "Ident",
+                    "name": "b"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

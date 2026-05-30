@@ -71,7 +71,18 @@ package body IO_Suite is
       Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Tmp_Path);
       Ada.Text_IO.Set_Output (File);
 
-      Op.all;
+      --  If Op raises, restore the default output *before* propagating —
+      --  otherwise Current_Output is left pointing at this (closing)
+      --  file and every later test fails with Status_Error. (PR #24
+      --  review.)
+      begin
+         Op.all;
+      exception
+         when others =>
+            Ada.Text_IO.Set_Output (Saved.all);
+            Ada.Text_IO.Close (File);
+            raise;
+      end;
 
       Ada.Text_IO.Flush (File);
       Ada.Text_IO.Set_Output (Saved.all);

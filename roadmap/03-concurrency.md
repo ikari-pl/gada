@@ -220,7 +220,7 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         *Done when:* a select with a Send case, a Recv case with `v, ok :=` binding, a Recv case with no binding (drain), and a Default case lowers to a `declare … begin … end;` block whose body is the `Case_Array` build, the `Select_One` call, and an Ada `case Idx is when 1 => …; when 2 => …; when 3 => …; when 4 => …; end case;` dispatch. Ada syntax forbids declarations directly inside a `case` branch, so each Recv case with bindings emits a per-branch nested `declare V : T := V_<i>.all; Ok : Boolean := OK_<i>.all; begin <user body> end;` block. Cases without bindings (Send, Default, drain) emit their body directly under `when N =>` with no nested declare.
         *Done 2026-05-11:* The full select lowering is one wrapping `declare … begin … end;` per select site, scoping the per-Recv-case heap-allocated out-pointers (`V_<n>_<i>`, `OK_<n>_<i>` — library-level accessibility on the runtime's `Element_Ptr` / `Boolean_Ptr` forces heap allocation, not stack `'Access`), the `Sel_Cases_<n>` Case_Array, and `Sel_Idx_<n>`. Body region: per-case aggregate assignments populate all five fields of each Case_Item (Kind, Chan, Send_V, Recv_V_Out, Recv_OK_Out, Timeout_Duration) — irrelevant fields get null / zero / 0.0 rather than being omitted, matching the runtime test pattern verbatim. `Select_One` returns the 1-based fired index; an Ada `case` statement dispatches. Recv cases with bindings wrap the user body in their own `declare V : T := V_<n>_<i>.all; …; begin … end;` because Ada `when N => …` forbids declarations directly. The drain case (`<-c` with no LHS) uses the same Recv_Op aggregate but with both pointers null — the runtime skips writeback when either is null. Single-Element_Type validation walks all non-Default cases and asserts their chan operands resolve to the same element-base name; heterogeneous selects fail with an explicit error pointing at Phase 4's type-erasure widening. Degenerate all-Default selects skip Select_One and emit the default body inline. Empty `select {}` (Go's deadlock-forever shape) lowers to `raise Program_Error with "select with no cases…";`. The `selectCounter` field is file-wide so nested selects produce unique Sel_Cases_<n> / V_<n>_<i> names; Ada would shadow legally but unique names keep gprbuild diagnostics actionable. Showcase output: `select_basic.golden.adb` for the corpus fixture (one chan-int select with all five case shapes) is 70 lines of dense, aligned-aggregate Ada that reads like the runtime spec it instantiates. Coverage gates green: runtime/ 100% (704/704), emit 95.52% (1257/1316), translate 95.57% (388/406), compiler 95.08% (2376/2499). With (d) ticked, all four sub-items of the parent "Compiler emission — select statement" item are done; parent ticked too.
 
-- [ ] **Promote `Gada.Core.Panic` Pending stack to per-goroutine storage**
+- [x] **Promote `Gada.Core.Panic` Pending stack to per-goroutine storage**
       *Why:* The body's design note
       (`runtime/src/gada-core-panic.adb:8-9`) already promises this:
       *"v1 single-threaded runtime: one global stack. Phase 3
@@ -336,6 +336,47 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
       multiplexing rationale for not using TLS, and the
       main-task-fallback mechanism (with a reference back to this
       roadmap item).
+
+      *Done 2026-05-30:* The scheduler gained an opaque
+      `Local_Storage : System.Address := System.Null_Address` field on
+      `Goroutine_Record` (plus a `Local_Storage_Final :
+      Storage_Finalizer` reclaimer pointer), the public
+      `Get_Local_Storage` / `Set_Local_Storage (Addr; Finalizer :=
+      null)` accessors, and a package-body `Main_Local_Storage` global
+      for the non-goroutine context. Accessors route on
+      `Current_Goroutine = null` exactly as specified — goroutine slot
+      vs. main fallback. The only reap path that frees a goroutine
+      which actually ran (`Worker_Task`'s `DONE` arm) now calls a new
+      `Free_Local_Storage (G)` immediately before `Free_Goroutine`; it
+      runs the registered finalizer and blanks the slot. The two
+      Spawn-failure free sites free never-run records whose slot is
+      provably `Null_Address`, so they correctly need nothing. `Gada.
+      Core.Panic`'s package-body `Pending` / `Pending_Count` globals
+      are gone; the state is now a heap-allocated `Panic_State_Type`
+      (named `Pending_Array` component to satisfy "no anonymous array
+      component", `Pending_Count`) reached through the scheduler slot
+      via `System.Address_To_Access_Conversions`. `Do_Panic` allocates
+      and registers the block on first use (`Get_State`); `Recover` /
+      `Is_Panicking` only *read* (`Peek_State` returns null when the
+      slot is empty), so a non-panicking goroutine never allocates. The
+      finalizer is taken with `'Unrestricted_Access` — the same idiom
+      the Spawn-closure path uses — to cross the RM 3.10.2(32)
+      generic-body accessibility boundary safely under the one-
+      instantiation-per-program invariant. No layering cycle: the
+      runtime is a single `gada_core.gpr` crate and `Gada.Async.
+      Scheduler` never withs `Gada.Core.Panic`, so the new `Panic` →
+      `Scheduler` with-dependency is legal Ada with a clean elaboration
+      order. `scheduler_suite` gained the two required cases — 100
+      concurrent panickers on `Workers => 4` each Recover their own Id
+      (fails on any shared/global/TLS stack), and the main-context
+      `Do_Panic` / `Recover` round-trip via `Main_Local_Storage`. The
+      v1 `panic_suite` passes unchanged (main fallback). The
+      `gada-core-panic.adb` header now documents the opaque-per-
+      goroutine layout, the multiplexing rationale against TLS, and the
+      main-task fallback. Coverage held: runtime/ 100% (729/729); two
+      pre-existing scheduler exclusions re-pointed +38 lines in
+      `tools/coverage_thresholds.toml` for the inserted code. emit
+      95.53%, translate 95.81%, compiler 95.12%.
 
 - [ ] **`ping_pong` example**
 

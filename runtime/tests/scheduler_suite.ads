@@ -52,5 +52,9 @@ package Scheduler_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Goroutine_Body_That_Raises_Is_Reaped_Cleanly
      (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Panic_Isolation_Across_Goroutines
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Panic_Main_Fallback
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Scheduler_Suite;

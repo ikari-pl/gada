@@ -97,6 +97,7 @@ with Ada.Unchecked_Deallocation;
 with System.Multiprocessors;
 
 with Gada.Async.Context;
+use type System.Address;
 
 package body Gada.Async.Scheduler is
 
@@ -156,6 +157,15 @@ package body Gada.Async.Scheduler is
       --  needed. Set to null when the goroutine is not in any list.
       --  Reusable across yields because a goroutine can only be in
       --  *one* of {Local, Inbox(I), Items, executing} at a time.
+      Local_Storage       : System.Address := System.Null_Address;
+      Local_Storage_Final : Storage_Finalizer := null;
+      --  Opaque per-goroutine slot + its reclaimer (see the spec's
+      --  "Per-goroutine local storage" section). Set/read only through
+      --  Set_Local_Storage / Get_Local_Storage, which operate on the
+      --  *currently running* goroutine — so these two fields, like
+      --  Local/Next, are touched on the goroutine's own OS thread and
+      --  need no lock. The finalizer is invoked once, at reap, by
+      --  Free_Local_Storage just before the record is deallocated.
    end record;
 
    procedure Free_Goroutine is
@@ -166,6 +176,33 @@ package body Gada.Async.Scheduler is
    --  header.
    Current_Goroutine : Goroutine_Access := null;
    pragma Thread_Local_Storage (Current_Goroutine);
+
+   --  Main-task fallback for the local-storage slot (see spec). Used
+   --  by Get/Set_Local_Storage whenever Current_Goroutine = null —
+   --  i.e. the main Ada task before the first Spawn or after Shutdown,
+   --  and any non-worker task. That context is genuinely single-
+   --  threaded for the runtime's purposes, so a plain global (no TLS,
+   --  no lock) is correct: nothing in GADA races with itself there.
+   --  No finalizer is recorded here: main-context state lives for the
+   --  whole program, so the one block leaks at exit and the OS
+   --  reclaims it — there is no reap point to hang a reclaimer on.
+   Main_Local_Storage : System.Address := System.Null_Address;
+
+   --  Run the finalizer (if any) on a goroutine's local-storage slot,
+   --  then blank it. Called once per goroutine, immediately before
+   --  Free_Goroutine, from every reap path. A goroutine that never
+   --  touched local storage has Local_Storage = Null_Address and this
+   --  is a no-op.
+   procedure Free_Local_Storage (G : Goroutine_Access);
+   procedure Free_Local_Storage (G : Goroutine_Access) is
+   begin
+      if G.Local_Storage /= System.Null_Address
+        and then G.Local_Storage_Final /= null
+      then
+         G.Local_Storage_Final (G.Local_Storage);
+         G.Local_Storage := System.Null_Address;
+      end if;
+   end Free_Local_Storage;
 
    --  ## Run queue
    --
@@ -482,6 +519,7 @@ package body Gada.Async.Scheduler is
                --  exposes (item 4).
                null;
             when DONE =>
+               Free_Local_Storage (G);
                Gada.Async.Context.Free (G.Ctx);
                Free_Goroutine (G);
                Run_Queue.Reap;
@@ -603,6 +641,34 @@ package body Gada.Async.Scheduler is
       --  no-ops on No_Goroutine.
       return (Ref => Current_Goroutine);
    end Current;
+
+   function Get_Local_Storage return System.Address is
+   begin
+      --  Same TLS lookup as Current. In a goroutine, hand back that
+      --  goroutine's slot; outside one (main task, non-worker task)
+      --  fall back to the single main-context global.
+      if Current_Goroutine = null then
+         return Main_Local_Storage;
+      else
+         return Current_Goroutine.Local_Storage;
+      end if;
+   end Get_Local_Storage;
+
+   procedure Set_Local_Storage
+     (Addr      : System.Address;
+      Finalizer : Storage_Finalizer := null)
+   is
+   begin
+      if Current_Goroutine = null then
+         --  Main context: record only the address. Main-context state
+         --  is never reaped (see Main_Local_Storage), so the finalizer
+         --  has no call site and is intentionally dropped here.
+         Main_Local_Storage := Addr;
+      else
+         Current_Goroutine.Local_Storage       := Addr;
+         Current_Goroutine.Local_Storage_Final := Finalizer;
+      end if;
+   end Set_Local_Storage;
 
    procedure Yield is
       G : constant Goroutine_Access := Current_Goroutine;

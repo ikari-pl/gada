@@ -278,15 +278,44 @@ func parseOtoolRpaths(otoolOutput string) (map[string]int, error) {
 	return counts, nil
 }
 
-// runGprbuild invokes `gprbuild -P <gprPath>`, streaming stdout/stderr
-// to the supplied writers. It is a package-level variable so tests can
-// substitute a stub when gprbuild is not installed; production code
-// always uses the real exec call below.
+// gprArchArg maps the host Go architecture to the `ARCH` scenario
+// value gada_core.gpr uses to pick libco's per-arch context-switch
+// backend (amd64.c vs aarch64.c — see ADR-0007 §5). It returns
+// ("", false) for architectures the runtime does not yet ship a libco
+// backend for, in which case we leave the project's own default in
+// place rather than force an invalid value.
+//
+// This MUST be passed to gprbuild: gada_core.gpr declares
+// `Arch : Arch_Type := external ("ARCH", "amd64")`, defaulting to
+// amd64. The runtime Makefile exports ARCH from `uname -m` for its own
+// builds, but the `gada build` pipeline has no such environment, so
+// without an explicit `-XARCH` every goroutine binary on an arm64 host
+// silently links the amd64 co_swap blob and dies with
+// EXC_BAD_INSTRUCTION the first time a goroutine context-switches.
+func gprArchArg() (string, bool) {
+	switch runtime.GOARCH {
+	case "amd64":
+		return "amd64", true
+	case "arm64":
+		return "aarch64", true
+	default:
+		return "", false
+	}
+}
+
+// runGprbuild invokes `gprbuild -P <gprPath> [-XARCH=<arch>]`, streaming
+// stdout/stderr to the supplied writers. It is a package-level variable
+// so tests can substitute a stub when gprbuild is not installed;
+// production code always uses the real exec call below.
 var runGprbuild = func(gprPath string, stdout, stderr io.Writer) error {
 	if _, err := exec.LookPath("gprbuild"); err != nil {
 		return fmt.Errorf("gprbuild not found on PATH: %w", err)
 	}
-	cmd := exec.Command("gprbuild", "-P", gprPath)
+	args := []string{"-P", gprPath}
+	if arch, ok := gprArchArg(); ok {
+		args = append(args, "-XARCH="+arch)
+	}
+	cmd := exec.Command("gprbuild", args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return cmd.Run()

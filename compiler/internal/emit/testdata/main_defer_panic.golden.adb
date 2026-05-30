@@ -11,7 +11,8 @@ procedure Main is
    procedure Rescue is
    begin
       if Panic_Of_Integer.Recover /= 0 then
-         Println ("rescued");
+         Print ("rescued");
+         New_Line;
       end if;
    exception
       when Panic_Of_Integer.Panicking =>

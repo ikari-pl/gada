@@ -126,7 +126,7 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
       *Done when:* select with N cases (send/recv/default/timeout) picks a ready case fairly; pseudo-random tie-breaking matches Go's behavior; coverage 100%.
       *Done 2026-05-04:* Generic `Gada.Async.Selector` over `Element_Type` + a single `Channels.Bounded` instantiation. **API**: `Case_Item` flat record carrying Op_Kind ∈ {Send_Op, Recv_Op, Default_Op, Timeout_Op}, channel handle, send value, named `Element_Ptr`/`Boolean_Ptr` out-pointers (heap-allocated by callers — Ada accessibility rules force library-level access types for record components in package specs; tests use `new Integer'(0)` / `new Boolean'(False)`), and a Duration for Timeout_Op. `Select_One : Case_Array → Positive` returns the 1-based index of the case that fired. **Algorithm**: polling loop with Fisher-Yates shuffle of the active case-index array each iteration (Ada.Numerics.Float_Random reset per Select_One call so different selects on different goroutines see different orders). Each pass: try active cases in shuffled order via Bnd.Try_Send / Try_Receive; first ready wins. After a pass with no winner: fire Default_Op if present, else fire the earliest-deadline Timeout_Op if its Clock has passed, else `delay 0.001` (Poll_Interval) and retry. **Pseudo-random fairness gate**: `Test_Random_Tiebreak_Across_Many_Trials` runs 200 trials with two simultaneously-ready Recv cases and asserts each wins ≥ 25% of the time — picks up "always pick case 1 / always case 2" regressions. **Tests**: 11 routines in Selector_Suite (Default_Fires_When_Nothing_Ready, Recv_Wins_When_Buffer_Has_Value, Send_Wins_When_Buffer_Has_Slot, Recv_From_Closed_Channel_Yields_OK_False, Timeout_Fires_When_Nothing_Else_Ready, Random_Tiebreak_Across_Many_Trials, Empty_Case_Array_Raises_Selector_Error, Two_Defaults_Raises_Selector_Error, Recv_With_Null_Output_Pointers_Discards, Blocks_Until_Sibling_Sends, More_Than_Max_Cases_Raises). The blocks-until-sibling-sends test uses Workers => 2 and a sibling goroutine that sends after a small interval; gates the Poll_Interval delay path. **v1 limitations** documented in the spec: single Element_Type per select (Phase 4 will add type-erasure for heterogeneous channels); Bounded-only (Unbounded sends would always be ready, degenerating fairness — Phase 4 will adjust); polling-with-yield rather than per-case parked Wait_Slot registration (Phase 4 will lift to the Go-runtime model). **Channels.Bounded gains** (same commit, behind the same generic): `Try_Send` returns `Sent => True/False`, raises `Channel_Closed` on a closed channel, no parking; `Try_Receive` returns `(Got, OK, V)` tuples — `Got=True/OK=True` on buffered hit, `Got=True/OK=False` on closed-empty (zero-value-with-ok-false signal), `Got=False` on empty-open (no parking). Uses `V : in out Element_Type` so the closed-empty path leaves V at the call-site value (same Ada-generic-default constraint that Channels.Unbounded.Receive carries). **Coverage** 100% on `gada-async-selector.adb` after excluding the Float_Random clamp + dead Default/Timeout case-arm in Try_One_Case + structural loop / declare-block terminators (lines 76, 81, 127-129, 256). Documented in runtime/COVERAGE.md. Channels.Bounded gains its own Try_Send / Try_Receive surface tests (Test_Try_Send_And_Try_Receive_Surface). **All 113 tests pass; coverage gate 100%.**
 
-- [ ] **Compiler emission — `go` statement**
+- [x] **Compiler emission — `go` statement**
 
   - [x] **(a) No-arg form `go f()` and main-side scheduler lifecycle**
         *Files:* `compiler/internal/ir/ir.go` (GoStmt sum-type variant), `compiler/internal/translate/translate.go` (`transGo`), `compiler/internal/emit/emit.go` (closure hoist + inline Spawn + Init/Shutdown wrapping), `compiler/internal/translate/testdata/go_simple.{go,golden.json}`, `compiler/internal/translate/testdata/go_main.{go,golden.json}`, `compiler/internal/emit/testdata/go_{simple,main}.golden.adb`.
@@ -134,10 +134,11 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         *Done when:* `go worker()` in any function body emits one nested `procedure Go_Closure_<N>` declaration plus an inline `Unused_G := Gada.Async.Scheduler.Spawn (Go_Closure_<N>'Unrestricted_Access);`. `package main` programs that contain any go-stmt also auto-emit `Gada.Async.Scheduler.Init;` at body entry and `Gada.Async.Scheduler.Shutdown;` on the normal exit path. Non-empty argument lists are rejected at emit time pointing at sub-item (b) — no silent semantic divergence from Go's "args evaluated at spawn site" rule.
         *Done 2026-05-05:* IR side adds `*ir.GoStmt` (mirroring `*ir.DeferStmt`) with round-trip JSON encoding + sealed-interface tests + propagated-decode-error coverage; translate side adds `transGo` reusing `tryBuiltinCall` + `transCall`; emit side adds `collectGoStmts` (depth-first preorder matching `emitStmt` traversal), `emitGoClosuresAndDecl` (one nested `procedure Go_Closure_<N>` per source-order go-stmt + a single shared `Unused_G : Gada.Async.Scheduler.Goroutine_Id` slot), `emitGoClosure` (closure body dispatches on `*ir.Call` / `*ir.BuiltinCall`), and an inline `*ir.GoStmt` case in `emitStmt` keyed by a file-wide `goIndex map[*ir.GoStmt]int` populated once by the `walkStmt` pre-pass (post-PR-#8 review fix in 9166a3a; the original draft used a per-subprogram counter that would corrupt outer-subprogram numbering if a future function-literal pass nested `go`-stmts inside an enclosing closure). `emitMainProcedure` wraps the body with `Gada.Async.Scheduler.Init;` … `Gada.Async.Scheduler.Shutdown;` whenever the file contains any go-stmt (`e.needsAsyncScheduler`), not just when `main` itself does — so a `main()` calling a helper that internally spawns gets the same wrap. `go_main_via_helper` corpus fixture pins that case. Argument capture is rejected at emit time (`checkGoArgsEmpty`) with a message pointing at sub-item (b) — sub-item (a) ships only the safe-by-construction subset. Two corpus fixtures (`go_simple` package-body, `go_main` main-procedure-with-Init/Shutdown) plus three error-path tests (positional-args on `*ir.Call`, positional-args on `*ir.BuiltinCall`, unexpected statement under `go`). All gates green: runtime 100% (704/704), emit 96.4%, translate 96.88%, compiler 95.76%.
 
-  - [ ] **(b) Argument capture — `go f(x, y)` snapshot semantics**
+  - [x] **(b) Argument capture — `go f(x, y)` snapshot semantics**
         *Files:* `runtime/src/gada-async-scheduler.{ads,adb}` (Spawn API extended with a context payload), `compiler/internal/emit/emit.go`, golden tests for spawn-with-args.
-        *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/go_args`
+        *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/go_with_args`
         *Done when:* `go f(x, y)` emits Ada that snapshots `x` and `y` at the spawn site (matching Go's "args evaluated at the call to `go`, not when the goroutine starts") and passes them into the goroutine via a per-spawn context. Mutations to `x` and `y` after the spawn must not be observed by the spawned goroutine.
+        *Done 2026-05-30:* Implemented as a single capability shared with the ping_pong sub-item (a) below — both roadmap entries describe the same `go f(x, y)` argument-capture feature, so they were built together against the canonical `go_with_args` corpus fixture (the verify command above is retargeted from the placeholder `go_args` to it). The runtime `Spawn` grew a `(Body; Closure : System.Address)` overload plus a public `Closure (G) return System.Address` getter (opaque per-spawn slot on `Goroutine_Record`, distinct from the panic-promotion `Local_Storage` slot); emit generates, per call-site, a `Go_Closure_<n>` record (one component per callee parameter, named + typed from the callee's signature via the new file-wide `funcByName` map), the two `Unchecked_Conversion`s + `Unchecked_Deallocation` bridging it to the address payload, an `Allocate_Closure_<n>` that snapshots the args at the spawn site, and a `Go_Worker_<n>` that reads the closure via `Closure (Current)`, copies each field into a like-named local, frees the heap block (no per-spawn leak), and calls the user function. `scheduler_suite` gained a 100-spawn closure round-trip case (distinct `(A, B)` payloads, each worker recovers its own — no cross-contamination) and a `Closure (No_Goroutine) = Null_Address` case. Verified end-to-end: a two-relay `go seed(a)` / `go relay(a, b)` program transpiles, builds, and runs cleanly. **Discovery:** doing so surfaced that *no* generated goroutine program had ever actually been executed (the go-stmt corpus is text-only) — `gada build` never set the libco `ARCH` scenario var, so every arm64 goroutine binary linked the amd64 `co_swap` blob and died with `EXC_BAD_INSTRUCTION` on the first context switch. Fixed in `compiler/cmd/gada/build.go` by deriving the host arch (`runtime.GOARCH` → `-XARCH=amd64|aarch64`), mirroring what `runtime/Makefile` already did for the test build. Gates green: runtime 100% (706/706), emit 95.61%, translate 95.81%, compiler 95.00%.
 
 - [x] **Compiler emission — channel operations**
 
@@ -220,7 +221,7 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         *Done when:* a select with a Send case, a Recv case with `v, ok :=` binding, a Recv case with no binding (drain), and a Default case lowers to a `declare … begin … end;` block whose body is the `Case_Array` build, the `Select_One` call, and an Ada `case Idx is when 1 => …; when 2 => …; when 3 => …; when 4 => …; end case;` dispatch. Ada syntax forbids declarations directly inside a `case` branch, so each Recv case with bindings emits a per-branch nested `declare V : T := V_<i>.all; Ok : Boolean := OK_<i>.all; begin <user body> end;` block. Cases without bindings (Send, Default, drain) emit their body directly under `when N =>` with no nested declare.
         *Done 2026-05-11:* The full select lowering is one wrapping `declare … begin … end;` per select site, scoping the per-Recv-case heap-allocated out-pointers (`V_<n>_<i>`, `OK_<n>_<i>` — library-level accessibility on the runtime's `Element_Ptr` / `Boolean_Ptr` forces heap allocation, not stack `'Access`), the `Sel_Cases_<n>` Case_Array, and `Sel_Idx_<n>`. Body region: per-case aggregate assignments populate all five fields of each Case_Item (Kind, Chan, Send_V, Recv_V_Out, Recv_OK_Out, Timeout_Duration) — irrelevant fields get null / zero / 0.0 rather than being omitted, matching the runtime test pattern verbatim. `Select_One` returns the 1-based fired index; an Ada `case` statement dispatches. Recv cases with bindings wrap the user body in their own `declare V : T := V_<n>_<i>.all; …; begin … end;` because Ada `when N => …` forbids declarations directly. The drain case (`<-c` with no LHS) uses the same Recv_Op aggregate but with both pointers null — the runtime skips writeback when either is null. Single-Element_Type validation walks all non-Default cases and asserts their chan operands resolve to the same element-base name; heterogeneous selects fail with an explicit error pointing at Phase 4's type-erasure widening. Degenerate all-Default selects skip Select_One and emit the default body inline. Empty `select {}` (Go's deadlock-forever shape) lowers to `raise Program_Error with "select with no cases…";`. The `selectCounter` field is file-wide so nested selects produce unique Sel_Cases_<n> / V_<n>_<i> names; Ada would shadow legally but unique names keep gprbuild diagnostics actionable. Showcase output: `select_basic.golden.adb` for the corpus fixture (one chan-int select with all five case shapes) is 70 lines of dense, aligned-aggregate Ada that reads like the runtime spec it instantiates. Coverage gates green: runtime/ 100% (704/704), emit 95.52% (1257/1316), translate 95.57% (388/406), compiler 95.08% (2376/2499). With (d) ticked, all four sub-items of the parent "Compiler emission — select statement" item are done; parent ticked too.
 
-- [ ] **Promote `Gada.Core.Panic` Pending stack to per-goroutine storage**
+- [x] **Promote `Gada.Core.Panic` Pending stack to per-goroutine storage**
       *Why:* The body's design note
       (`runtime/src/gada-core-panic.adb:8-9`) already promises this:
       *"v1 single-threaded runtime: one global stack. Phase 3
@@ -337,6 +338,47 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
       main-task-fallback mechanism (with a reference back to this
       roadmap item).
 
+      *Done 2026-05-30:* The scheduler gained an opaque
+      `Local_Storage : System.Address := System.Null_Address` field on
+      `Goroutine_Record` (plus a `Local_Storage_Final :
+      Storage_Finalizer` reclaimer pointer), the public
+      `Get_Local_Storage` / `Set_Local_Storage (Addr; Finalizer :=
+      null)` accessors, and a package-body `Main_Local_Storage` global
+      for the non-goroutine context. Accessors route on
+      `Current_Goroutine = null` exactly as specified — goroutine slot
+      vs. main fallback. The only reap path that frees a goroutine
+      which actually ran (`Worker_Task`'s `DONE` arm) now calls a new
+      `Free_Local_Storage (G)` immediately before `Free_Goroutine`; it
+      runs the registered finalizer and blanks the slot. The two
+      Spawn-failure free sites free never-run records whose slot is
+      provably `Null_Address`, so they correctly need nothing. `Gada.
+      Core.Panic`'s package-body `Pending` / `Pending_Count` globals
+      are gone; the state is now a heap-allocated `Panic_State_Type`
+      (named `Pending_Array` component to satisfy "no anonymous array
+      component", `Pending_Count`) reached through the scheduler slot
+      via `System.Address_To_Access_Conversions`. `Do_Panic` allocates
+      and registers the block on first use (`Get_State`); `Recover` /
+      `Is_Panicking` only *read* (`Peek_State` returns null when the
+      slot is empty), so a non-panicking goroutine never allocates. The
+      finalizer is taken with `'Unrestricted_Access` — the same idiom
+      the Spawn-closure path uses — to cross the RM 3.10.2(32)
+      generic-body accessibility boundary safely under the one-
+      instantiation-per-program invariant. No layering cycle: the
+      runtime is a single `gada_core.gpr` crate and `Gada.Async.
+      Scheduler` never withs `Gada.Core.Panic`, so the new `Panic` →
+      `Scheduler` with-dependency is legal Ada with a clean elaboration
+      order. `scheduler_suite` gained the two required cases — 100
+      concurrent panickers on `Workers => 4` each Recover their own Id
+      (fails on any shared/global/TLS stack), and the main-context
+      `Do_Panic` / `Recover` round-trip via `Main_Local_Storage`. The
+      v1 `panic_suite` passes unchanged (main fallback). The
+      `gada-core-panic.adb` header now documents the opaque-per-
+      goroutine layout, the multiplexing rationale against TLS, and the
+      main-task fallback. Coverage held: runtime/ 100% (729/729); two
+      pre-existing scheduler exclusions re-pointed +38 lines in
+      `tools/coverage_thresholds.toml` for the inserted code. emit
+      95.53%, translate 95.81%, compiler 95.12%.
+
 - [ ] **`ping_pong` example**
 
   Decomposition mirrors channel-emit and select-emit: each step is a
@@ -376,7 +418,17 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
   (`compiler/internal/emit/emit.go`) explicitly points at this
   roadmap file as the place where the gap is tracked.
 
-  - [ ] **(a) Compiler-emit: `go fn(x, y, …)` argument capture**
+  - [x] **(a) Compiler-emit: `go fn(x, y, …)` argument capture**
+        *Done 2026-05-30:* Same capability as the `go`-statement
+        sub-item (b) above — implemented once, shared. See that
+        item's Done note for the full design (Spawn closure
+        overload + `Closure` getter, per-call-site `Go_Closure_<n>`
+        / `Allocate_Closure_<n>` / `Go_Worker_<n>` emission, the
+        `go_with_args` corpus fixture, the 100-spawn closure
+        round-trip AUnit case, and the `gada build` libco-`ARCH`
+        fix that finally let a generated goroutine program run).
+        `checkGoArgsEmpty` is gone; the with-args path is selected
+        by `goCallArgCount(g) > 0`.
         *Why:* Today `emit/emit.go:checkGoArgsEmpty` rejects any
         `go fn(…)` with a non-empty arg list. Ping-pong's two relay
         goroutines must receive their chans (and a `done` chan for
@@ -429,7 +481,34 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         and assert the per-spawn args land at the expected
         positions inside each worker.
 
-  - [ ] **(b) Compiler-emit: multi-arg `fmt.Println` with int rendering**
+  - [x] **(b) Compiler-emit: multi-arg `fmt.Println` with int rendering**
+        *Done 2026-05-30:* `emitFmtPrintln` lowers `fmt.Println(a, b,
+        …)` to a run of `Gada.Core.IO.Print` calls with a `Print (" ")`
+        between consecutive operands and a terminating `New_Line` —
+        Go's variadic-Println shape. Ada overload resolution picks
+        `Print (String)` vs `Print (Integer)` per operand, so emit
+        stays type-agnostic (unsupported scalar types surface as a
+        gprbuild overload error; Float/Bool faithful rendering is
+        Phase 4). The single-string `fmt.Println(s)` is just the
+        one-operand subset, so the five `Println`-bearing goldens
+        (hello, combined, …) were regenerated to `Print (s); New_Line;`
+        and `emitSelector`'s now-dead `fmt.Println` special case
+        removed. Runtime: `Gada.Core.IO` gained `Print (String)`,
+        `Print (Integer)`, and `New_Line`, with `Println` re-expressed
+        as `Print; New_Line`. **Correction to the plan above:** GNAT's
+        `N'Image` (the Ada 2022 object form) does *not* omit the
+        leading sign-position blank — it is identical to
+        `Integer'Image` (verified: both render ` 1000000`). So
+        `Print (Integer)` trims it with `Ada.Strings.Fixed.Trim (…,
+        Left)`; negatives keep their `-`. io_suite gained four cases
+        (string adjacency, the int trim, a negative, a bare New_Line),
+        capturing through New_Line-terminated sequences because
+        Ada.Text_IO appends a terminator to an unterminated line on
+        close. Verified end-to-end: the `println_mixed_args` program
+        transpiles, builds, and prints byte-for-byte what `go run`
+        does (`123` / `hi` / `iterations: 7` / `7 items` / `1 2`).
+        Gates green: runtime 100% (710/710), emit 95.56%, translate
+        95.81%, compiler 95.15%.
         *Why:* The exit-criterion line is
         `fmt.Println("iterations:", n)` for `n = 1000000`,
         producing `iterations: 1000000\n`. Current emit handles

@@ -9,13 +9,16 @@ procedure Main is
          X := X + (I * 2);
       end loop;
       if X > 100 then
-         Println ("big");
+         Print ("big");
+         New_Line;
          return -X;
       elsif X < -10 then
-         Println ("small");
+         Print ("small");
+         New_Line;
          return X;
       end if;
-      Println ("ok");
+      Print ("ok");
+      New_Line;
       return X;
    end Demo;
 

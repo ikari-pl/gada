@@ -97,7 +97,7 @@ reason = "Trampoline C-boundary exception arm — see runtime/COVERAGE.md"
 # (gada-async-scheduler).
 [[exclude]]
 file = "runtime/src/gada-async-scheduler.adb"
-lines = [547, 548, 549, 550, 551, 552, 553]
+lines = [592, 593, 594, 595, 596, 597, 598]
 reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 
 # Spawn's `Make` failure leak guard. Same fault-injection prerequisite
@@ -109,7 +109,7 @@ reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 # (gada-async-scheduler).
 [[exclude]]
 file = "runtime/src/gada-async-scheduler.adb"
-lines = [587, 588, 589]
+lines = [643, 644, 645]
 reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"
 
 # Park_Sender's race-recheck arm: between the caller's

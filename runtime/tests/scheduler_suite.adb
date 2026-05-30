@@ -20,9 +20,13 @@
 pragma Warnings (Off, "use of an anonymous access type allocator");
 
 with Ada.Task_Identification;
+with Ada.Unchecked_Conversion;
+with Ada.Unchecked_Deallocation;
 with AUnit.Assertions; use AUnit.Assertions;
 
 with Gada.Async.Scheduler; use Gada.Async.Scheduler;
+with Gada.Core.Panic;
+with System; use type System.Address;
 
 package body Scheduler_Suite is
 
@@ -38,6 +42,8 @@ package body Scheduler_Suite is
    procedure Self_Test_Unpark_Of_Never_Run;
    procedure Syscall_Body;
    procedure Body_That_Raises;
+   procedure Panic_Isolation_Body;
+   procedure Closure_Worker;
 
    procedure Increment_Once is
    begin
@@ -125,6 +131,162 @@ package body Scheduler_Suite is
    begin
       Worker_Recorder.Note (Ada.Task_Identification.Current_Task);
    end Record_Current_Worker;
+
+   --  ## Per-goroutine panic-storage observation surface
+   --
+   --  Int_Panic is the per-program panic instantiation (Integer
+   --  payload, Default = 0). Phase 3 promotes Gada.Core.Panic's
+   --  pending stack from a process-global to per-goroutine storage
+   --  reached through the scheduler's opaque Local_Storage slot;
+   --  Panic_Isolation_Body is the test that the promotion actually
+   --  isolates concurrent panickers.
+   --
+   --  Each goroutine: dispense a unique Id, Do_Panic (Id) into its own
+   --  state, Yield (so siblings on the same worker push their own Ids
+   --  in between), then Recover and assert it got *its own* Id back. A
+   --  process-global stack — or a pragma Thread_Local_Storage slot
+   --  shared by every goroutine multiplexed onto one worker — would
+   --  hand back a sibling's value here; per-goroutine storage cannot.
+   --  Bodies are parameterless `access procedure` (no closure), so the
+   --  Id is dispensed from the protected Panic_Ledger at body entry.
+   Panic_Goroutines : constant := 100;
+   type Result_Flags is array (1 .. Panic_Goroutines) of Boolean;
+
+   package Int_Panic is new Gada.Core.Panic
+     (Payload_Type => Integer, Default => 0);
+
+   protected Panic_Ledger is
+      procedure Reset;
+      procedure Next_Id (Id : out Positive);
+      procedure Mark (Id : Positive; Isolated : Boolean);
+      function  Marked return Natural;
+      function  All_Isolated return Boolean;
+   private
+      Dispensed : Natural := 0;
+      Marks     : Natural := 0;
+      Results   : Result_Flags := [others => False];
+   end Panic_Ledger;
+
+   protected body Panic_Ledger is
+
+      procedure Reset is
+      begin
+         Dispensed := 0;
+         Marks     := 0;
+         Results   := [others => False];
+      end Reset;
+
+      procedure Next_Id (Id : out Positive) is
+      begin
+         Dispensed := @ + 1;
+         Id        := Dispensed;
+      end Next_Id;
+
+      procedure Mark (Id : Positive; Isolated : Boolean) is
+      begin
+         Results (Id) := Isolated;
+         Marks        := @ + 1;
+      end Mark;
+
+      function Marked return Natural is (Marks);
+
+      function All_Isolated return Boolean is
+        (for all R of Results => R);
+
+   end Panic_Ledger;
+
+   procedure Panic_Isolation_Body is
+      My_Id : Positive;
+      Got   : Integer;
+   begin
+      Panic_Ledger.Next_Id (My_Id);
+      --  Push My_Id onto this goroutine's own pending-panic state.
+      --  Catch Panicking locally so the trampoline sees a normal
+      --  return (matches compiler-emit's per-function catch-all).
+      begin
+         Int_Panic.Do_Panic (My_Id);
+      exception
+         when Int_Panic.Panicking =>
+            null;
+      end;
+      --  Hand the worker to a sibling, which will push *its* Id.
+      Gada.Async.Scheduler.Yield;
+      --  Resumed: our state must still hold My_Id, untouched by the
+      --  siblings that ran on this worker while we were yielded.
+      Got := Int_Panic.Recover;
+      Panic_Ledger.Mark (My_Id, Got = My_Id);
+   end Panic_Isolation_Body;
+
+   --  ## Spawn-closure round-trip surface
+   --
+   --  Mirrors, by hand, exactly what the compiler emits for `go
+   --  relay(x, y)`: a per-spawn heap record carrying the argument
+   --  snapshot, passed through Spawn's opaque Closure parameter and
+   --  read back inside the goroutine via Closure (Current). Each of the
+   --  100 spawns gets a distinct (A, B) pair with the invariant
+   --  B = A * 1000; the worker asserts its own pair still satisfies the
+   --  invariant (so closures did not cross-contaminate) and records the
+   --  result keyed by A. Bodies are parameterless `access procedure`,
+   --  so the per-spawn data travels *only* through the closure pointer —
+   --  which is the property under test.
+   Closure_Goroutines : constant := 100;
+   type Pair_Flags is array (1 .. Closure_Goroutines) of Boolean;
+
+   type Arg_Pair is record
+      A : Integer;
+      B : Integer;
+   end record;
+   type Arg_Pair_Access is access Arg_Pair;
+
+   function To_Arg_Pair is
+     new Ada.Unchecked_Conversion (System.Address, Arg_Pair_Access);
+   function To_Address is
+     new Ada.Unchecked_Conversion (Arg_Pair_Access, System.Address);
+   procedure Free_Arg_Pair is
+     new Ada.Unchecked_Deallocation (Arg_Pair, Arg_Pair_Access);
+
+   protected Closure_Ledger is
+      procedure Reset;
+      procedure Mark (Id : Positive; Correct : Boolean);
+      function  Marked return Natural;
+      function  All_Correct return Boolean;
+   private
+      Marks   : Natural    := 0;
+      Results : Pair_Flags := [others => False];
+   end Closure_Ledger;
+
+   protected body Closure_Ledger is
+
+      procedure Reset is
+      begin
+         Marks   := 0;
+         Results := [others => False];
+      end Reset;
+
+      procedure Mark (Id : Positive; Correct : Boolean) is
+      begin
+         Results (Id) := Correct;
+         Marks        := @ + 1;
+      end Mark;
+
+      function Marked return Natural is (Marks);
+
+      function All_Correct return Boolean is (for all R of Results => R);
+
+   end Closure_Ledger;
+
+   procedure Closure_Worker is
+      C : Arg_Pair_Access :=
+        To_Arg_Pair (Gada.Async.Scheduler.Closure (Current));
+      A : constant Integer := C.A;
+      B : constant Integer := C.B;
+   begin
+      --  Record snapshot is copied into A/B above; the heap block is
+      --  dead now, so free it (no per-spawn leak — same shape the
+      --  generated Go_Worker uses).
+      Free_Arg_Pair (C);
+      Closure_Ledger.Mark (A, B = A * 1000);
+   end Closure_Worker;
 
    --  ## Park_Tracker — sequence buffer for the Park/Unpark test
    --
@@ -305,6 +467,25 @@ package body Scheduler_Suite is
          "A goroutine whose body raises is reaped without taking the "
          & "worker down — Shutdown returns and a follow-up goroutine "
          & "still runs (covers Goroutine_Trampoline's exception arm)");
+      Register_Routine
+        (T, Test_Panic_Isolation_Across_Goroutines'Access,
+         "100 concurrent panicking goroutines on Workers => 4 each "
+         & "Recover their own panic value — panic state is per-"
+         & "goroutine, not a shared/global or TLS stack");
+      Register_Routine
+        (T, Test_Panic_Main_Fallback'Access,
+         "Do_Panic / Recover from the main task (no current goroutine) "
+         & "route via Main_Local_Storage — keeps the v1 single-"
+         & "threaded panic path working post-promotion");
+      Register_Routine
+        (T, Test_Closure_Roundtrip_Across_Goroutines'Access,
+         "100 spawns with distinct (A, B) closure payloads each read "
+         & "back their own pair via Closure (Current) — Spawn's opaque "
+         & "payload round-trips without cross-contamination");
+      Register_Routine
+        (T, Test_Closure_Of_No_Goroutine_Is_Null'Access,
+         "Closure (No_Goroutine) returns Null_Address — generated "
+         & "Go_Worker code can call Closure (Current) unconditionally");
    end Register_Tests;
 
    procedure Test_Init_Shutdown_Empty
@@ -742,5 +923,111 @@ package body Scheduler_Suite is
               & " (expected 1) — trampoline likely killed the worker "
               & "rather than reaping the raised goroutine cleanly");
    end Test_Goroutine_Body_That_Raises_Is_Reaped_Cleanly;
+
+   procedure Test_Panic_Isolation_Across_Goroutines
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Unused_G : Goroutine_Id;
+   begin
+      --  The promotion's headline property: panic state partitions by
+      --  *goroutine*, not by OS thread or process. 100 goroutines on a
+      --  4-worker pool each Do_Panic their own Id, Yield (interleaving
+      --  sibling pushes on the shared worker), then Recover; every one
+      --  must get its own Id back. A process-global stack, or a TLS
+      --  slot shared across the goroutines multiplexed onto a worker,
+      --  fails here — that is exactly the multiplexing hazard the
+      --  promotion closes.
+      Panic_Ledger.Reset;
+      Shutdown;
+      Init (Workers => 4);
+      for K in 1 .. Panic_Goroutines loop
+         Unused_G := Spawn (Panic_Isolation_Body'Access);
+      end loop;
+      Shutdown;
+      Assert (Panic_Ledger.Marked = Panic_Goroutines,
+              "Expected all" & Panic_Goroutines'Image
+              & " panicking goroutines to run and record, got"
+              & Panic_Ledger.Marked'Image);
+      Assert (Panic_Ledger.All_Isolated,
+              "Some goroutine's Recover returned another goroutine's "
+              & "panic value — panic state is NOT per-goroutine "
+              & "(shared/global or TLS stack regression)");
+   end Test_Panic_Isolation_Across_Goroutines;
+
+   procedure Test_Panic_Main_Fallback
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Got    : Integer := -1;
+      Caught : Boolean := False;
+   begin
+      --  Outside any goroutine, Get/Set_Local_Storage route to the
+      --  scheduler's Main_Local_Storage global, and Do_Panic / Recover
+      --  must work there exactly as in the v1 single-threaded runtime
+      --  (this is what keeps panic_suite green post-promotion).
+      Assert (Current = No_Goroutine,
+              "precondition: this test runs outside any goroutine");
+      begin
+         Int_Panic.Do_Panic (42);
+      exception
+         when Int_Panic.Panicking =>
+            Caught := True;
+            Got := Int_Panic.Recover;
+      end;
+      Assert (Caught, "Panicking should be raised from main context");
+      Assert (Got = 42,
+              "main-context Do_Panic/Recover must round-trip via "
+              & "Main_Local_Storage, got" & Got'Image);
+      Assert (not Int_Panic.Is_Panicking,
+              "panic state must be cleared after main-context Recover");
+      --  Do_Panic allocated the state behind the main fallback slot,
+      --  so the slot the scheduler reports for main context is now set.
+      Assert (Get_Local_Storage /= System.Null_Address,
+              "main-context Do_Panic should have populated "
+              & "Main_Local_Storage");
+   end Test_Panic_Main_Fallback;
+
+   procedure Test_Closure_Roundtrip_Across_Goroutines
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Unused_G : Goroutine_Id;
+   begin
+      --  Spawn 100 goroutines, each carrying a distinct heap-allocated
+      --  (A => K, B => K * 1000) closure. Every worker reads its own
+      --  payload back through Closure (Current); the per-spawn pointer
+      --  is the only channel for the data (bodies take no parameters).
+      --  All_Correct holds iff no spawn observed another's payload.
+      Closure_Ledger.Reset;
+      Shutdown;
+      Init (Workers => 4);
+      for K in 1 .. Closure_Goroutines loop
+         declare
+            P : constant Arg_Pair_Access :=
+              new Arg_Pair'(A => K, B => K * 1000);
+         begin
+            Unused_G := Spawn (Closure_Worker'Access, To_Address (P));
+         end;
+      end loop;
+      Shutdown;
+      Assert (Closure_Ledger.Marked = Closure_Goroutines,
+              "Expected all" & Closure_Goroutines'Image
+              & " closure-carrying goroutines to run, got"
+              & Closure_Ledger.Marked'Image);
+      Assert (Closure_Ledger.All_Correct,
+              "A goroutine read a closure payload that was not its own — "
+              & "Spawn's per-spawn closure pointer cross-contaminated");
+   end Test_Closure_Roundtrip_Across_Goroutines;
+
+   procedure Test_Closure_Of_No_Goroutine_Is_Null
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+   begin
+      Assert (Closure (No_Goroutine) = System.Null_Address,
+              "Closure (No_Goroutine) must be Null_Address so generated "
+              & "Go_Worker code can call Closure (Current) blind");
+   end Test_Closure_Of_No_Goroutine_Is_Null;
 
 end Scheduler_Suite;

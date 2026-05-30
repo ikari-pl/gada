@@ -52,6 +52,8 @@ func TestCorpus(t *testing.T) {
 		"main_defer.go", "main_panic.go", "main_defer_panic.go",
 		// Phase 3 — go-statement fixtures (compiler-emit go-stmt item).
 		"go_simple.go", "go_main.go", "go_main_via_helper.go",
+		// Phase 3 — go-statement argument capture (go f(x, y) snapshot).
+		"go_with_args.go",
 		// Phase 3 — channel-type fixture (channel-emit item, sub-item a).
 		"chan_type_param.go",
 		// Phase 3 — channel make fixture (channel-emit item, sub-item b).
@@ -68,6 +70,8 @@ func TestCorpus(t *testing.T) {
 		"chan_close.go",
 		// Phase 3 — select-stmt fixture (select-emit item, sub-item b).
 		"select_basic.go",
+		// Phase 3 — multi-arg fmt.Println with int rendering (ping_pong b).
+		"println_mixed_args.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)

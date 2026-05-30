@@ -343,7 +343,7 @@ reaches the `end;` of the enclosing `declare` block. Same shape as
 
 ### `runtime/src/gada-async-race.adb`
 
-#### `Image` — fall-through terminator  *(line 78)*
+#### `Image` — fall-through terminator  *(line 80)*
 
 ```ada
 function Image (R : Race_Report) return String is
@@ -351,7 +351,7 @@ begin
    return
      (if not R.Detected then "no race"
       else "data race: " & ...);
-end Image;     --  line 78
+end Image;     --  line 80
 ```
 
 `Image` always returns — the single `return` of a conditional

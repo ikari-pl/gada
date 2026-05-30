@@ -210,5 +210,5 @@ reason = "Selector defensive/unreachable arms — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-async-race).
 [[exclude]]
 file = "runtime/src/gada-async-race.adb"
-lines = [78]
+lines = [80]
 reason = "Race.Image fall-through terminator — see runtime/COVERAGE.md"

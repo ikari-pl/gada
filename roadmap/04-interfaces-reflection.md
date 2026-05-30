@@ -2,7 +2,7 @@
 
 [← Phase 3](03-concurrency.md) · [Index](README.md) · Next: [Phase 5 →](05-stdlib-wave1.md)
 
-**Status:** `NOT_STARTED`
+**Status:** `IN_PROGRESS` (opened 2026-05-30)
 **Prerequisites:** [Phase 2](02-core-runtime.md) `DONE` ([Phase 3](03-concurrency.md) not strictly required)
 **Goal:** Implement Go interface dispatch (structural at compile time,
 nominal at runtime) and the `reflect` package's common surface
@@ -14,7 +14,13 @@ enumeration; output matches the expected fixture.
 ## Items
 
 - [ ] **Type metadata schema**
-      *Files:* `runtime/src/gada-reflect-type.ads`, `runtime/src/gada-reflect-type.adb`
+      *Files:* `runtime/src/gada-reflect.ads` (namespace parent),
+      `runtime/src/gada-reflect-types.ads`,
+      `runtime/src/gada-reflect-types.adb`,
+      `runtime/tests/reflect_types_suite.{ads,adb}`
+      (the roadmap's original `gada-reflect-type.ads` would map to package
+      `Gada.Reflect.Type`, but `type` is an Ada reserved word — the
+      schema ships as `Gada.Reflect.Types`).
       *Verify:* `make -C runtime test PKG=reflect.type`
       *Done when:* type records carry name, kind, fields, methods, and are equality-comparable.
 

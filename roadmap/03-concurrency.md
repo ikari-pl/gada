@@ -2,7 +2,7 @@
 
 [← Phase 2](02-core-runtime.md) · [Index](README.md) · Next: [Phase 4 →](04-interfaces-reflection.md)
 
-**Status:** `IN_PROGRESS` (opened 2026-05-02)
+**Status:** `DONE` (opened 2026-05-02, completed 2026-05-30)
 **Prerequisites:** [Phase 2](02-core-runtime.md) `DONE`
 **Goal:** Implement `GADA.Async` — M:N goroutine scheduler, bounded and
 unbounded channels, Go's `select` statement — with full coverage. After

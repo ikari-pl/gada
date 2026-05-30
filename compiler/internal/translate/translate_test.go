@@ -52,6 +52,8 @@ func TestCorpus(t *testing.T) {
 		"main_defer.go", "main_panic.go", "main_defer_panic.go",
 		// Phase 3 — go-statement fixtures (compiler-emit go-stmt item).
 		"go_simple.go", "go_main.go", "go_main_via_helper.go",
+		// Phase 3 — go-statement argument capture (go f(x, y) snapshot).
+		"go_with_args.go",
 		// Phase 3 — channel-type fixture (channel-emit item, sub-item a).
 		"chan_type_param.go",
 		// Phase 3 — channel make fixture (channel-emit item, sub-item b).

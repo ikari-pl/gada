@@ -42,6 +42,8 @@ var corpusFixtures = []string{
 	"main_defer", "main_panic", "main_defer_panic",
 	// Phase 3 — go-statement compiler emission.
 	"go_simple", "go_main", "go_main_via_helper",
+	// Phase 3 — go-statement argument capture (go f(x, y) snapshot).
+	"go_with_args",
 	// Phase 3 — channel-emit (sub-item b: make + per-element-type instantiation).
 	"chan_make",
 	// Phase 3 — channel-emit (sub-item c: c <- v send statement).
@@ -1915,7 +1917,9 @@ func TestDeferPanicEmitErrors(t *testing.T) {
 			wantErr: "defer holds unexpected stmt",
 		},
 		{
-			name: "go-stmt with positional args (Call)",
+			// go-with-args to a name that has no top-level function in
+			// the file: there is no signature to shape the closure from.
+			name: "go-stmt args: unknown callee",
 			pkg: wrapPkg(&ir.Function{
 				Name: "f",
 				Body: []ir.Stmt{&ir.GoStmt{Call: &ir.Call{
@@ -1923,10 +1927,12 @@ func TestDeferPanicEmitErrors(t *testing.T) {
 					Args: []ir.Expr{litInt("5")},
 				}}},
 			}),
-			wantErr: "go-statement argument capture not yet supported",
+			wantErr: "no top-level function",
 		},
 		{
-			name: "go-stmt with positional args (BuiltinCall)",
+			// go-with-args where the entry point is a builtin (panic),
+			// not a user function — no Function decl to capture against.
+			name: "go-stmt args: builtin callee",
 			pkg: wrapPkg(&ir.Function{
 				Name: "f",
 				Body: []ir.Stmt{&ir.GoStmt{Call: &ir.BuiltinCall{
@@ -1934,7 +1940,57 @@ func TestDeferPanicEmitErrors(t *testing.T) {
 					Args: []ir.Expr{litInt("1")},
 				}}},
 			}),
-			wantErr: "go-statement argument capture not yet supported",
+			wantErr: "supports only direct user-function calls",
+		},
+		{
+			// go-with-args whose call target is not a plain identifier
+			// (here a literal stands in for any non-Ident Fun shape).
+			name: "go-stmt args: non-ident callee",
+			pkg: wrapPkg(&ir.Function{
+				Name: "f",
+				Body: []ir.Stmt{&ir.GoStmt{Call: &ir.Call{
+					Fun:  litInt("1"),
+					Args: []ir.Expr{litInt("5")},
+				}}},
+			}),
+			wantErr: "must be a plain function name",
+		},
+		{
+			// go g(1, 2) but g declares a single parameter.
+			name: "go-stmt args: arg/param count mismatch",
+			pkg: wrapPkg(
+				&ir.Function{
+					Name:   "g",
+					Params: []*ir.Param{{Name: "x", Type: &ir.IntType{}}},
+				},
+				&ir.Function{
+					Name: "f",
+					Body: []ir.Stmt{&ir.GoStmt{Call: &ir.Call{
+						Fun:  idn("g"),
+						Args: []ir.Expr{litInt("1"), litInt("2")},
+					}}},
+				},
+			),
+			wantErr: "declares 1 parameter",
+		},
+		{
+			// callee parameter whose type emit cannot render (nil type)
+			// surfaces typeName's error through the capture path.
+			name: "go-stmt args: unsupported param type",
+			pkg: wrapPkg(
+				&ir.Function{
+					Name:   "g",
+					Params: []*ir.Param{{Name: "x", Type: nil}},
+				},
+				&ir.Function{
+					Name: "f",
+					Body: []ir.Stmt{&ir.GoStmt{Call: &ir.Call{
+						Fun:  idn("g"),
+						Args: []ir.Expr{litInt("1")},
+					}}},
+				},
+			),
+			wantErr: "missing type",
 		},
 		{
 			name: "go holds unexpected stmt (Return)",
@@ -2099,3 +2155,35 @@ func idn(s string) *ir.Ident { return &ir.Ident{Name: s} }
 // coverage). String / bool / float literals are constructed inline at
 // the few call sites that need them so the helper stays single-purpose.
 func litInt(v string) *ir.Lit { return &ir.Lit{Kind: ir.LitInt, Value: v} }
+
+// TestGoArgsUnnamedParam covers the synthetic-name path in
+// emitGoClosureWithArgs: a callee with an unnamed parameter (Go's
+// `func f(int)`) must still emit a valid closure record component,
+// named Anon_<i>, rather than an empty identifier.
+func TestGoArgsUnnamedParam(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(
+		&ir.Function{
+			Name:   "g",
+			Params: []*ir.Param{{Name: "", Type: &ir.IntType{}}},
+		},
+		&ir.Function{
+			Name: "f",
+			Body: []ir.Stmt{&ir.GoStmt{Call: &ir.Call{
+				Fun:  idn("g"),
+				Args: []ir.Expr{litInt("5")},
+			}}},
+		},
+	)
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Anon_1 : Integer;") {
+		t.Fatalf("expected synthetic Anon_1 component for unnamed param, got:\n%s", out)
+	}
+	if !strings.Contains(out, "G (Anon_1);") {
+		t.Fatalf("expected call G (Anon_1), got:\n%s", out)
+	}
+}

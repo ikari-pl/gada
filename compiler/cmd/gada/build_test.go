@@ -713,3 +713,27 @@ func TestRunBuild_ViaMainDispatch(t *testing.T) {
 		t.Errorf("stderr = %q, want usage hint from runBuild", got)
 	}
 }
+
+// TestGprArchArg_HostMapping pins the host-arch → libco ARCH scenario
+// mapping. The host running the test is necessarily one gada build
+// supports (the test binary itself is native), so on amd64/arm64 the
+// mapping must resolve; anything else is a host we don't ship a libco
+// backend for and correctly returns ok=false.
+func TestGprArchArg_HostMapping(t *testing.T) {
+	arch, ok := gprArchArg()
+	switch runtime.GOARCH {
+	case "amd64":
+		if !ok || arch != "amd64" {
+			t.Errorf("gprArchArg() = (%q, %v), want (\"amd64\", true)", arch, ok)
+		}
+	case "arm64":
+		if !ok || arch != "aarch64" {
+			t.Errorf("gprArchArg() = (%q, %v), want (\"aarch64\", true)", arch, ok)
+		}
+	default:
+		if ok {
+			t.Errorf("gprArchArg() = (%q, true) on unsupported host %q, want ok=false",
+				arch, runtime.GOARCH)
+		}
+	}
+}

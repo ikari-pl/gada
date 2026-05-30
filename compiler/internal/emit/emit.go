@@ -124,6 +124,7 @@ type emitter struct {
 	needsCoreDefer      bool // any DeferStmt seen → emit `with Gada.Core.Defer;`
 	needsCorePanic      bool // any panic/recover BuiltinCall seen → emit `with Gada.Core.Panic;` and `package Panic_Of_Integer is new ...`
 	needsAsyncScheduler bool // any GoStmt seen → emit `with Gada.Async.Scheduler;` and the per-subprogram closure-and-Unused_G scaffolding
+	needsGoArgs         bool // any `go f(args)` with a non-empty arg list → emit `with Ada.Unchecked_Conversion;` / `with Ada.Unchecked_Deallocation;` / `with System;` for the per-spawn Go_Closure_<n> record + Allocate_Closure_<n> + Go_Worker_<n> scaffolding
 	sliceElems          map[string]ir.Type
 	sliceElemOrder      []string
 	mapPairs            map[string]*ir.MapType
@@ -150,9 +151,10 @@ type emitter struct {
 	selectorElemOrder []string
 	localTypes        map[string]ir.Type
 	rangeCounter      int
-	selectCounter     int                // file-wide 1..N numbering for each emitted select site; suffixes Sel_Cases_<n> / Sel_Idx_<n> / V_<n>_<i> / OK_<n>_<i> to keep nested selects from shadowing each other's locals (Ada would shadow legally, but unique names keep gprbuild diagnostics actionable).
-	goIndex           map[*ir.GoStmt]int // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
-	pendingRecvs      []pendingChanRecv  // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
+	selectCounter     int                     // file-wide 1..N numbering for each emitted select site; suffixes Sel_Cases_<n> / Sel_Idx_<n> / V_<n>_<i> / OK_<n>_<i> to keep nested selects from shadowing each other's locals (Ada would shadow legally, but unique names keep gprbuild diagnostics actionable).
+	goIndex           map[*ir.GoStmt]int      // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
+	funcByName        map[string]*ir.Function // file-wide name → top-level Function decl, so a `go f(x, y)` site can resolve f's parameter names + declared types to build the matching Go_Closure_<n> record and unpack it into correctly-named locals. Populated alongside collectSliceElems.
+	pendingRecvs      []pendingChanRecv       // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
 	err               error
 }
 
@@ -182,6 +184,7 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		chanIdentTypes: map[string]ir.Type{},
 		selectorElems:  map[string]ir.Type{},
 		goIndex:        map[*ir.GoStmt]int{},
+		funcByName:     map[string]*ir.Function{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
@@ -204,6 +207,10 @@ func (e *emitter) collectSliceElems() {
 		if !ok {
 			continue
 		}
+		// Index every top-level function by name so a `go f(args)` site
+		// can recover f's parameter names + types to shape the per-spawn
+		// closure record (see emitGoClosureWithArgs).
+		e.funcByName[fn.Name] = fn
 		for _, p := range fn.Params {
 			e.recordTypeInTree(p.Type)
 			// Chan-typed parameters become file-wide chanIdentTypes
@@ -380,6 +387,13 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 		e.walkStmt(s.Call)
 	case *ir.GoStmt:
 		e.needsAsyncScheduler = true
+		// A non-empty argument list switches on the closure-capture
+		// scaffolding (and its extra with-clauses). go-with-args carries
+		// the args by value through a per-spawn heap record — see
+		// emitGoClosureWithArgs.
+		if goCallArgCount(s) > 0 {
+			e.needsGoArgs = true
+		}
 		// File-wide monotonic numbering. The pre-walk visits every
 		// subprogram in `Decls` order and recurses into bodies depth-first,
 		// so `len(e.goIndex) + 1` produces a stable index per AST node.
@@ -511,9 +525,19 @@ func (e *emitter) run() error {
 	if e.needsAsyncScheduler {
 		e.println("with Gada.Async.Scheduler;")
 	}
+	if e.needsGoArgs {
+		// `go f(x, y)` lowers to a per-spawn heap closure: an Unchecked_
+		// Conversion each way between the closure-access type and the
+		// scheduler's opaque System.Address payload, plus an Unchecked_
+		// Deallocation so the worker reclaims the block after unpacking.
+		e.println("with Ada.Unchecked_Conversion;")
+		e.println("with Ada.Unchecked_Deallocation;")
+		e.println("with System;")
+	}
 	if e.needsCoreIO || len(e.sliceElemOrder) > 0 || len(e.mapPairOrder) > 0 ||
 		len(e.chanElemOrder) > 0 || len(e.selectorElemOrder) > 0 ||
-		e.needsCoreDefer || e.needsCorePanic || e.needsAsyncScheduler {
+		e.needsCoreDefer || e.needsCorePanic || e.needsAsyncScheduler ||
+		e.needsGoArgs {
 		e.println("")
 	}
 	if e.pkgName == "main" {
@@ -1460,22 +1484,32 @@ func (e *emitter) emitGoClosuresAndDecl(gos []*ir.GoStmt) {
 	e.println("Unused_G : Gada.Async.Scheduler.Goroutine_Id;")
 }
 
-// emitGoClosure writes one nested parameterless procedure that the
-// matching inline `Spawn (Go_Closure_<n>'Unrestricted_Access)` call
-// will hand to the scheduler. n is the 1-based source-order index of
-// the go-statement within the enclosing function.
+// goCallArgCount returns the positional-argument count of a go-stmt's
+// call, across both the user-function (*ir.Call) and builtin
+// (*ir.BuiltinCall) shapes. Zero selects the no-arg closure lowering;
+// non-zero selects argument capture (emitGoClosureWithArgs).
+func goCallArgCount(g *ir.GoStmt) int {
+	switch c := g.Call.(type) {
+	case *ir.Call:
+		return len(c.Args)
+	case *ir.BuiltinCall:
+		return len(c.Args)
+	}
+	return 0
+}
+
+// emitGoClosure writes the declarative-region scaffolding for one
+// go-statement. n is the 1-based source-order index within the
+// enclosing function.
 //
-// Phase 3 only emits the no-arg form `go f()`. `go f(x, y)` requires
-// snapshot semantics — Go evaluates arguments at the spawn site, but
-// an Ada nested-procedure closure reads the enclosing scope at
-// goroutine execution time, so a mutation between Spawn and the
-// goroutine's first instruction would silently change what the
-// goroutine sees. Proper capture needs Scheduler.Spawn to grow a
-// per-spawn context payload (next roadmap sub-item); until then,
-// reject non-empty argument lists rather than ship subtly divergent
-// behaviour.
+//   - `go f()`     → one nested parameterless `procedure Go_Closure_<n>`
+//     that the inline `Spawn (Go_Closure_<n>'Unrestricted_Access)`
+//     hands to the scheduler.
+//   - `go f(x, y)` → the argument-capture machinery (record + helpers
+//   - worker) emitted by emitGoClosureWithArgs.
 func (e *emitter) emitGoClosure(n int, g *ir.GoStmt) {
-	if !e.checkGoArgsEmpty(g) {
+	if goCallArgCount(g) > 0 {
+		e.emitGoClosureWithArgs(n, g)
 		return
 	}
 	e.println(fmt.Sprintf("procedure Go_Closure_%d is", n))
@@ -1493,22 +1527,131 @@ func (e *emitter) emitGoClosure(n int, g *ir.GoStmt) {
 	e.println(fmt.Sprintf("end Go_Closure_%d;", n))
 }
 
-// checkGoArgsEmpty enforces the Phase 3 "no-arg only" subset for
-// `go f(...)` until Scheduler.Spawn grows a context payload. Returns
-// false (and sets e.err) when the call carries any positional args.
-func (e *emitter) checkGoArgsEmpty(g *ir.GoStmt) bool {
-	var nargs int
-	switch c := g.Call.(type) {
-	case *ir.Call:
-		nargs = len(c.Args)
-	case *ir.BuiltinCall:
-		nargs = len(c.Args)
+// emitGoClosureWithArgs lowers `go f(a, b, …)` with Go's snapshot
+// semantics: arguments are evaluated at the spawn site, not when the
+// goroutine starts. An Ada nested-procedure closure that read the
+// enclosing scope at goroutine-execution time would observe mutations
+// made between the `go` statement and the goroutine's first
+// instruction — wrong. Instead we emit, per call-site (keyed by
+// goIndex, deliberately not deduplicated by signature — the simpler
+// shape; dedup is a later perf pass if binary size warrants it):
+//
+//   - `type Go_Closure_<n>` — a record with one component per callee
+//     parameter, named and typed from f's declaration so the unpack
+//     reads naturally;
+//   - an access type plus the two Unchecked_Conversions bridging it to
+//     the scheduler's opaque System.Address payload, and an Unchecked_
+//     Deallocation to reclaim the block;
+//   - `Allocate_Closure_<n>` — snapshots the arguments into a fresh
+//     heap record at the spawn site (called inline in the Spawn);
+//   - `Go_Worker_<n>` — reads the closure back via Closure (Current),
+//     copies each field into a like-named local, frees the heap block
+//     (it is dead once unpacked — no per-spawn leak), then calls f.
+func (e *emitter) emitGoClosureWithArgs(n int, g *ir.GoStmt) {
+	call, ok := g.Call.(*ir.Call)
+	if !ok {
+		e.fail(fmt.Errorf("emit: go-statement argument capture supports only direct user-function calls; got %T (a builtin with arguments cannot be a goroutine entry point)", g.Call))
+		return
 	}
-	if nargs > 0 {
-		e.fail(fmt.Errorf("emit: go-statement argument capture not yet supported; rewrite `go f(x, y)` as `go func() { f(x, y) }()` once closures land, or as a wrapper subprogram that takes no args (roadmap/03-concurrency.md)"))
-		return false
+	ident, ok := call.Fun.(*ir.Ident)
+	if !ok {
+		e.fail(fmt.Errorf("emit: go-statement callee must be a plain function name for argument capture, got %T", call.Fun))
+		return
 	}
-	return true
+	fn, ok := e.funcByName[ident.Name]
+	if !ok {
+		e.fail(fmt.Errorf("emit: go %s(...) — no top-level function %q in this file to capture arguments for", ident.Name, ident.Name))
+		return
+	}
+	if len(call.Args) != len(fn.Params) {
+		e.fail(fmt.Errorf("emit: go %s(...) passes %d argument(s) but %s declares %d parameter(s)", ident.Name, len(call.Args), ident.Name, len(fn.Params)))
+		return
+	}
+
+	names := make([]string, len(fn.Params))
+	types := make([]string, len(fn.Params))
+	for i, p := range fn.Params {
+		t, err := typeName(p.Type)
+		if err != nil {
+			e.fail(err)
+			return
+		}
+		if p.Name == "" {
+			// Unnamed Go parameter (`func f(int)`): synthesize a stable
+			// component name so the record/aggregate/call stay valid Ada
+			// rather than emitting an empty identifier. Positional at the
+			// spawn site, so the synthetic name is never user-visible.
+			names[i] = fmt.Sprintf("Anon_%d", i+1)
+		} else {
+			names[i] = adaIdent(p.Name)
+		}
+		types[i] = t
+	}
+
+	rec := fmt.Sprintf("Go_Closure_%d", n)
+	acc := rec + "_Access"
+	// Per-call-site unique pointer-variable name. NOT `Go_C`: a Go
+	// parameter literally named `go_c` capitalises to `Go_C` and would
+	// collide with the pointer in the same scope (Gemini PR #23). The
+	// `_Obj` suffix on the already-unique closure type name keeps it
+	// collision-free against any parameter-derived local.
+	objVar := rec + "_Obj"
+
+	// --- per-spawn closure record + access + conversions ---
+	e.println(fmt.Sprintf("type %s is record", rec))
+	e.indent++
+	for i := range names {
+		e.println(fmt.Sprintf("%s : %s;", names[i], types[i]))
+	}
+	e.indent--
+	e.println("end record;")
+	e.println(fmt.Sprintf("type %s is access %s;", acc, rec))
+	e.println(fmt.Sprintf(
+		"function To_%s is new Ada.Unchecked_Conversion (System.Address, %s);",
+		rec, acc))
+	e.println(fmt.Sprintf(
+		"function Closure_Addr_%d is new Ada.Unchecked_Conversion (%s, System.Address);",
+		n, acc))
+	e.println(fmt.Sprintf(
+		"procedure Free_%s is new Ada.Unchecked_Deallocation (%s, %s);",
+		rec, rec, acc))
+
+	// --- Allocate_Closure_<n>: snapshot the args at the spawn site ---
+	params := make([]string, len(names))
+	assocs := make([]string, len(names))
+	for i := range names {
+		params[i] = names[i] + " : " + types[i]
+		assocs[i] = names[i] + " => " + names[i]
+	}
+	e.println(fmt.Sprintf(
+		"function Allocate_Closure_%d (%s) return System.Address is",
+		n, strings.Join(params, "; ")))
+	e.println("begin")
+	e.indent++
+	// Allocate + address-convert in one expression — no named local, so
+	// nothing here can collide with a parameter named `go_c` etc.
+	e.println(fmt.Sprintf(
+		"return Closure_Addr_%d (new %s'(%s));",
+		n, rec, strings.Join(assocs, ", ")))
+	e.indent--
+	e.println(fmt.Sprintf("end Allocate_Closure_%d;", n))
+
+	// --- Go_Worker_<n>: unpack into locals, free the block, call f ---
+	e.println(fmt.Sprintf("procedure Go_Worker_%d is", n))
+	e.indent++
+	e.println(fmt.Sprintf(
+		"%s : %s := To_%s (Gada.Async.Scheduler.Closure (Gada.Async.Scheduler.Current));",
+		objVar, acc, rec))
+	for i := range names {
+		e.println(fmt.Sprintf("%s : constant %s := %s.%s;", names[i], types[i], objVar, names[i]))
+	}
+	e.indent--
+	e.println("begin")
+	e.indent++
+	e.println(fmt.Sprintf("Free_%s (%s);", rec, objVar))
+	e.println(fmt.Sprintf("%s (%s);", adaIdent(ident.Name), strings.Join(names, ", ")))
+	e.indent--
+	e.println(fmt.Sprintf("end Go_Worker_%d;", n))
 }
 
 // zeroLiteralOf returns the Ada literal for the zero value of t. Used
@@ -1756,16 +1899,28 @@ func (e *emitter) emitStmt(s ir.Stmt) {
 		// encountered outside the head of a function body — which
 		// emitSubprogram should have already collected. Skip silently.
 	case *ir.GoStmt:
-		// Closure was hoisted to the declarative region by
-		// emitSubprogram; the inline Spawn assignment must remain at
-		// the original position because Go's `go f()` creates the
-		// goroutine *here*, not at scope entry. The closure name is
-		// looked up from the file-wide goIndex (populated by the
-		// walkStmt pre-pass) so AST-node identity drives the number,
-		// not the order in which emitStmt happens to visit the tree.
-		e.println(fmt.Sprintf(
-			"Unused_G := Gada.Async.Scheduler.Spawn (Go_Closure_%d'Unrestricted_Access);",
-			e.goIndex[s]))
+		// The closure scaffolding was hoisted to the declarative region
+		// by emitSubprogram; the inline Spawn assignment must remain at
+		// the original position because Go's `go f(...)` creates the
+		// goroutine *here*, not at scope entry — and, for the with-args
+		// form, the arguments are snapshotted *here* too (Allocate_
+		// Closure_<n> runs at the spawn site). Names are looked up from
+		// the file-wide goIndex (populated by the walkStmt pre-pass) so
+		// AST-node identity drives the number, not visit order.
+		n := e.goIndex[s]
+		if call, ok := s.Call.(*ir.Call); ok && len(call.Args) > 0 {
+			args := make([]string, 0, len(call.Args))
+			for _, a := range call.Args {
+				args = append(args, e.emitExpr(a))
+			}
+			e.println(fmt.Sprintf(
+				"Unused_G := Gada.Async.Scheduler.Spawn (Go_Worker_%d'Unrestricted_Access, Allocate_Closure_%d (%s));",
+				n, n, strings.Join(args, ", ")))
+		} else {
+			e.println(fmt.Sprintf(
+				"Unused_G := Gada.Async.Scheduler.Spawn (Go_Closure_%d'Unrestricted_Access);",
+				n))
+		}
 	case *ir.ChanSend:
 		e.emitChanSend(s)
 	case *ir.SelectStmt:

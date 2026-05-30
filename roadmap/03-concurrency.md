@@ -220,10 +220,258 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         *Done when:* a select with a Send case, a Recv case with `v, ok :=` binding, a Recv case with no binding (drain), and a Default case lowers to a `declare … begin … end;` block whose body is the `Case_Array` build, the `Select_One` call, and an Ada `case Idx is when 1 => …; when 2 => …; when 3 => …; when 4 => …; end case;` dispatch. Ada syntax forbids declarations directly inside a `case` branch, so each Recv case with bindings emits a per-branch nested `declare V : T := V_<i>.all; Ok : Boolean := OK_<i>.all; begin <user body> end;` block. Cases without bindings (Send, Default, drain) emit their body directly under `when N =>` with no nested declare.
         *Done 2026-05-11:* The full select lowering is one wrapping `declare … begin … end;` per select site, scoping the per-Recv-case heap-allocated out-pointers (`V_<n>_<i>`, `OK_<n>_<i>` — library-level accessibility on the runtime's `Element_Ptr` / `Boolean_Ptr` forces heap allocation, not stack `'Access`), the `Sel_Cases_<n>` Case_Array, and `Sel_Idx_<n>`. Body region: per-case aggregate assignments populate all five fields of each Case_Item (Kind, Chan, Send_V, Recv_V_Out, Recv_OK_Out, Timeout_Duration) — irrelevant fields get null / zero / 0.0 rather than being omitted, matching the runtime test pattern verbatim. `Select_One` returns the 1-based fired index; an Ada `case` statement dispatches. Recv cases with bindings wrap the user body in their own `declare V : T := V_<n>_<i>.all; …; begin … end;` because Ada `when N => …` forbids declarations directly. The drain case (`<-c` with no LHS) uses the same Recv_Op aggregate but with both pointers null — the runtime skips writeback when either is null. Single-Element_Type validation walks all non-Default cases and asserts their chan operands resolve to the same element-base name; heterogeneous selects fail with an explicit error pointing at Phase 4's type-erasure widening. Degenerate all-Default selects skip Select_One and emit the default body inline. Empty `select {}` (Go's deadlock-forever shape) lowers to `raise Program_Error with "select with no cases…";`. The `selectCounter` field is file-wide so nested selects produce unique Sel_Cases_<n> / V_<n>_<i> names; Ada would shadow legally but unique names keep gprbuild diagnostics actionable. Showcase output: `select_basic.golden.adb` for the corpus fixture (one chan-int select with all five case shapes) is 70 lines of dense, aligned-aggregate Ada that reads like the runtime spec it instantiates. Coverage gates green: runtime/ 100% (704/704), emit 95.52% (1257/1316), translate 95.57% (388/406), compiler 95.08% (2376/2499). With (d) ticked, all four sub-items of the parent "Compiler emission — select statement" item are done; parent ticked too.
 
+- [ ] **Promote `Gada.Core.Panic` Pending stack to per-goroutine storage**
+      *Why:* The body's design note
+      (`runtime/src/gada-core-panic.adb:8-9`) already promises this:
+      *"v1 single-threaded runtime: one global stack. Phase 3
+      promotes this to per-task storage when the goroutine
+      scheduler lands."* The scheduler has landed (sub-items 3a-3f
+      DONE) but the promotion is overdue — the global
+      `Pending_Count : Natural` and the `Pending : array (1 ..
+      Max_Pending_Panics) of Payload_Type` survive untouched into
+      the multi-worker Phase 3 runtime, where two goroutines
+      panicking concurrently race on `Pending_Count` increment and
+      on the `Pending (Pending_Count)` slot index. Surfaced by
+      Gemini's PR #19 review against the Ada 2022 sweep that
+      touched these two increments.
+
+      Bare `pragma Thread_Local_Storage` is **not** the right shape
+      for two distinct reasons, both load-bearing:
+
+        - **Multiplexing**: GADA is M:N. Multiple goroutines share
+          the same worker (and therefore the same OS thread). They
+          would all share the same TLS slot. If Goroutine A pushes
+          a panic and then yields, Goroutine B running on the same
+          worker observes — or worse, overwrites — Goroutine A's
+          panic state on its next `Do_Panic`/`Recover`. TLS
+          partitions by *OS thread*, but panic state needs to
+          partition by *goroutine*. This is the primary objection;
+          it holds even on a single-worker build.
+
+        - **Migration**: even if multiplexing weren't a problem,
+          docs/incidents/2026-05-03-scheduler-3b-multi-worker-race
+          documents the libco-pinning trap that emerges once you
+          unpin: a goroutine that pushes a panic on worker A and
+          resumes on worker B would observe an empty TLS slot in
+          worker B because the cothread carried no state across
+          the OS-thread boundary. Pinning is the current
+          invariant, but it's an invariant we depend on, not one
+          we want panic correctness to depend on too.
+
+      The correct lowering is per-goroutine storage hung off
+      `Gada.Async.Scheduler.Goroutine_Record`, with
+      `Gada.Core.Panic.Do_Panic` / `Recover` / `Is_Panicking`
+      reading from the currently-active goroutine's record via a
+      scheduler-side accessor. The record travels with the
+      cothread automatically — same mechanism the scheduler
+      already uses for the body-procedure dispatch in 3a.
+
+      **Layering**: `Gada.Core.Panic` is generic over
+      `Payload_Type`; `Gada.Async.Scheduler` is non-generic and
+      sits at a layer Gada.Core.Panic depends on, not the other
+      way around. The scheduler therefore **cannot** carry a
+      concrete `Panic_Stack_Type` field on `Goroutine_Record` —
+      that would force the scheduler to know the panic payload's
+      generic type. The right shape is an opaque slot:
+      `Goroutine_Record` carries a `Local_Storage : System.Address
+      := Null_Address`, and the per-Payload_Type
+      `Gada.Core.Panic` instantiation manages its own
+      heap-allocated state behind that pointer (allocate on first
+      `Do_Panic`/`Push` per goroutine; the scheduler frees the
+      slot when the goroutine is reaped). This generalises beyond
+      panic — other future per-goroutine state (recover stacks,
+      thread-local-equivalent maps, race-detector shadow data)
+      uses the same slot via the same registration shape.
+
+      **Main task**: the non-goroutine context (the main Ada task
+      that runs before any `Scheduler.Spawn`) must remain
+      panic-capable — the v1 single-threaded `defer_panic_suite`
+      runs panics from main, and that must still pass post-change.
+      Handled by giving the scheduler a `Main_Local_Storage :
+      System.Address := Null_Address` package-body global, used as
+      a fallback when `Scheduler.Current = No_Goroutine`. The
+      `Get_Local_Storage` / `Set_Local_Storage` accessors route
+      to this fallback automatically in main context. Multiplexing
+      isn't a concern for the main fallback because Ada's main
+      task is genuinely a single thread; the rest of the runtime
+      will not race with itself there.
+
+      *Files:* `runtime/src/gada-async-scheduler.{ads,adb}` (extend
+      `Goroutine_Record` with an opaque `Local_Storage :
+      System.Address := Null_Address` field — **no dependency on
+      Gada.Core.Panic's generic parameter**; add public
+      `Get_Local_Storage` / `Set_Local_Storage (Addr :
+      System.Address)` accessors that operate on
+      `Scheduler.Current`'s slot, transparently routing to a
+      package-body `Main_Local_Storage` global when
+      `Scheduler.Current = No_Goroutine`),
+      `runtime/src/gada-core-panic.{ads,adb}` (delete the
+      package-body `Pending`/`Pending_Count` globals; per
+      `Payload_Type` instantiation owns a heap-allocated
+      `Panic_State_Type` record behind
+      `Scheduler.Get_Local_Storage`; first `Do_Panic` /
+      `Is_Panicking` on a goroutine allocates and `Set_Local_
+      Storage`s the per-instantiation record),
+      `runtime/tests/scheduler_suite.adb` (extend existing suite —
+      same `<package>_suite.adb` convention used throughout the
+      runtime — with the 100-goroutines-concurrent-panic isolation
+      case + the main-context fallback case asserting
+      `Get_Local_Storage` returns the `Main_Local_Storage` global
+      when called outside any spawned goroutine).
+
+      *Verify:* `make -C runtime test PKG=core.panic && make -C
+      runtime test PKG=async.scheduler`
+
+      *Done when:* (i) the package-body `Pending`/`Pending_Count`
+      are gone from `Gada.Core.Panic`; (ii) the new AUnit cases
+      demonstrate (a) isolation across 100 concurrent panicking
+      goroutines on a multi-worker scheduler (`Workers => 4`),
+      and (b) the main-task fallback — `Do_Panic` / `Recover`
+      from outside any spawned goroutine routes correctly via
+      `Main_Local_Storage`; (iii) the v1 single-threaded
+      `defer_panic_suite` continues to pass unchanged (the
+      main-task fallback is *what* keeps it passing); (iv) the
+      design-note comment at the top of `gada-core-panic.adb` is
+      updated to describe the opaque-per-goroutine layout, the
+      multiplexing rationale for not using TLS, and the
+      main-task-fallback mechanism (with a reference back to this
+      roadmap item).
+
 - [ ] **`ping_pong` example**
-      *Files:* `examples/ping_pong/ping_pong.go`, `examples/ping_pong/expected_output.txt`
-      *Verify:* `make example HELLO=ping_pong` (must complete in < 5s wall-clock)
-      *Done when:* 1M-iteration ping-pong completes with no deadlock and correct iteration count.
+
+  Decomposition mirrors channel-emit and select-emit: each step is a
+  focused compiler-emit slice with its own corpus fixture; the
+  example itself ships last and is the end-to-end gate. The
+  original one-paragraph bullet implicitly required two compiler-emit
+  capabilities that neither channel-emit nor select-emit needed —
+  `go fn(args)` argument capture (channels are how the goroutine
+  body talks to the rest of the program, so the spawn call has to
+  carry them in) and `fmt.Println` with non-string arguments (the
+  exit-criterion's "correct iteration count" needs `Println("…", n)`
+  shape with int rendering). Each is its own sub-item below; the
+  third sub-item is the example proper.
+
+  Two paths to share state between main and the relay goroutines
+  were considered:
+
+  1. **`go fn(args)` argument capture** — spawn carries args by
+     value through a per-spawn heap-allocated record; the generated
+     worker procedure unpacks the record into local copies of fn's
+     formal parameters. Matches the runtime's existing `Spawn`
+     contract (`Spawn (Goroutine_Body)`) one-to-one once a closure
+     record bridges the no-arg `Goroutine_Body` to the user's
+     parametrised function.
+
+  2. **Package-level `var` declarations** — make the chans
+     globals, so the no-arg `go pinger()` shape that the current
+     emit handles can still see them. Simpler to add in isolation
+     but doesn't generalise (every multi-goroutine program past
+     ping-pong needs args), and Ada-side elaboration order for
+     `make(chan T)` at package level adds its own runtime-spec
+     work.
+
+  v1 picks (1). It is the only path that scales to the std-lib port
+  and to the SPARK target (where global mutable state is
+  awkward). The existing `checkGoArgsEmpty` emit-time guard
+  (`compiler/internal/emit/emit.go`) explicitly points at this
+  roadmap file as the place where the gap is tracked.
+
+  - [ ] **(a) Compiler-emit: `go fn(x, y, …)` argument capture**
+        *Why:* Today `emit/emit.go:checkGoArgsEmpty` rejects any
+        `go fn(…)` with a non-empty arg list. Ping-pong's two relay
+        goroutines must receive their chans (and a `done` chan for
+        the ponger) by value through the spawn boundary.
+        *Files:* `runtime/src/gada-async-scheduler.{ads,adb}`
+        (extend `Spawn` to accept an opaque closure pointer
+        alongside the existing `Goroutine_Body` access — either
+        as an overload `Spawn (Body : Goroutine_Body; Closure :
+        System.Address)` or as a generic-instantiated variant per
+        closure type; add a public getter `function Closure (G :
+        Goroutine_Id) return System.Address` on the spec so the
+        emitted `Go_Worker_<n>` procedure — which lives in the
+        transpiled program's package, not in `Gada.Async.Scheduler`
+        — can retrieve the per-spawn closure pointer without
+        reaching into `Goroutine_Record`'s private fields; the
+        worker reads `Scheduler.Closure (Scheduler.Current)` once
+        at entry and unchecked-converts to its per-spawn record
+        type), `runtime/tests/scheduler_suite.adb` (extend the
+        existing AUnit suite — same `<package>_suite.adb`
+        convention as channels_suite / channels_unbounded_suite /
+        selector_suite — with cases asserting the closure-payload
+        round-trips correctly across 100 concurrent spawns with
+        distinct arg tuples), `compiler/internal/emit/emit.go`
+        (new `emitGoClosureWithArgs` path generating a per-spawn
+        `Go_Closure_<n>` record type carrying the formal-parameter
+        copies, an `Allocate_Closure_<n>` helper for heap
+        allocation, and a `Go_Worker_<n>` procedure that unpacks
+        the closure into named locals before calling the user's
+        function body; `checkGoArgsEmpty` becomes a no-op), new
+        `compiler/internal/translate/testdata/go_with_args.{go,golden.json}`
+        + `compiler/internal/emit/testdata/go_with_args.golden.adb`
+        showcase fixture.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/go_with_args && make -C runtime test PKG=async.scheduler`
+        *Done when:* a `go relay(c1, c2)` with two `chan int`
+        operands lowers to (i) one `Go_Closure_<n>` record decl
+        per call-site (per-call-site keyed by `emit.goIndex`, not
+        per distinct signature — the v1 emit deliberately picks
+        the simpler per-call-site shape to avoid type-matching
+        across call-sites; deduplication is a later perf pass if
+        the binary-size cost shows up in measurement),
+        (ii) one `Go_Worker_<n>` procedure per call-site that
+        unpacks the record into locals matching the user's
+        parameter names, (iii) one `Spawn (Go_Worker_<n>'Access,
+        Closure_<n>)` call at the go-statement site, with the
+        closure heap-allocated through a per-call
+        `Allocate_Closure_<n>` helper, plus the scheduler's
+        public `Closure` getter retrievable from
+        `Go_Worker_<n>`. AUnit cases in `scheduler_suite.adb`
+        spawn 100 workers with distinct `(int, int)` arg pairs
+        and assert the per-spawn args land at the expected
+        positions inside each worker.
+
+  - [ ] **(b) Compiler-emit: multi-arg `fmt.Println` with int rendering**
+        *Why:* The exit-criterion line is
+        `fmt.Println("iterations:", n)` for `n = 1000000`,
+        producing `iterations: 1000000\n`. Current emit handles
+        only single-string-literal `fmt.Println` and has no
+        int-rendering path. Lowering target: `fmt.Println(a, b, …)`
+        maps to `Ada.Text_IO.Put (render (a))` for each argument
+        with a space separator between consecutive args (matching
+        Go's variadic Println spec), followed by `New_Line`.
+        Int args use Ada 2022's `Object'Image` attribute (`N'Image`
+        on the object, not `Integer'Image (N)` on the type) — the
+        Object form does not prepend the leading space that the
+        Type form does for non-negative values, so the rendering
+        matches Go's bare-digit output without a `Trim` step.
+        *Files:* `compiler/internal/emit/emit.go` (new
+        `emitFmtPrintln` helper handling 1..N args of any
+        currently-supported scalar type; existing single-string
+        path becomes a one-arg subset), `compiler/internal/emit/emit_test.go`,
+        new corpus fixture
+        `compiler/internal/translate/testdata/println_mixed_args.{go,golden.json}`
+        + `compiler/internal/emit/testdata/println_mixed_args.golden.adb`
+        covering one-int / one-string / string+int / int+string / int+int.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run TestCorpus/println_mixed_args`
+        *Done when:* `fmt.Println("iterations:", n)` for `n = 1000000`
+        produces `iterations: 1000000\n` byte-for-byte equal to
+        the corresponding `go run` output, and `fmt.Println(123)`
+        produces `123\n` (no leading space).
+
+  - [ ] **(c) `ping_pong` example proper**
+        *Files:* `examples/ping_pong/ping_pong.go`,
+        `examples/ping_pong/expected_output.txt`,
+        `examples/ping_pong/go.mod`.
+        *Verify:* `make example HELLO=ping_pong` (must complete in
+        < 5s wall-clock)
+        *Done when:* The transpiled binary runs 1M ping-pong
+        iterations between two relay goroutines (pinger uses
+        `for { select { case v, ok := <-ping: … } }`, ponger uses
+        the trivial-for shape `for i := 0; i < 1000000; i = i + 1`
+        with a single-case select-recv on `pong`), prints
+        `iterations: 1000000` as the final stdout line, and exits
+        cleanly. `diff -u` of stdout against
+        `expected_output.txt` is empty; total wall-clock is
+        under 5 s on the dev host.
 
 - [ ] **Race detector integration (best-effort)**
       *Files:* `runtime/src/gada-async-race.ads`

@@ -39,11 +39,13 @@ package body Gada.Async.Race is
    --  Stable short tag for a goroutine handle. We do not expose the
    --  underlying pointer identity (private), so the report renders a
    --  goroutine as either "none" (No_Goroutine) or "g#<n>" where <n>
-   --  distinguishes the two holders within a single report — Image is a
+   --  distinguishes the two holders within a single report — it is a
    --  diagnostic aid, not a stable cross-run identifier. Written as an
-   --  expression function (no begin/end body) so there is no implicit
-   --  fall-through block at `end Holder_Tag;` for gcov to count as an
-   --  unreachable line — the same shape that keeps Image at 100% below.
+   --  expression function whose `(if ...)` is short enough that lcov 2.x
+   --  attributes the hit to the `is (...)` line, so it needs no coverage
+   --  exclusion. (Image below is longer; its expression-function form
+   --  trips an lcov line-attribution quirk, so it ships as a begin/end
+   --  body with the one terminator line excluded — see its comment.)
    function Holder_Tag
      (Who  : Gada.Async.Scheduler.Goroutine_Id;
       Slot : Positive) return String

@@ -88,14 +88,25 @@ package body Stress_Goroutines_Suite is
       use Gada.Async.Scheduler;
       Unused_G : Goroutine_Id;
 
-      --  100_000 spawn-and-return goroutines. Each owns a libco stack
-      --  while live; if the worker's DONE arm failed to Free_Goroutine
-      --  / co_delete, ~100k unfreed stacks would exhaust vmem and Spawn
-      --  would raise Storage_Error long before the loop finished. Each
-      --  Goroutine_Record likewise must be reclaimed or the heap grows
-      --  unbounded. Completing the burst cleanly *and* matching the
-      --  exact tally is the leak gate.
-      N_Goroutines : constant := 100_000;
+      --  100_000 spawn-and-return goroutines, driven in bounded batches.
+      --  Each live goroutine owns a 256 KB libco stack; if the worker's
+      --  DONE arm failed to Free_Goroutine / co_delete, the unfreed
+      --  stacks would exhaust vmem and Spawn would raise Storage_Error.
+      --
+      --  Throttling (PR #22 review): spawning all 100k from the main
+      --  task in one tight loop lets the run queue back up to ~100k
+      --  in-flight before the workers drain it — ~25 GB of mapped VA and
+      --  far past Linux's default vm.max_map_count (65_530), which would
+      --  crash the test on a stock CI runner before it could prove
+      --  anything. We instead spawn in batches of Batch_Size with a full
+      --  Shutdown between them, capping peak in-flight at Batch_Size.
+      --  Total spawned + completed is still N_Batches * Batch_Size =
+      --  100_000, and draining to baseline N_Batches times is a *stronger*
+      --  leak gate than a single drain. The Run_Counter accumulates
+      --  across batches; matching the exact tally is the leak proof.
+      Batch_Size : constant := 5_000;
+      N_Batches  : constant := 20;
+      N_Goroutines : constant := Batch_Size * N_Batches;  --  100_000
 
       --  A deliberately smaller second cycle. Its only job is to prove
       --  the runtime returned to a usable baseline after the big run —
@@ -110,13 +121,16 @@ package body Stress_Goroutines_Suite is
       --  is a documented no-op, so this is always safe.
       Shutdown;
 
-      --  ## Cycle 1 — the 100k burst at default (multi-worker) width.
+      --  ## Cycle 1 — the 100k burst at default (multi-worker) width,
+      --  in bounded batches so peak in-flight stays <= Batch_Size.
       Run_Counter.Reset;
-      Init;  --  Workers => 0 => Number_Of_CPUs: real concurrency.
-      for Iteration in 1 .. N_Goroutines loop
-         Unused_G := Spawn (Tally_And_Return'Access);
+      for Batch in 1 .. N_Batches loop
+         Init;  --  Workers => 0 => Number_Of_CPUs: real concurrency.
+         for Iteration in 1 .. Batch_Size loop
+            Unused_G := Spawn (Tally_And_Return'Access);
+         end loop;
+         Shutdown;  --  drains this batch fully → baseline before the next.
       end loop;
-      Shutdown;  --  blocks until all 100k have run, then tears the pool.
 
       Assert
         (Run_Counter.Value = N_Goroutines,

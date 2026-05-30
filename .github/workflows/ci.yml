@@ -327,6 +327,19 @@ jobs:
           export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
           make example HELLO=collections
 
+      - name: Run make example HELLO=ping_pong
+        # The Phase-3 concurrency exit-criterion target (roadmap/03-
+        # concurrency ping_pong item). Exercises `go f(args)` argument
+        # capture, buffered channels, `select` (comma-ok + trivial-for
+        # single-case), `close`, and multi-arg `fmt.Println` end-to-end:
+        # a million-iteration ping-pong between two relay goroutines
+        # whose final line is `iterations: 1000000`. Must complete well
+        # under the make-example timeout.
+        run: |
+          set -euo pipefail
+          export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
+          make example HELLO=ping_pong
+
       - name: Upload example binary as artifact
         # Always upload — even on failure the partially-built binary (when
         # present) is useful for post-mortem. `if-no-files-found: warn`

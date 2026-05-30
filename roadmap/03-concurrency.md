@@ -379,7 +379,7 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
       `tools/coverage_thresholds.toml` for the inserted code. emit
       95.53%, translate 95.81%, compiler 95.12%.
 
-- [ ] **`ping_pong` example**
+- [x] **`ping_pong` example**
 
   Decomposition mirrors channel-emit and select-emit: each step is a
   focused compiler-emit slice with its own corpus fixture; the
@@ -536,12 +536,34 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         the corresponding `go run` output, and `fmt.Println(123)`
         produces `123\n` (no leading space).
 
-  - [ ] **(c) `ping_pong` example proper**
+  - [x] **(c) `ping_pong` example proper**
         *Files:* `examples/ping_pong/ping_pong.go`,
         `examples/ping_pong/expected_output.txt`,
         `examples/ping_pong/go.mod`.
         *Verify:* `make example HELLO=ping_pong` (must complete in
         < 5s wall-clock)
+        *Done 2026-05-30:* The example transpiles, builds, and runs in
+        ~1.2 s wall-clock (1M iterations), printing `iterations:
+        1000000` byte-for-byte identical to `go run`. pinger runs the
+        `for { select { case v, ok := <-ping } }` shape and returns when
+        ponger `close`s ping; ponger runs the trivial-for single-case
+        select on pong, counts, prints, and signals a `done` channel
+        that main receives (so behaviour matches `go run`, where main
+        would otherwise exit before the relays printed). The relays are
+        spawned with `go pinger(ping, pong)` / `go ponger(ping, pong,
+        done)` — exercising argument capture — and the channels are
+        captured by value. Added as a CI examples-job step.
+        **Two pre-existing bugs surfaced and fixed here** (both in
+        already-merged Phase 3 code, both only reachable by an executed
+        select program — the corpus is text-only): (1) a *single-case*
+        select emitted a non-exhaustive Ada `case Sel_Idx is when 1 =>`
+        (Sel_Idx is Positive), so emit now appends an unreachable `when
+        others => null;`; (2) `select` polled with a fixed 1 ms `delay`
+        on every miss, which made a 1M-iteration hot loop take ~1000 s —
+        `Gada.Async.Selector` now cooperatively `Yield`s in goroutine
+        context (microsecond context switch; the timed delay is kept
+        only for the main/non-goroutine fallback to avoid a 100 %-CPU
+        spin), covered by a new goroutine-context selector test.
         *Done when:* The transpiled binary runs 1M ping-pong
         iterations between two relay goroutines (pinger uses
         `for { select { case v, ok := <-ping: … } }`, ponger uses

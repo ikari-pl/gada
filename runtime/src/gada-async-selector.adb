@@ -40,6 +40,8 @@ with Ada.Numerics.Float_Random;
 with Ada.Real_Time;
 use Ada.Real_Time;
 with Interfaces;
+with Gada.Async.Scheduler;
+use type Gada.Async.Scheduler.Goroutine_Id;
 
 package body Gada.Async.Selector is
 
@@ -298,10 +300,24 @@ package body Gada.Async.Selector is
                return Timeout_Index;
             end if;
 
-            --  Otherwise wait a tick and retry. delay yields the
-            --  worker (Ada delay statement is a synchronous block,
-            --  so siblings on the same OS thread continue).
-            delay Poll_Interval;
+            --  No case is ready and there is no default/timeout. Hand
+            --  the worker to a sibling goroutine so it can make a case
+            --  ready, then re-poll. In a goroutine context this is a
+            --  cooperative Yield — a microsecond-scale context switch,
+            --  not the millisecond `delay` that a hot select loop (e.g.
+            --  a ping-pong relay running a million iterations) cannot
+            --  afford. A *plain* delay would also sleep the whole OS
+            --  thread, starving every other goroutine pinned to this
+            --  worker, not just the caller. Outside a goroutine (a
+            --  Select_One on the main task) Yield is a no-op, so fall
+            --  back to the timed poll there to avoid a 100%-CPU spin.
+            if Gada.Async.Scheduler.Current
+                 /= Gada.Async.Scheduler.No_Goroutine
+            then
+               Gada.Async.Scheduler.Yield;
+            else
+               delay Poll_Interval;
+            end if;
          end loop;
       end;
    end Select_One;

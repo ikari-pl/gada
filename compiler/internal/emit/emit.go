@@ -2869,6 +2869,16 @@ func (e *emitter) emitSelectStmt(s *ir.SelectStmt) {
 		e.emitSelectCaseBody(c, n, i+1, tName)
 		e.indent--
 	}
+	// Select_One's contract returns a fired index in 1 .. Cases'Length,
+	// but Sel_Idx_<n> is Positive, so Ada requires the case to be
+	// exhaustive. This arm is unreachable; it only covers the rest of
+	// Positive — notably for a single-case select, where the lone
+	// `when 1 =>` would otherwise leave 2 .. Positive'Last uncovered and
+	// gprbuild would reject the case as non-exhaustive.
+	e.println("when others =>")
+	e.indent++
+	e.println("null;")
+	e.indent--
 	e.indent--
 	e.println("end case;")
 	e.indent--

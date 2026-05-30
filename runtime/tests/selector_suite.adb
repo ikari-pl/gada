@@ -32,6 +32,30 @@ package body Selector_Suite is
       Sender_Done := True;
    end Sender_Body_Sends_55;
 
+   --  Selector_Body runs a recv-Select *inside a goroutine* on an
+   --  initially-empty channel, so Select_One's no-case-ready branch
+   --  takes the cooperative Yield path (Current /= No_Goroutine) rather
+   --  than the main-context timed delay. The main task fills the channel
+   --  shortly after, so the poll eventually fires.
+   Selector_Out  : constant Sel.Element_Ptr := new Integer'(0);
+   Selector_OKp  : constant Sel.Boolean_Ptr := new Boolean'(False);
+   Selector_Done : Boolean := False;
+
+   procedure Selector_Body_Recvs;
+   procedure Selector_Body_Recvs is
+      Cases : Sel.Case_Array (1 .. 1);
+      Idx   : Positive;
+   begin
+      Cases (1) := (Kind             => Sel.Recv_Op,
+                    Chan             => The_Channel,
+                    Send_V           => 0,
+                    Recv_V_Out       => Selector_Out,
+                    Recv_OK_Out      => Selector_OKp,
+                    Timeout_Duration => 0.0);
+      Idx := Sel.Select_One (Cases);
+      Selector_Done := Idx = 1;
+   end Selector_Body_Recvs;
+
    ---------------------------------------------------------------
 
    overriding function Name
@@ -88,6 +112,11 @@ package body Selector_Suite is
          & "sibling goroutine drives a case to readiness; the "
          & "polling shape yields the worker between polls so the "
          & "sibling makes progress");
+      Register_Routine
+        (T, Test_Select_From_Goroutine_Yields'Access,
+         "Select_One running inside a goroutine takes the cooperative "
+         & "Yield re-poll path (not the main-context delay) and still "
+         & "fires once the main task fills the channel");
       Register_Routine
         (T, Test_More_Than_Max_Cases_Raises'Access,
          "Select with more than the static Max_Cases bound raises "
@@ -420,6 +449,43 @@ package body Selector_Suite is
       end loop;
       Gada.Async.Scheduler.Shutdown;
    end Test_Blocks_Until_Sibling_Sends;
+
+   procedure Test_Select_From_Goroutine_Yields
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Unused_G : Gada.Async.Scheduler.Goroutine_Id;
+   begin
+      The_Channel := Bound.Make (Capacity => 1);
+      Selector_Done := False;
+      Selector_Out.all := 0;
+      Selector_OKp.all := False;
+
+      Gada.Async.Scheduler.Shutdown;
+      Gada.Async.Scheduler.Init (Workers => 2);
+
+      --  Spawn the selecting goroutine first; running *inside* a
+      --  goroutine, its no-case-ready Select_One re-poll takes the
+      --  cooperative Yield path instead of the main-context delay. The
+      --  brief pause guarantees at least one empty poll (hence a Yield)
+      --  before the main task fills the channel.
+      Unused_G := Gada.Async.Scheduler.Spawn (Selector_Body_Recvs'Access);
+      delay 0.01;
+      Bound.Send (The_Channel, 77);
+
+      for Attempt in 1 .. 200 loop
+         exit when Selector_Done;
+         delay 0.001;
+      end loop;
+      Gada.Async.Scheduler.Shutdown;
+
+      Assert (Selector_Done,
+              "goroutine-context Select_One should fire the recv case");
+      Assert (Selector_Out.all = 77 and Selector_OKp.all,
+              "goroutine-context Select_One should observe V = 77, "
+              & "OK = True; got V =" & Selector_Out.all'Image
+              & ", OK =" & Selector_OKp.all'Image);
+   end Test_Select_From_Goroutine_Yields;
 
    procedure Test_More_Than_Max_Cases_Raises
      (T : in out AUnit.Test_Cases.Test_Case'Class)

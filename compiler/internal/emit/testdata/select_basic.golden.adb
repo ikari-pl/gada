@@ -87,6 +87,8 @@ package body P is
                null;
             when 6 =>
                null;
+            when others =>
+               null;
          end case;
       end;
    end SelectAll;

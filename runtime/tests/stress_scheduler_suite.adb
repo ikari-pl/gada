@@ -35,7 +35,7 @@ package body Stress_Scheduler_Suite is
 
    procedure Increment_And_Return is
    begin
-      Spawn_Counter := Spawn_Counter + 1;
+      Spawn_Counter := @ + 1;
    end Increment_And_Return;
 
    overriding procedure Register_Tests

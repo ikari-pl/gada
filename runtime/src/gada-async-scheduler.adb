@@ -266,7 +266,7 @@ package body Gada.Async.Scheduler is
 
       procedure Inject (G : Goroutine_Access) is
       begin
-         In_Flight := In_Flight + 1;
+         In_Flight := @ + 1;
          Items.Append (G);
       end Inject;
 
@@ -278,7 +278,7 @@ package body Gada.Async.Scheduler is
 
       procedure Reap is
       begin
-         In_Flight := In_Flight - 1;
+         In_Flight := @ - 1;
       end Reap;
 
       entry Pop (for Idx in Active_Worker_Index)
@@ -309,12 +309,12 @@ package body Gada.Async.Scheduler is
 
       procedure Worker_Started is
       begin
-         Workers_Active := Workers_Active + 1;
+         Workers_Active := @ + 1;
       end Worker_Started;
 
       procedure Worker_Stopped is
       begin
-         Workers_Active := Workers_Active - 1;
+         Workers_Active := @ - 1;
       end Worker_Stopped;
 
       entry Drain when Workers_Active = 0 is

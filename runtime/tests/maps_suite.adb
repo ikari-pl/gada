@@ -267,7 +267,7 @@ package body Maps_Suite is
       end loop;
       C := Int_Map_Fib.First (M);
       while Int_Map_Fib.Has_Element (M, C) loop
-         Count := Count + 1;
+         Count := @ + 1;
          --  Use both Key and Value so the iterator's full read
          --  surface is exercised by the coverage gate.
          declare
@@ -522,7 +522,7 @@ package body Maps_Suite is
       Int_Map_G1.Insert (M, 300, 300);
       C := Int_Map_G1.First (M);
       while Int_Map_G1.Has_Element (M, C) loop
-         Count := Count + 1;
+         Count := @ + 1;
          C := Int_Map_G1.Next (M, C);
       end loop;
       Assert (Count = 3,

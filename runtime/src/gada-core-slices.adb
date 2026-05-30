@@ -144,7 +144,7 @@ package body Gada.Core.Slices is
    begin
       if Result.Length < Result.Capacity then
          Set_Element (Result, Result.Length + 1, Value);
-         Result.Length := Result.Length + 1;
+         Result.Length := @ + 1;
          return Result;
       end if;
       declare

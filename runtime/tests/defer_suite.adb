@@ -33,24 +33,24 @@ package body Defer_Suite is
 
    procedure Bump_Counter is
    begin
-      Counter := Counter + 1;
+      Counter := @ + 1;
    end Bump_Counter;
 
    procedure Append_1 is
    begin
-      Sequence_Index := Sequence_Index + 1;
+      Sequence_Index := @ + 1;
       Sequence (Sequence_Index) := 1;
    end Append_1;
 
    procedure Append_2 is
    begin
-      Sequence_Index := Sequence_Index + 1;
+      Sequence_Index := @ + 1;
       Sequence (Sequence_Index) := 2;
    end Append_2;
 
    procedure Append_3 is
    begin
-      Sequence_Index := Sequence_Index + 1;
+      Sequence_Index := @ + 1;
       Sequence (Sequence_Index) := 3;
    end Append_3;
 

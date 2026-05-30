@@ -248,34 +248,36 @@ package body Gada.Async.Selector is
       --  uniqueness alone defeats the same-clock-tick collision
       --  that Gemini's PR #6 R2 review flagged. Wraparound at
       --  2^31 calls is far beyond any realistic select density.
-      Seed_Counter := Seed_Counter + 1;
+      Seed_Counter := @ + 1;
       Reset (Gen, Initiator => Integer (Seed_Counter and 16#7FFF_FFFF#));
 
       --  Build the index permutation. We start with the identity
-      --  permutation over Cases'Range, then Fisher-Yates shuffle.
+      --  permutation over Cases'Range (Ada 2022 iterated component
+      --  association — array-aggregate initialisation in one expression,
+      --  no separate `for I in Order'Range loop … end loop;` step),
+      --  then Fisher-Yates shuffle.
       declare
-         Order : Index_Array (1 .. Cases'Length);
+         Order : Index_Array (1 .. Cases'Length) :=
+           [for I in 1 .. Cases'Length => Cases'First + I - 1];
       begin
-         for I in Order'Range loop
-            Order (I) := Cases'First + I - 1;
-         end loop;
-
          loop
             --  Fresh shuffle each polling iteration so a stuck
             --  case at one position doesn't starve the others.
             Shuffle (Order, Gen);
 
-            for I in Order'Range loop
+            --  Active-case scan with Ada 2022 iterator filter: the
+            --  `when …` clause skips Default and Timeout cases without
+            --  an explicit `if …` body, keeping the body focused on
+            --  the actual try-and-fire dispatch.
+            for I in Order'Range
+              when Cases (Order (I)).Kind not in Default_Op | Timeout_Op
+            loop
                declare
                   Idx : constant Positive := Order (I);
                begin
-                  --  Skip Default and Timeout in the active-case
-                  --  scan; they're outer-loop fallbacks.
-                  if Cases (Idx).Kind not in Default_Op | Timeout_Op then
-                     Try_One_Case (Cases (Idx), Fired);
-                     if Fired then
-                        return Idx;
-                     end if;
+                  Try_One_Case (Cases (Idx), Fired);
+                  if Fired then
+                     return Idx;
                   end if;
                end;
             end loop;

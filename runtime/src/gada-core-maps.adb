@@ -234,8 +234,8 @@ package body Gada.Core.Maps is
                return -1;
             end if;
          end;
-         Probe_Step := Probe_Step + 1;
-         Group_Idx  := (Group_Idx + Probe_Step) and Mask;
+         Probe_Step := @ + 1;
+         Group_Idx  := (@ + Probe_Step) and Mask;
       end loop;
    end Probe_For_Lookup;
 
@@ -302,8 +302,8 @@ package body Gada.Core.Maps is
                return;
             end if;
          end;
-         Probe_Step := Probe_Step + 1;
-         Group_Idx  := (Group_Idx + Probe_Step) and Mask;
+         Probe_Step := @ + 1;
+         Group_Idx  := (@ + Probe_Step) and Mask;
       end loop;
    end Probe_For_Insert;
 
@@ -356,11 +356,10 @@ package body Gada.Core.Maps is
       Old_Slots : Slot_Array (0 .. Old_Cap - 1)
         with Address => Old_Slots_Buf, Import => True;
    begin
-      for I in 0 .. Old_Cap - 1 loop
-         if Is_Live (Old_Ctrl (I)) then
-            Insert
-              (Target, Old_Slots (I).Key, Old_Slots (I).Val);
-         end if;
+      --  Ada 2022 iterator filter — `when Is_Live (…)` skips
+      --  tombstones and empty slots without a nested `if` in the body.
+      for I in 0 .. Old_Cap - 1 when Is_Live (Old_Ctrl (I)) loop
+         Insert (Target, Old_Slots (I).Key, Old_Slots (I).Val);
       end loop;
    end Rehash_Into;
 
@@ -385,9 +384,9 @@ package body Gada.Core.Maps is
          Slots (Slot_Idx) := (Key => K, Val => V, Full_Hash => H_Full);
          Ctrl (Slot_Idx)  := H2 (H_Full);
          if not Was_Present then
-            M.Size := M.Size + 1;
+            M.Size := @ + 1;
             if Was_Tomb then
-               M.Tombstones := M.Tombstones - 1;
+               M.Tombstones := @ - 1;
             end if;
          end if;
       end;
@@ -490,22 +489,21 @@ package body Gada.Core.Maps is
          --  intact.
          Group_Start : constant Natural :=
            (Idx / Group_Size) * Group_Size;
-         Saw_Empty   : Boolean := False;
+         --  Ada 2022 existential quantifier — replaces a five-line
+         --  for-loop-with-exit by an expression that reads as the
+         --  predicate it actually evaluates.
+         Saw_Empty   : constant Boolean :=
+           (for some I in 0 .. Group_Size - 1 =>
+              Ctrl (Group_Start + I) = Empty_Ctrl);
       begin
-         for I in 0 .. Group_Size - 1 loop
-            if Ctrl (Group_Start + I) = Empty_Ctrl then
-               Saw_Empty := True;
-               exit;
-            end if;
-         end loop;
          if Saw_Empty then
             Ctrl (Idx) := Empty_Ctrl;
          else
             Ctrl (Idx)   := Tomb_Ctrl;
-            M.Tombstones := M.Tombstones + 1;
+            M.Tombstones := @ + 1;
          end if;
       end;
-      M.Size := M.Size - 1;
+      M.Size := @ - 1;
    end Delete;
 
    ---------------------------------------------------------------
@@ -567,7 +565,7 @@ package body Gada.Core.Maps is
             if Is_Live (Ctrl (Idx)) then
                return (Index => Idx);
             end if;
-            Idx := Idx + 1;
+            Idx := @ + 1;
          end loop;
       end;
    end First;
@@ -586,7 +584,7 @@ package body Gada.Core.Maps is
             if Is_Live (Ctrl (Idx)) then
                return (Index => Idx);
             end if;
-            Idx := Idx + 1;
+            Idx := @ + 1;
          end loop;
          return No_Element;
       end;

@@ -279,11 +279,11 @@ package body Selector_Suite is
                        Timeout_Duration => 0.0);
          Idx := Sel.Select_One (Cases);
          if Idx = 1 then
-            Won_1 := Won_1 + 1;
+            Won_1 := @ + 1;
             --  Drain C2 to keep the GC happy across trials.
             Bound.Receive (C2, Vr, OKr);
          else
-            Won_2 := Won_2 + 1;
+            Won_2 := @ + 1;
             Bound.Receive (C1, Vr, OKr);
          end if;
       end loop;

@@ -157,6 +157,13 @@ package body Gada.Async.Scheduler is
       --  needed. Set to null when the goroutine is not in any list.
       --  Reusable across yields because a goroutine can only be in
       --  *one* of {Local, Inbox(I), Items, executing} at a time.
+      Spawn_Closure : System.Address := System.Null_Address;
+      --  Opaque per-spawn payload pointer (see Spawn/Closure in the
+      --  spec). Set once at Spawn, read once by the goroutine body at
+      --  entry via Closure (Current); the scheduler never dereferences
+      --  it. Null_Address for no-arg spawns. The body owns the pointed-
+      --  at block's lifetime (the generated Go_Worker frees it after
+      --  unpacking), so the scheduler does not reclaim it on reap.
       Local_Storage       : System.Address := System.Null_Address;
       Local_Storage_Final : Storage_Finalizer := null;
       --  Opaque per-goroutine slot + its reclaimer (see the spec's
@@ -593,6 +600,16 @@ package body Gada.Async.Scheduler is
    end Init;
 
    function Spawn (Body_Proc : Goroutine_Body) return Goroutine_Id is
+   begin
+      --  No-arg form: delegate to the closure-carrying impl with a null
+      --  payload so there is exactly one Spawn body to maintain.
+      return Spawn (Body_Proc, System.Null_Address);
+   end Spawn;
+
+   function Spawn
+     (Body_Proc : Goroutine_Body;
+      Closure   : System.Address) return Goroutine_Id
+   is
       G : Goroutine_Access := new Goroutine_Record;
    begin
       --  Both failure paths below — Init not called, or libco's
@@ -604,8 +621,9 @@ package body Gada.Async.Scheduler is
          raise Program_Error
            with "Gada.Async.Scheduler.Spawn called before Init";
       end if;
-      G.Body_Proc := Body_Proc;
-      G.State := READY;
+      G.Body_Proc     := Body_Proc;
+      G.Spawn_Closure := Closure;
+      G.State         := READY;
       begin
          --  256 KB: empirically large enough for nested protected
          --  operations called from inside a goroutine body — Send
@@ -641,6 +659,17 @@ package body Gada.Async.Scheduler is
       --  no-ops on No_Goroutine.
       return (Ref => Current_Goroutine);
    end Current;
+
+   function Closure (G : Goroutine_Id) return System.Address is
+   begin
+      if G.Ref = null then
+         --  No_Goroutine handle: documented Null_Address result, so
+         --  generated code can call Closure (Current) unconditionally.
+         return System.Null_Address;
+      else
+         return G.Ref.Spawn_Closure;
+      end if;
+   end Closure;
 
    function Get_Local_Storage return System.Address is
    begin

@@ -20,6 +20,8 @@
 pragma Warnings (Off, "use of an anonymous access type allocator");
 
 with Ada.Task_Identification;
+with Ada.Unchecked_Conversion;
+with Ada.Unchecked_Deallocation;
 with AUnit.Assertions; use AUnit.Assertions;
 
 with Gada.Async.Scheduler; use Gada.Async.Scheduler;
@@ -41,6 +43,7 @@ package body Scheduler_Suite is
    procedure Syscall_Body;
    procedure Body_That_Raises;
    procedure Panic_Isolation_Body;
+   procedure Closure_Worker;
 
    procedure Increment_Once is
    begin
@@ -213,6 +216,77 @@ package body Scheduler_Suite is
       Got := Int_Panic.Recover;
       Panic_Ledger.Mark (My_Id, Got = My_Id);
    end Panic_Isolation_Body;
+
+   --  ## Spawn-closure round-trip surface
+   --
+   --  Mirrors, by hand, exactly what the compiler emits for `go
+   --  relay(x, y)`: a per-spawn heap record carrying the argument
+   --  snapshot, passed through Spawn's opaque Closure parameter and
+   --  read back inside the goroutine via Closure (Current). Each of the
+   --  100 spawns gets a distinct (A, B) pair with the invariant
+   --  B = A * 1000; the worker asserts its own pair still satisfies the
+   --  invariant (so closures did not cross-contaminate) and records the
+   --  result keyed by A. Bodies are parameterless `access procedure`,
+   --  so the per-spawn data travels *only* through the closure pointer —
+   --  which is the property under test.
+   Closure_Goroutines : constant := 100;
+   type Pair_Flags is array (1 .. Closure_Goroutines) of Boolean;
+
+   type Arg_Pair is record
+      A : Integer;
+      B : Integer;
+   end record;
+   type Arg_Pair_Access is access Arg_Pair;
+
+   function To_Arg_Pair is
+     new Ada.Unchecked_Conversion (System.Address, Arg_Pair_Access);
+   function To_Address is
+     new Ada.Unchecked_Conversion (Arg_Pair_Access, System.Address);
+   procedure Free_Arg_Pair is
+     new Ada.Unchecked_Deallocation (Arg_Pair, Arg_Pair_Access);
+
+   protected Closure_Ledger is
+      procedure Reset;
+      procedure Mark (Id : Positive; Correct : Boolean);
+      function  Marked return Natural;
+      function  All_Correct return Boolean;
+   private
+      Marks   : Natural    := 0;
+      Results : Pair_Flags := [others => False];
+   end Closure_Ledger;
+
+   protected body Closure_Ledger is
+
+      procedure Reset is
+      begin
+         Marks   := 0;
+         Results := [others => False];
+      end Reset;
+
+      procedure Mark (Id : Positive; Correct : Boolean) is
+      begin
+         Results (Id) := Correct;
+         Marks        := @ + 1;
+      end Mark;
+
+      function Marked return Natural is (Marks);
+
+      function All_Correct return Boolean is (for all R of Results => R);
+
+   end Closure_Ledger;
+
+   procedure Closure_Worker is
+      C : Arg_Pair_Access :=
+        To_Arg_Pair (Gada.Async.Scheduler.Closure (Current));
+      A : constant Integer := C.A;
+      B : constant Integer := C.B;
+   begin
+      --  Record snapshot is copied into A/B above; the heap block is
+      --  dead now, so free it (no per-spawn leak — same shape the
+      --  generated Go_Worker uses).
+      Free_Arg_Pair (C);
+      Closure_Ledger.Mark (A, B = A * 1000);
+   end Closure_Worker;
 
    --  ## Park_Tracker — sequence buffer for the Park/Unpark test
    --
@@ -403,6 +477,15 @@ package body Scheduler_Suite is
          "Do_Panic / Recover from the main task (no current goroutine) "
          & "route via Main_Local_Storage — keeps the v1 single-"
          & "threaded panic path working post-promotion");
+      Register_Routine
+        (T, Test_Closure_Roundtrip_Across_Goroutines'Access,
+         "100 spawns with distinct (A, B) closure payloads each read "
+         & "back their own pair via Closure (Current) — Spawn's opaque "
+         & "payload round-trips without cross-contamination");
+      Register_Routine
+        (T, Test_Closure_Of_No_Goroutine_Is_Null'Access,
+         "Closure (No_Goroutine) returns Null_Address — generated "
+         & "Go_Worker code can call Closure (Current) unconditionally");
    end Register_Tests;
 
    procedure Test_Init_Shutdown_Empty
@@ -904,5 +987,47 @@ package body Scheduler_Suite is
               "main-context Do_Panic should have populated "
               & "Main_Local_Storage");
    end Test_Panic_Main_Fallback;
+
+   procedure Test_Closure_Roundtrip_Across_Goroutines
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Unused_G : Goroutine_Id;
+   begin
+      --  Spawn 100 goroutines, each carrying a distinct heap-allocated
+      --  (A => K, B => K * 1000) closure. Every worker reads its own
+      --  payload back through Closure (Current); the per-spawn pointer
+      --  is the only channel for the data (bodies take no parameters).
+      --  All_Correct holds iff no spawn observed another's payload.
+      Closure_Ledger.Reset;
+      Shutdown;
+      Init (Workers => 4);
+      for K in 1 .. Closure_Goroutines loop
+         declare
+            P : constant Arg_Pair_Access :=
+              new Arg_Pair'(A => K, B => K * 1000);
+         begin
+            Unused_G := Spawn (Closure_Worker'Access, To_Address (P));
+         end;
+      end loop;
+      Shutdown;
+      Assert (Closure_Ledger.Marked = Closure_Goroutines,
+              "Expected all" & Closure_Goroutines'Image
+              & " closure-carrying goroutines to run, got"
+              & Closure_Ledger.Marked'Image);
+      Assert (Closure_Ledger.All_Correct,
+              "A goroutine read a closure payload that was not its own — "
+              & "Spawn's per-spawn closure pointer cross-contaminated");
+   end Test_Closure_Roundtrip_Across_Goroutines;
+
+   procedure Test_Closure_Of_No_Goroutine_Is_Null
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+   begin
+      Assert (Closure (No_Goroutine) = System.Null_Address,
+              "Closure (No_Goroutine) must be Null_Address so generated "
+              & "Go_Worker code can call Closure (Current) blind");
+   end Test_Closure_Of_No_Goroutine_Is_Null;
 
 end Scheduler_Suite;

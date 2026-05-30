@@ -341,6 +341,58 @@ reaches the `end;` of the enclosing `declare` block. Same shape as
 
 ---
 
+### `runtime/src/gada-async-race.adb`
+
+#### `Image` — fall-through terminator  *(line 80)*
+
+```ada
+function Image (R : Race_Report) return String is
+begin
+   return
+     (if not R.Detected then "no race"
+      else "data race: " & ...);
+end Image;     --  line 80
+```
+
+`Image` always returns — the single `return` of a conditional
+expression covers both the no-race and the detected arm, and
+`race_suite`'s `Test_Image_Renders_No_Race_And_Detected` exercises both
+(including the `Holder_Tag` `"none"` / `"g#n"` branches). Control never
+reaches the implicit basic block lcov 2.x instruments at `end Image;`.
+
+Same unreachable-terminator category as the Selector `Select_One`
+end-block (`gada-async-selector.adb:306`) and the `No_Return`
+Trampoline tail loop (`gada-async-context.adb:215`).
+
+What makes this one *unavoidable* rather than a test gap: it was
+verified empirically against the project toolchain (Alire FSF GNAT
+15.1 + lcov 2.4) that **both** function forms leave exactly one
+un-coverable line:
+
+  * a `begin/end` body leaves `end Image;` at hit-count 0 (the
+    fall-through after the trailing `return`);
+  * folding to an Ada 2022 *expression function* moves the problem —
+    lcov 2.x then reports the expression-function's own signature line
+    as uncovered (`"function 'image' is hit but no contained lines are
+    hit"`), because it cannot reconcile a single-line function entry
+    whose expression spans the following lines.
+
+Neither form reaches 100% on its own. The `begin/end` body is the more
+readable of the two equally-uncoverable shapes, so we ship it and
+exclude the single terminator line rather than the signature line.
+`Holder_Tag` (the sibling helper) is kept as an expression function and
+is fully covered — its `(if ...)` is short enough that lcov attributes
+the hit to the `is (...)` line, so it needs no exclusion.
+
+Unlike the libco-OOM / Trampoline exclusions, there is no future
+"fault-injection seam" that removes this one — it is a fixed property
+of how lcov 2.x attributes basic blocks to an always-returning Ada
+function. It can be revisited only if the coverage toolchain changes
+its line attribution (e.g. a future lcov that drops the implicit
+terminator block, or a switch to `gnatcoverage`).
+
+---
+
 ### Adding a new exception
 
 1. Confirm the line is **genuinely** untestable in CI (not just

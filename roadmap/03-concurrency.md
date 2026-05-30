@@ -552,10 +552,39 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         `expected_output.txt` is empty; total wall-clock is
         under 5 s on the dev host.
 
-- [ ] **Race detector integration (best-effort)**
-      *Files:* `runtime/src/gada-async-race.ads`
+- [x] **Race detector integration (best-effort)**
+      *Files:* `runtime/src/gada-async-race.ads` + `.adb`,
+      `runtime/tests/race_suite.{ads,adb}`,
+      `docs/adr/0010-race-detection-best-effort.md`
       *Verify:* `make -C runtime test PKG=async.race`
       *Done when:* an intentional data race is detected and reported (or documented as a known limitation in an ADR).
+      *Done 2026-05-30:* Shipped the **detect** side of the OR, not the
+      stub fallback. `Gada.Async.Race` is a best-effort *cooperative
+      checked-cell* monitor: a generic `Checked_Cell` wraps one value
+      behind a protected `Monitor`; callers bracket each access with
+      `Begin_Access (Read|Write, Who)` / `End_Access (Who)`, and the
+      monitor latches a `Race_Report` the instant a *distinct* goroutine
+      opens an overlapping section where at least one side is a Write —
+      Go's data-race definition narrowed to one instrumented cell. What
+      it catches: write/write and read/write overlap on a wrapped cell
+      from two goroutines. What it deliberately does NOT catch (no
+      shadow memory, no happens-before vector clocks): anything not
+      routed through a `Checked_Cell`, read/read overlap (benign), and
+      ordering established outside the Begin/End bracket — a sound,
+      complete TSan-style detector is a research effort past 1.0, the
+      same stance `CLAUDE.md` takes on the precise GC. Full envelope +
+      the rejected alternatives (full TSan, pure stub, lockset, raise-on-
+      detect) in **ADR-0010**. `race_suite` (10 cases) drives the
+      detector deterministically from the main task AND end-to-end via
+      two real goroutines holding overlapping Write sections behind a
+      protected-entry rendezvous (`Test_Goroutine_Driven_Intentional_
+      Race`): `make -C runtime test PKG=async.race` → 10/10 green, race
+      detected, synchronized + read/read access NOT flagged. Layering:
+      Async unit, depends only on `Gada.Async.Scheduler` for goroutine
+      identity; SPARK posture `Off` (protected-object tasking), recorded
+      in `runtime/PROOF.md` alongside the scheduler row. The `Monitor` is
+      Ravenscar-shaped, so the row could flip if the scheduler picks
+      Ravenscar (ADR-0009).
 
 - [x] **Goroutine leak test**
       *Files:* `runtime/tests/stress_goroutines.adb`

@@ -192,3 +192,23 @@ reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE
 file = "runtime/src/gada-async-selector.adb"
 lines = [102, 107, 163, 164, 165, 306]
 reason = "Selector defensive/unreachable arms — see runtime/COVERAGE.md"
+
+# `end Image;` — the fall-through terminator of Gada.Async.Race.Image.
+# Image is a function that always `return`s (single returned conditional
+# expression covering both the no-race and detected arms, both exercised
+# by race_suite). Control never reaches the implicit basic block lcov 2.x
+# instruments at `end Image;`. Verified empirically against the Alire
+# GNAT 15.1 + lcov 2.4 toolchain that BOTH function forms leave exactly
+# one un-coverable line: a begin/end body leaves `end Image;` at 0, and
+# an expression function instead leaves its own signature line at 0
+# ("function 'image' is hit but no contained lines are hit"). The
+# begin/end body is the more readable of the two equally-uncoverable
+# forms, so we ship it and exclude the one terminator line. Same
+# unreachable-terminator category as the Selector Select_One end-block
+# (line 306 above) and the No_Return Trampoline tail loop
+# (gada-async-context.adb:215). One line.
+# Rationale: runtime/COVERAGE.md (gada-async-race).
+[[exclude]]
+file = "runtime/src/gada-async-race.adb"
+lines = [80]
+reason = "Race.Image fall-through terminator — see runtime/COVERAGE.md"

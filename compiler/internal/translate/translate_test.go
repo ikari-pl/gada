@@ -68,6 +68,8 @@ func TestCorpus(t *testing.T) {
 		"chan_close.go",
 		// Phase 3 — select-stmt fixture (select-emit item, sub-item b).
 		"select_basic.go",
+		// Phase 3 — multi-arg fmt.Println with int rendering (ping_pong b).
+		"println_mixed_args.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)

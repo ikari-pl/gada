@@ -429,7 +429,34 @@ ping-pong over a channel for 1 million iterations and exits cleanly.
         and assert the per-spawn args land at the expected
         positions inside each worker.
 
-  - [ ] **(b) Compiler-emit: multi-arg `fmt.Println` with int rendering**
+  - [x] **(b) Compiler-emit: multi-arg `fmt.Println` with int rendering**
+        *Done 2026-05-30:* `emitFmtPrintln` lowers `fmt.Println(a, b,
+        …)` to a run of `Gada.Core.IO.Print` calls with a `Print (" ")`
+        between consecutive operands and a terminating `New_Line` —
+        Go's variadic-Println shape. Ada overload resolution picks
+        `Print (String)` vs `Print (Integer)` per operand, so emit
+        stays type-agnostic (unsupported scalar types surface as a
+        gprbuild overload error; Float/Bool faithful rendering is
+        Phase 4). The single-string `fmt.Println(s)` is just the
+        one-operand subset, so the five `Println`-bearing goldens
+        (hello, combined, …) were regenerated to `Print (s); New_Line;`
+        and `emitSelector`'s now-dead `fmt.Println` special case
+        removed. Runtime: `Gada.Core.IO` gained `Print (String)`,
+        `Print (Integer)`, and `New_Line`, with `Println` re-expressed
+        as `Print; New_Line`. **Correction to the plan above:** GNAT's
+        `N'Image` (the Ada 2022 object form) does *not* omit the
+        leading sign-position blank — it is identical to
+        `Integer'Image` (verified: both render ` 1000000`). So
+        `Print (Integer)` trims it with `Ada.Strings.Fixed.Trim (…,
+        Left)`; negatives keep their `-`. io_suite gained four cases
+        (string adjacency, the int trim, a negative, a bare New_Line),
+        capturing through New_Line-terminated sequences because
+        Ada.Text_IO appends a terminator to an unterminated line on
+        close. Verified end-to-end: the `println_mixed_args` program
+        transpiles, builds, and prints byte-for-byte what `go run`
+        does (`123` / `hi` / `iterations: 7` / `7 items` / `1 2`).
+        Gates green: runtime 100% (710/710), emit 95.56%, translate
+        95.81%, compiler 95.15%.
         *Why:* The exit-criterion line is
         `fmt.Println("iterations:", n)` for `n = 1000000`,
         producing `iterations: 1000000\n`. Current emit handles

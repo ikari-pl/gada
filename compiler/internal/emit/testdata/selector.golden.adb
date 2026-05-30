@@ -4,7 +4,8 @@ procedure Main is
 
    procedure Say is
    begin
-      Println ("hi");
+      Print ("hi");
+      New_Line;
    end Say;
 
    function Greet (Prefix : String) return String is

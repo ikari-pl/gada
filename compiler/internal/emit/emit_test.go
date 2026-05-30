@@ -54,6 +54,8 @@ var corpusFixtures = []string{
 	"chan_close",
 	// Phase 3 — select-emit (sub-item d: full Select_One lowering).
 	"select_basic",
+	// Phase 3 — multi-arg fmt.Println with int rendering (ping_pong b).
+	"println_mixed_args",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -470,7 +472,7 @@ func TestUnaryPlusAndStringEscape(t *testing.T) {
 		t.Fatalf("emit: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, `Println ("a""b");`) {
+	if !strings.Contains(out, `Print ("a""b");`) {
 		t.Fatalf("expected escaped string literal a\"\"b, got:\n%s", out)
 	}
 	if !strings.Contains(out, `return +(A + B);`) {

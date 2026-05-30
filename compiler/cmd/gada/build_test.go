@@ -324,7 +324,7 @@ func TestBuildPackage_HappyPathStubbed(t *testing.T) {
 		if !strings.Contains(string(body), "procedure Main is") {
 			t.Errorf("emitted main.adb missing 'procedure Main is':\n%s", body)
 		}
-		if !strings.Contains(string(body), `Println ("hello, GADA")`) {
+		if !strings.Contains(string(body), `Print ("hello, GADA")`) {
 			t.Errorf("emitted main.adb missing fmt.Println translation:\n%s", body)
 		}
 		// Fabricate the binary that gprbuild would normally produce.

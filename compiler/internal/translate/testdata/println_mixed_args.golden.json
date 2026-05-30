@@ -1,0 +1,128 @@
+{
+  "kind": "Package",
+  "name": "main",
+  "files": [
+    {
+      "kind": "File",
+      "name": "println_mixed_args.go",
+      "imports": [
+        "fmt"
+      ],
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "main",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "123"
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Lit",
+                  "litKind": "string",
+                  "value": "\"hi\""
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Lit",
+                  "litKind": "string",
+                  "value": "\"iterations:\""
+                },
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "7"
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "7"
+                },
+                {
+                  "kind": "Lit",
+                  "litKind": "string",
+                  "value": "\"items\""
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "1"
+                },
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "2"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -113,11 +113,16 @@ package body Reflect_Types_Suite is
       is
          Raised : Boolean := False;
       begin
-         Probe.all;
-      exception
-         when Constraint_Error =>
-            Raised := True;
-            Assert (Raised, Label);
+         --  Assert *after* the inner block, not inside the handler: a
+         --  Probe that fails to raise would otherwise skip the handler
+         --  and exit with no assertion — a silent false pass.
+         begin
+            Probe.all;
+         exception
+            when Constraint_Error =>
+               Raised := True;
+         end;
+         Assert (Raised, Label);
       end Expect_Constraint_Error;
 
       procedure Bad_Field_Name;

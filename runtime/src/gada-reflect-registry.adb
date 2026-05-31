@@ -48,6 +48,15 @@ package body Gada.Reflect.Registry is
 
    procedure Register_Type (T : Type_Descriptor) is
    begin
+      --  No_Type (0) is the sentinel Lookup returns for an unregistered
+      --  Id; registering a real descriptor under it would shadow that
+      --  zero-reflect.Type contract. The compiler never assigns Id 0, so
+      --  this only fires on a caller error — surface it loudly.
+      if Id (T) = No_Type then
+         raise Constraint_Error
+           with "Gada.Reflect.Registry: cannot register a type with the "
+                & "No_Type (0) sentinel identity";
+      end if;
       Store.Register (T);
    end Register_Type;
 

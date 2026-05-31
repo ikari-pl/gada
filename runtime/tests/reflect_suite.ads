@@ -18,5 +18,7 @@ package Reflect_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Duplicate_Register_Last_Wins
      (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Register_No_Type_Raises
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Reflect_Suite;

@@ -67,6 +67,29 @@ package body Reflect_Suite is
       end;
    end Test_Duplicate_Register_Last_Wins;
 
+   procedure Test_Register_No_Type_Raises
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Bad    : constant Type_Descriptor :=
+        Make (Id => No_Type, Name => "bad", Kind => Int_Kind);
+      Raised : Boolean := False;
+   begin
+      --  No_Type is the unregistered-Id sentinel; registering a real
+      --  descriptor under it must be rejected. Assert after the block
+      --  so a non-raising Register fails the test instead of passing
+      --  silently.
+      begin
+         Gada.Reflect.Registry.Register_Type (Bad);
+      exception
+         when Constraint_Error =>
+            Raised := True;
+      end;
+      Assert (Raised,
+              "registering a type with the No_Type (0) sentinel identity "
+              & "must raise Constraint_Error");
+   end Test_Register_No_Type_Raises;
+
    overriding procedure Register_Tests (T : in out Reflect_Test) is
       use AUnit.Test_Cases.Registration;
    begin
@@ -80,6 +103,10 @@ package body Reflect_Suite is
       Register_Routine
         (T, Test_Duplicate_Register_Last_Wins'Access,
          "Registering the same Id twice replaces the prior descriptor");
+      Register_Routine
+        (T, Test_Register_No_Type_Raises'Access,
+         "Registering a type with the No_Type sentinel identity raises "
+         & "Constraint_Error");
    end Register_Tests;
 
    overriding function Name (T : Reflect_Test) return AUnit.Message_String

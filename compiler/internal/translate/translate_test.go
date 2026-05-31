@@ -72,6 +72,8 @@ func TestCorpus(t *testing.T) {
 		"select_basic.go",
 		// Phase 3 — multi-arg fmt.Println with int rendering (ping_pong b).
 		"println_mixed_args.go",
+		// Phase 4 — type declarations (item 2a): named scalar + struct.
+		"type_decl.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -157,10 +159,17 @@ func TestErrorCases(t *testing.T) {
 		src     string
 		wantSub string
 	}{
-		// Top-level constructs.
+		// Top-level constructs. (`type` declarations are supported as of
+		// Phase 4 — see the type_decl corpus fixture and the two cases
+		// below — so only var / const remain deferred.)
 		{"top var", `package p; var x = 1`, "Phase 1"},
 		{"top const", `package p; const c = 1`, "Phase 1"},
-		{"top type", `package p; type T int`, "Phase 1"},
+		// A type decl whose underlying type emit can't render yet rejects
+		// at transType rather than producing a half-formed TypeDecl.
+		{"type decl func underlying", `package p
+type Handler func()`, "unsupported type expr"},
+		{"struct embedded field", `package p
+type E struct{ int }`, "embedded/anonymous struct fields"},
 		// Statement-level features that are out of Phase 1 scope.
 		{"compound assign", `package p
 func f() { x := 1; x += 1 }`, "assign token"},

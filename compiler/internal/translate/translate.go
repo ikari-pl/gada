@@ -62,10 +62,22 @@ func File(f *ast.File, info *types.Info) (*ir.Package, error) {
 	for _, d := range f.Decls {
 		switch d := d.(type) {
 		case *ast.GenDecl:
-			// Imports are already collected via f.Imports above; any
-			// other GenDecl (Var/Const/Type) is deferred to later
-			// phases.
-			if d.Tok != token.IMPORT {
+			// Imports are already collected via f.Imports above. `type`
+			// declarations become *ir.TypeDecl (Phase 4 — the reflect
+			// layer registers metadata per defined type). Var / Const
+			// are still deferred.
+			switch d.Tok {
+			case token.IMPORT:
+				// already handled via f.Imports above
+			case token.TYPE:
+				for _, spec := range d.Specs {
+					td, err := transTypeDecl(spec.(*ast.TypeSpec))
+					if err != nil {
+						return nil, err
+					}
+					irFile.Decls = append(irFile.Decls, td)
+				}
+			default:
 				return nil, fmt.Errorf("translate: top-level %s decls not supported in Phase 1", d.Tok)
 			}
 		case *ast.FuncDecl:
@@ -192,9 +204,47 @@ func transType(e ast.Expr) (ir.Type, error) {
 			return nil, err
 		}
 		return &ir.ChanType{Elem: elem}, nil
+	case *ast.StructType:
+		return transStructType(t)
 	default:
 		return nil, fmt.Errorf("translate: unsupported type expr %T", e)
 	}
+}
+
+// transStructType builds an *ir.StructType from a Go struct type's
+// field list. A field group like `X, Y int` expands to one
+// StructField per name (source order preserved). Anonymous / embedded
+// fields (no names) are rejected — they need the promoted-field /
+// embedding machinery, which is out of scope here.
+func transStructType(t *ast.StructType) (ir.Type, error) {
+	st := &ir.StructType{}
+	for _, field := range t.Fields.List {
+		if len(field.Names) == 0 {
+			return nil, fmt.Errorf("translate: embedded/anonymous struct fields not supported")
+		}
+		ft, err := transType(field.Type)
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range field.Names {
+			st.Fields = append(st.Fields,
+				&ir.StructField{Name: name.Name, Type: ft})
+		}
+	}
+	return st, nil
+}
+
+// transTypeDecl lowers one `type N <underlying>` spec to an
+// *ir.TypeDecl. The underlying runs through transType, so `type Point
+// struct { ... }`, `type Celsius float64`, `type Buf []byte`, etc. all
+// work; an unsupported underlying (interface, func, …) rejects there
+// with a clear "unsupported type" error rather than dropping silently.
+func transTypeDecl(spec *ast.TypeSpec) (*ir.TypeDecl, error) {
+	underlying, err := transType(spec.Type)
+	if err != nil {
+		return nil, err
+	}
+	return &ir.TypeDecl{Name: spec.Name.Name, Underlying: underlying}, nil
 }
 
 // builtinNames is the closed set of Go predeclared functions Phase 2's

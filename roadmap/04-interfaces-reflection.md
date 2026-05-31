@@ -52,7 +52,7 @@ enumeration; output matches the expected fixture.
   Split into three focused slices, each with its own verify; the parent
   ticks when all three do and the parent's `-run TypeMeta` golden passes.
 
-  - [ ] **(a) IR + translate: `type` declarations**
+  - [x] **(a) IR + translate: `type` declarations**
         *Files:* `compiler/internal/ir/ir.go` (`*ir.TypeDecl` Decl
         variant + an `*ir.StructType` Type variant carrying named
         fields; JSON round-trip + sealed-interface + missing-field
@@ -65,6 +65,24 @@ enumeration; output matches the expected fixture.
         `type Celsius float64` round-trip through translate as
         `*ir.TypeDecl`; directional/unsupported underlyings reject with
         a clear error rather than silently dropping.
+        *Done 2026-05-31:* IR adds `*ir.TypeDecl{Name, Underlying Type}`
+        (Decl variant) and `*ir.StructType{Fields []*StructField}` (Type
+        variant), with `StructField{Name, Type}` carrying each named
+        field. Full JSON round-trip: `TypeDecl` / `StructType` join the
+        decl / type kind-dispatch switches, and the three new
+        Marshal/Unmarshal pairs guard their interface children
+        (`TypeDecl missing underlying`, `StructField missing type`, plus
+        bad-child propagation). Translate's GenDecl arm grows a
+        `token.TYPE` case → `transTypeDecl`, and `transType` grows an
+        `*ast.StructType` arm (`transStructType`) that expands a grouped
+        `X, Y int` field into one StructField per name and rejects
+        embedded/anonymous fields. `type Celsius float64` and
+        `type Point struct { X, Y int }` round-trip (corpus fixture
+        `type_decl`); a func-typed underlying and an embedded field both
+        reject with clear errors. The obsolete `top type → Phase 1`
+        rejection test is replaced by those two. Gates green: runtime
+        100%, ir.go 97.11%, translate 95.77%, emit 95.66%, compiler
+        95.03%.
 
   - [ ] **(b) Runtime — `Gada.Reflect` type registry**
         *Files:* `runtime/src/gada-reflect.ads`/`.adb` (extend the

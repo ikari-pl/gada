@@ -61,6 +61,8 @@ func TestNodeKind(t *testing.T) {
 		{"ChanSend", &ChanSend{}, "ChanSend"},
 		{"ChanRecv", &ChanRecv{}, "ChanRecv"},
 		{"SelectStmt", &SelectStmt{}, "SelectStmt"},
+		{"TypeDecl", &TypeDecl{}, "TypeDecl"},
+		{"StructType", &StructType{}, "StructType"},
 	}
 
 	for _, tc := range cases {
@@ -82,6 +84,7 @@ func TestSealedInterfaces(t *testing.T) {
 	t.Parallel()
 
 	var _ Decl = &Function{}
+	var _ Decl = &TypeDecl{}
 
 	var _ Stmt = &Assign{}
 	var _ Stmt = &If{}
@@ -116,6 +119,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Type = &SliceType{}
 	var _ Type = &MapType{}
 	var _ Type = &ChanType{}
+	var _ Type = &StructType{}
 }
 
 // TestRoundTripHello marshals the canonical hello-world IR, unmarshals
@@ -288,6 +292,40 @@ func TestSliceTypeMissingElem(t *testing.T) {
 	}
 	if _, err := unmarshalType(json.RawMessage(`{"kind":"SliceType","elem":null}`)); err == nil {
 		t.Fatal("expected error for SliceType with null elem")
+	}
+}
+
+// TestTypeDeclMissingUnderlying locks TypeDecl.UnmarshalJSON's
+// explicit-error branch: a defined type with no underlying is
+// meaningless, and a bogus underlying kind must propagate the
+// type-envelope error rather than silently producing an Underlying-nil
+// node.
+func TestTypeDeclMissingUnderlying(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalDecl(json.RawMessage(`{"kind":"TypeDecl","name":"T"}`)); err == nil {
+		t.Fatal("expected error for TypeDecl without underlying")
+	}
+	if _, err := unmarshalDecl(json.RawMessage(`{"kind":"TypeDecl","name":"T","underlying":null}`)); err == nil {
+		t.Fatal("expected error for TypeDecl with null underlying")
+	}
+	if _, err := unmarshalDecl(json.RawMessage(`{"kind":"TypeDecl","name":"T","underlying":{"kind":"Bogus"}}`)); err == nil {
+		t.Fatal("expected error for TypeDecl with bogus underlying kind")
+	}
+}
+
+// TestStructFieldMissingType locks StructField.UnmarshalJSON's
+// missing-type branch (reached through a StructType whose field has no
+// type) and the bad-child propagation through the field's type.
+func TestStructFieldMissingType(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"StructType","fields":[{"kind":"StructField","name":"X"}]}`)); err == nil {
+		t.Fatal("expected error for StructField without type")
+	}
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"StructType","fields":[{"kind":"StructField","name":"X","type":null}]}`)); err == nil {
+		t.Fatal("expected error for StructField with null type")
+	}
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"StructType","fields":[{"kind":"StructField","name":"X","type":{"kind":"Bogus"}}]}`)); err == nil {
+		t.Fatal("expected error for StructField with bogus type kind")
 	}
 }
 

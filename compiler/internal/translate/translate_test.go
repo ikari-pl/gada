@@ -72,6 +72,8 @@ func TestCorpus(t *testing.T) {
 		"select_basic.go",
 		// Phase 3 — multi-arg fmt.Println with int rendering (ping_pong b).
 		"println_mixed_args.go",
+		// Phase 4 — type declarations (item 2a): named scalar + struct.
+		"type_decl.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -157,10 +159,17 @@ func TestErrorCases(t *testing.T) {
 		src     string
 		wantSub string
 	}{
-		// Top-level constructs.
+		// Top-level constructs. (`type` declarations are supported as of
+		// Phase 4 — see the type_decl corpus fixture and the two cases
+		// below — so only var / const remain deferred.)
 		{"top var", `package p; var x = 1`, "Phase 1"},
 		{"top const", `package p; const c = 1`, "Phase 1"},
-		{"top type", `package p; type T int`, "Phase 1"},
+		// A type decl whose underlying type emit can't render yet rejects
+		// at transType rather than producing a half-formed TypeDecl.
+		{"type decl func underlying", `package p
+type Handler func()`, "unsupported type expr"},
+		{"struct embedded field", `package p
+type E struct{ int }`, "embedded/anonymous struct fields"},
 		// Statement-level features that are out of Phase 1 scope.
 		{"compound assign", `package p
 func f() { x := 1; x += 1 }`, "assign token"},
@@ -526,5 +535,26 @@ func TestParenUnwrap(t *testing.T) {
 	// node. (The IR has no paren type; the unwrap is structural.)
 	if _, ok := rhs.Y.(*ir.BinOp); !ok {
 		t.Fatalf("expected paren-unwrapped *ir.BinOp on RHS.Y, got %T", rhs.Y)
+	}
+}
+
+// TestTransStructTypeNilFields covers transStructType's defensive
+// nil-FieldList guard. The Go parser never produces a struct type with
+// a nil Fields (even `struct{}` yields a non-nil empty FieldList), so
+// the case is reachable only via a hand-built AST node — which is
+// exactly what an error-recovered parse or a synthetic AST could hand
+// us. It must return an empty StructType, not nil-deref.
+func TestTransStructTypeNilFields(t *testing.T) {
+	t.Parallel()
+	got, err := transType(&ast.StructType{Fields: nil})
+	if err != nil {
+		t.Fatalf("transType(struct with nil Fields) error = %v", err)
+	}
+	st, ok := got.(*ir.StructType)
+	if !ok {
+		t.Fatalf("expected *ir.StructType, got %T", got)
+	}
+	if len(st.Fields) != 0 {
+		t.Fatalf("expected zero fields, got %d", len(st.Fields))
 	}
 }

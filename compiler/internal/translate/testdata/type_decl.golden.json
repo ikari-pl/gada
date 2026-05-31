@@ -1,0 +1,43 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "type_decl.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "TypeDecl",
+          "name": "Celsius",
+          "underlying": {
+            "kind": "Float64Type"
+          }
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Point",
+          "underlying": {
+            "kind": "StructType",
+            "fields": [
+              {
+                "kind": "StructField",
+                "name": "X",
+                "type": {
+                  "kind": "IntType"
+                }
+              },
+              {
+                "kind": "StructField",
+                "name": "Y",
+                "type": {
+                  "kind": "IntType"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

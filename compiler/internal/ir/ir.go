@@ -61,6 +61,20 @@ type Function struct {
 func (*Function) irDecl()          {}
 func (*Function) NodeKind() string { return "Function" }
 
+// TypeDecl is a Go `type N <underlying>` declaration (a defined type).
+// Underlying is the type N is defined as: a *StructType for
+// `type N struct { ... }`, or a scalar / composite (IntType,
+// Float64Type, SliceType, …) for a named definition like
+// `type Celsius float64`. The reflect layer (Phase 4) emits one
+// Gada.Reflect.Register_Type per TypeDecl at module init.
+type TypeDecl struct {
+	Name       string
+	Underlying Type
+}
+
+func (*TypeDecl) irDecl()          {}
+func (*TypeDecl) NodeKind() string { return "TypeDecl" }
+
 // Param is one parameter or named result.
 //
 // Phase 1 keeps it minimal: a name (possibly empty for unnamed
@@ -542,6 +556,24 @@ type ChanType struct {
 func (*ChanType) irType()          {}
 func (*ChanType) NodeKind() string { return "ChanType" }
 
+// StructField is one named field of a StructType, in source order. A
+// Go field group like `X, Y int` expands to one StructField per name.
+type StructField struct {
+	Name string
+	Type Type
+}
+
+// StructType is a Go `struct { ... }` type: an ordered list of named
+// fields. Anonymous / embedded fields are out of scope for now. Appears
+// as the Underlying of a TypeDecl (`type Point struct { ... }`) and,
+// recursively, as a field type.
+type StructType struct {
+	Fields []*StructField
+}
+
+func (*StructType) irType()          {}
+func (*StructType) NodeKind() string { return "StructType" }
+
 // ---------------------------------------------------------------------------
 // JSON marshaling and unmarshaling
 //
@@ -563,6 +595,12 @@ func unmarshalDecl(raw json.RawMessage) (Decl, error) {
 	switch env.Kind {
 	case "Function":
 		var n Function
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "TypeDecl":
+		var n TypeDecl
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -772,6 +810,12 @@ func unmarshalType(raw json.RawMessage) (Type, error) {
 		return &n, nil
 	case "MapType":
 		var n MapType
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "StructType":
+		var n StructType
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1323,6 +1367,80 @@ func (t *ChanType) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	t.Elem = elem
+	return nil
+}
+
+func (t *StructType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind   string         `json:"kind"`
+		Fields []*StructField `json:"fields"`
+	}{"StructType", t.Fields})
+}
+
+func (t *StructType) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Fields []*StructField `json:"fields"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	t.Fields = aux.Fields
+	return nil
+}
+
+func (s *StructField) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+		Type Type   `json:"type"`
+	}{"StructField", s.Name, s.Type})
+}
+
+func (s *StructField) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Name string          `json:"name"`
+		Type json.RawMessage `json:"type"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	s.Name = aux.Name
+	if len(aux.Type) == 0 || string(aux.Type) == "null" {
+		return fmt.Errorf("ir: StructField %q missing type", aux.Name)
+	}
+	ft, err := unmarshalType(aux.Type)
+	if err != nil {
+		return err
+	}
+	s.Type = ft
+	return nil
+}
+
+func (d *TypeDecl) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind       string `json:"kind"`
+		Name       string `json:"name"`
+		Underlying Type   `json:"underlying"`
+	}{"TypeDecl", d.Name, d.Underlying})
+}
+
+func (d *TypeDecl) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Name       string          `json:"name"`
+		Underlying json.RawMessage `json:"underlying"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	d.Name = aux.Name
+	if len(aux.Underlying) == 0 || string(aux.Underlying) == "null" {
+		return fmt.Errorf("ir: TypeDecl %q missing underlying", aux.Name)
+	}
+	u, err := unmarshalType(aux.Underlying)
+	if err != nil {
+		return err
+	}
+	d.Underlying = u
 	return nil
 }
 

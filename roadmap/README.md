@@ -40,7 +40,7 @@ job is to fix it.
 | 1 | Minimal transpiler (hello, GADA) | DONE | [01-minimal-transpiler.md](01-minimal-transpiler.md) |
 | 2 | Core runtime: memory & errors | DONE | [02-core-runtime.md](02-core-runtime.md) |
 | 3 | Concurrency runtime: goroutines, channels, select | DONE | [03-concurrency.md](03-concurrency.md) |
-| 4 | Interfaces & reflection | NOT_STARTED | [04-interfaces-reflection.md](04-interfaces-reflection.md) |
+| 4 | Interfaces & reflection | IN_PROGRESS | [04-interfaces-reflection.md](04-interfaces-reflection.md) |
 | 5 | Stdlib wave 1: pure-Go foundations | NOT_STARTED | [05-stdlib-wave1.md](05-stdlib-wave1.md) |
 | 6 | Stdlib wave 2: system wrappers | NOT_STARTED | [06-stdlib-wave2.md](06-stdlib-wave2.md) |
 | 7 | Stdlib wave 3: network | NOT_STARTED | [07-stdlib-wave3-network.md](07-stdlib-wave3-network.md) |

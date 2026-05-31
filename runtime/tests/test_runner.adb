@@ -43,6 +43,7 @@ with Channels_Suite;
 with Channels_Unbounded_Suite;
 with Selector_Suite;
 with Race_Suite;
+with Reflect_Types_Suite;
 
 procedure Test_Runner is
 
@@ -73,6 +74,7 @@ procedure Test_Runner is
       or else Pkg = "async.channels.unbounded"
       or else Pkg = "async.select"
       or else Pkg = "async.race"
+      or else Pkg = "reflect.type"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -138,6 +140,9 @@ procedure Test_Runner is
       if Should_Register ("async.race") then
          Add_Test (Result, new Race_Suite.Race_Test);
       end if;
+      if Should_Register ("reflect.type") then
+         Add_Test (Result, new Reflect_Types_Suite.Reflect_Types_Test);
+      end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);
       end if;
@@ -167,6 +172,7 @@ begin
          & " core.defer, core.panic, core.maps, core.hash,"
          & " async.context, async.scheduler, async.channels.bounded,"
          & " async.channels.unbounded, async.select, async.race,"
+         & " reflect.type,"
          & " stress.gc, stress.scheduler, stress.goroutines.");
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
       return;

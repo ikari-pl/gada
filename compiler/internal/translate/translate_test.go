@@ -537,3 +537,24 @@ func TestParenUnwrap(t *testing.T) {
 		t.Fatalf("expected paren-unwrapped *ir.BinOp on RHS.Y, got %T", rhs.Y)
 	}
 }
+
+// TestTransStructTypeNilFields covers transStructType's defensive
+// nil-FieldList guard. The Go parser never produces a struct type with
+// a nil Fields (even `struct{}` yields a non-nil empty FieldList), so
+// the case is reachable only via a hand-built AST node — which is
+// exactly what an error-recovered parse or a synthetic AST could hand
+// us. It must return an empty StructType, not nil-deref.
+func TestTransStructTypeNilFields(t *testing.T) {
+	t.Parallel()
+	got, err := transType(&ast.StructType{Fields: nil})
+	if err != nil {
+		t.Fatalf("transType(struct with nil Fields) error = %v", err)
+	}
+	st, ok := got.(*ir.StructType)
+	if !ok {
+		t.Fatalf("expected *ir.StructType, got %T", got)
+	}
+	if len(st.Fields) != 0 {
+		t.Fatalf("expected zero fields, got %d", len(st.Fields))
+	}
+}

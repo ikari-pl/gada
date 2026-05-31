@@ -218,6 +218,12 @@ func transType(e ast.Expr) (ir.Type, error) {
 // embedding machinery, which is out of scope here.
 func transStructType(t *ast.StructType) (ir.Type, error) {
 	st := &ir.StructType{}
+	// Fields is non-nil for any parser-produced struct type (even
+	// `struct{}` yields an empty-but-non-nil FieldList), but guard it so
+	// a hand-built or error-recovered AST node can't nil-deref here.
+	if t.Fields == nil {
+		return st, nil
+	}
 	for _, field := range t.Fields.List {
 		if len(field.Names) == 0 {
 			return nil, fmt.Errorf("translate: embedded/anonymous struct fields not supported")

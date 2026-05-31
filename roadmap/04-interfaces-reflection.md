@@ -84,11 +84,8 @@ enumeration; output matches the expected fixture.
         100%, ir.go 97.11%, translate 95.77%, emit 95.66%, compiler
         95.03%.
 
-  - [ ] **(b) Runtime — `Gada.Reflect` type registry**
-        *Files:* `runtime/src/gada-reflect.ads`/`.adb` (extend the
-        namespace parent with `Register_Type (T : Types.Type_Descriptor)`
-        and `Lookup (Id : Types.Type_Id) return Types.Type_Descriptor`
-        over a process-wide table keyed by Type_Id),
+  - [x] **(b) Runtime — `Gada.Reflect` type registry**
+        *Files:* `runtime/src/gada-reflect-registry.{ads,adb}`,
         `runtime/tests/reflect_suite.{ads,adb}`.
         *Verify:* `make -C runtime test PKG=reflect`
         *Done when:* a `Register_Type` then `Lookup (Id)` round-trips the
@@ -97,6 +94,22 @@ enumeration; output matches the expected fixture.
         (last-wins or rejected) and tested; coverage 100%. This is the
         store the emitted module-init calls populate and that item 3's
         `TypeOf` reads.
+        *Done 2026-05-31:* Lives in `Gada.Reflect.Registry`, **not** the
+        `Gada.Reflect` parent as first planned: an Ada parent spec may
+        not `with` its own child, and the registry API mentions
+        `Gada.Reflect.Types.Type_Descriptor`, so it must sit in a sibling
+        child. `Register_Type` / `Lookup` front a protected `Store`
+        wrapping an `Ordered_Maps` table keyed by `Type_Id` (Ordered, so
+        no hash function — Type_Id derives from Natural). `Register` is a
+        protected procedure and uses `Include` (last-wins on a duplicate
+        Id); `Lookup` is a protected function (concurrent goroutine
+        reads are safe) returning the stored descriptor, or
+        `Make (No_Type, "", Invalid_Kind)` — Go's zero `reflect.Type` —
+        for an unregistered Id. Three AUnit cases (round-trip,
+        unregistered-is-Invalid, duplicate-last-wins) cover the body 100%
+        (8/8); runtime/ stays 100% (814/814). Same parent-can't-with-
+        child constraint will apply to item 3's TypeOf/ValueOf — they
+        ship as a child too, not in `gada-reflect.ads`.
 
   - [ ] **(c) emit: `typemeta.go` — `Register_Type` calls at module init**
         *Files:* `compiler/internal/emit/typemeta.go`, golden tests

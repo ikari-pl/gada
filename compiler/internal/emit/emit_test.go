@@ -58,6 +58,8 @@ var corpusFixtures = []string{
 	"select_basic",
 	// Phase 3 — multi-arg fmt.Println with int rendering (ping_pong b).
 	"println_mixed_args",
+	// Phase 4 — type metadata emission (item 2c): Register_Type per type.
+	"type_decl",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -2185,5 +2187,213 @@ func TestGoArgsUnnamedParam(t *testing.T) {
 	}
 	if !strings.Contains(out, "G (Anon_1);") {
 		t.Fatalf("expected call G (Anon_1), got:\n%s", out)
+	}
+}
+
+// TestTypeMetaScalarStruct exercises collectTypeMeta on a named scalar
+// and a struct, mirroring the type_decl corpus but asserting the
+// resolved Ids / kinds / field links directly.
+func TestTypeMetaScalarStruct(t *testing.T) {
+	t.Parallel()
+	decls := []ir.Decl{
+		&ir.TypeDecl{Name: "Celsius", Underlying: &ir.Float64Type{}},
+		&ir.TypeDecl{Name: "Point", Underlying: &ir.StructType{Fields: []*ir.StructField{
+			{Name: "X", Type: &ir.IntType{}},
+			{Name: "Y", Type: &ir.IntType{}},
+		}}},
+	}
+	set, err := collectTypeMeta(decls)
+	if err != nil {
+		t.Fatalf("collectTypeMeta: %v", err)
+	}
+	got := set.entries()
+	// Defined types first (source order), then referenced int.
+	if len(got) != 3 {
+		t.Fatalf("want 3 entries, got %d: %+v", len(got), got)
+	}
+	if got[0].Name != "Celsius" || got[0].ID != 1 || got[0].Kind != "Float_Kind" {
+		t.Errorf("entry 0 = %+v, want Celsius/1/Float_Kind", got[0])
+	}
+	if got[1].Name != "Point" || got[1].ID != 2 || got[1].Kind != "Struct_Kind" {
+		t.Errorf("entry 1 = %+v, want Point/2/Struct_Kind", got[1])
+	}
+	if len(got[1].Fields) != 2 || got[1].Fields[0].TypeID != 3 || got[1].Fields[1].TypeID != 3 {
+		t.Errorf("Point fields = %+v, want X,Y both -> int Id 3", got[1].Fields)
+	}
+	if got[2].Name != "int" || got[2].ID != 3 || got[2].Kind != "Int_Kind" {
+		t.Errorf("entry 2 = %+v, want int/3/Int_Kind", got[2])
+	}
+}
+
+// TestTypeMetaComposites covers the slice / map / chan underlyings and
+// their element / key interning, plus the emitted Elem/Key arguments.
+func TestTypeMetaComposites(t *testing.T) {
+	t.Parallel()
+	decls := []ir.Decl{
+		&ir.TypeDecl{Name: "Buf", Underlying: &ir.SliceType{Elem: &ir.IntType{}}},
+		&ir.TypeDecl{Name: "Dict", Underlying: &ir.MapType{Key: &ir.StringType{}, Value: &ir.BoolType{}}},
+		&ir.TypeDecl{Name: "Pipe", Underlying: &ir.ChanType{Elem: &ir.IntType{}}},
+	}
+	set, err := collectTypeMeta(decls)
+	if err != nil {
+		t.Fatalf("collectTypeMeta: %v", err)
+	}
+	got := set.entries()
+	byName := map[string]typeMetaEntry{}
+	for _, e := range got {
+		byName[e.Name] = e
+	}
+	if e := byName["Buf"]; e.Kind != "Slice_Kind" || e.Elem != byName["int"].ID {
+		t.Errorf("Buf = %+v, want Slice_Kind elem->int", e)
+	}
+	if e := byName["Dict"]; e.Kind != "Map_Kind" || e.Key != byName["string"].ID || e.Elem != byName["bool"].ID {
+		t.Errorf("Dict = %+v, want Map_Kind key->string value->bool", e)
+	}
+	if e := byName["Pipe"]; e.Kind != "Chan_Kind" || e.Elem != byName["int"].ID {
+		t.Errorf("Pipe = %+v, want Chan_Kind elem->int", e)
+	}
+
+	// Emission carries the Elem/Key arguments + the Register_Type call.
+	em := newEmitter("p", &ir.File{})
+	em.emitTypeMetadata(got)
+	out := em.buf.String()
+	if !strings.Contains(out, "Elem =>") || !strings.Contains(out, "Key =>") {
+		t.Errorf("emitted metadata missing Elem/Key args:\n%s", out)
+	}
+	if !strings.Contains(out, "Gada.Reflect.Registry.Register_Type (Meta);") {
+		t.Errorf("emitted metadata missing Register_Type call:\n%s", out)
+	}
+}
+
+// TestTypeMetaNested covers metaTypeKey's recursive branches: a
+// composite whose element / key / value is itself a composite, so the
+// canonical key is built by recursion ("[][]int", "chan []int",
+// "map[[]int][]string"). Scalar-element composites (TestTypeMetaComposites)
+// never reach the recursive arm because the element interns as a leaf.
+func TestTypeMetaNested(t *testing.T) {
+	t.Parallel()
+	// Each named type is a slice whose *element* is a composite (or
+	// float64), so the element is interned via internType -> metaTypeKey
+	// and exercises that function's recursive slice / chan / map / float
+	// arms. A top-level named composite is keyed by name and would not.
+	decls := []ir.Decl{
+		&ir.TypeDecl{Name: "Grid", Underlying: &ir.SliceType{
+			Elem: &ir.SliceType{Elem: &ir.IntType{}}}},
+		&ir.TypeDecl{Name: "Fan", Underlying: &ir.SliceType{
+			Elem: &ir.ChanType{Elem: &ir.IntType{}}}},
+		&ir.TypeDecl{Name: "Rows", Underlying: &ir.SliceType{
+			Elem: &ir.MapType{Key: &ir.IntType{}, Value: &ir.StringType{}}}},
+		&ir.TypeDecl{Name: "Temps", Underlying: &ir.SliceType{
+			Elem: &ir.Float64Type{}}},
+	}
+	set, err := collectTypeMeta(decls)
+	if err != nil {
+		t.Fatalf("collectTypeMeta: %v", err)
+	}
+	byName := map[string]typeMetaEntry{}
+	for _, e := range set.entries() {
+		byName[e.Name] = e
+	}
+	// The interned anonymous composites carry the recursively-built keys.
+	for _, want := range []string{
+		"[]int", "chan int", "map[int]string", "float64", "int", "string",
+	} {
+		if _, ok := byName[want]; !ok {
+			t.Errorf("missing interned referenced type %q; got %v", want, keysOf(byName))
+		}
+	}
+	// Each named slice links to its interned composite element by Id.
+	if e := byName["Grid"]; e.Kind != "Slice_Kind" || e.Elem != byName["[]int"].ID {
+		t.Errorf("Grid = %+v, want Slice_Kind elem->[]int", e)
+	}
+	if e := byName["Fan"]; e.Kind != "Slice_Kind" || e.Elem != byName["chan int"].ID {
+		t.Errorf("Fan = %+v, want Slice_Kind elem->chan int", e)
+	}
+	if e := byName["Rows"]; e.Kind != "Slice_Kind" || e.Elem != byName["map[int]string"].ID {
+		t.Errorf("Rows = %+v, want Slice_Kind elem->map[int]string", e)
+	}
+	if e := byName["Temps"]; e.Kind != "Slice_Kind" || e.Elem != byName["float64"].ID {
+		t.Errorf("Temps = %+v, want Slice_Kind elem->float64", e)
+	}
+}
+
+func keysOf(m map[string]typeMetaEntry) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// TestTypeMetaErrors covers the rejection branches: a duplicate type
+// name, a nil underlying (no Kind), a struct field of unsupported type
+// (nil), and a struct-typed field (anonymous struct has no type key).
+func TestTypeMetaErrors(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		decls []ir.Decl
+	}{
+		{"duplicate type", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: &ir.IntType{}},
+			&ir.TypeDecl{Name: "T", Underlying: &ir.IntType{}},
+		}},
+		{"nil underlying", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: nil},
+		}},
+		{"struct field nil type", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: &ir.StructType{Fields: []*ir.StructField{
+				{Name: "X", Type: nil},
+			}}},
+		}},
+		{"struct field anon struct", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: &ir.StructType{Fields: []*ir.StructField{
+				{Name: "X", Type: &ir.StructType{}},
+			}}},
+		}},
+		{"slice of nil", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: &ir.SliceType{Elem: nil}},
+		}},
+		{"chan of nil", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: &ir.ChanType{Elem: nil}},
+		}},
+		{"map of nil key", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: &ir.MapType{Key: nil, Value: &ir.IntType{}}},
+		}},
+		{"map of nil value", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: &ir.MapType{Key: &ir.IntType{}, Value: nil}},
+		}},
+		// Nested-composite error propagation: a slice / chan / map that
+		// is itself an *element* of another composite reaches
+		// metaTypeKey's recursive arm; nil at the bottom must surface as
+		// an error from that arm rather than be swallowed. The outer
+		// slice forces the inner composite through internType ->
+		// metaTypeKey (a top-level named composite is keyed by name and
+		// never recurses there).
+		{"nested slice of nil", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: &ir.SliceType{
+				Elem: &ir.SliceType{Elem: nil}}},
+		}},
+		{"nested chan of nil", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: &ir.SliceType{
+				Elem: &ir.ChanType{Elem: nil}}},
+		}},
+		{"nested map nil key", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: &ir.SliceType{
+				Elem: &ir.MapType{Key: nil, Value: &ir.IntType{}}}},
+		}},
+		{"nested map nil value", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: &ir.SliceType{
+				Elem: &ir.MapType{Key: &ir.IntType{}, Value: nil}}},
+		}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := collectTypeMeta(tc.decls); err == nil {
+				t.Fatalf("expected error for %s, got nil", tc.name)
+			}
+		})
 	}
 }

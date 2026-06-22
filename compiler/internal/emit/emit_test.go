@@ -2265,6 +2265,37 @@ func TestTypeMetaComposites(t *testing.T) {
 	}
 }
 
+// TestTypeMetaSkipsNonTypeDecls feeds collectTypeMeta a decl slice that
+// interleaves a Function with the TypeDecls, exercising the
+// non-TypeDecl skip in both passes. Functions never contribute a
+// descriptor, so only the two defined types (plus the interned int) are
+// registered, with Ids unaffected by the interleaved function.
+func TestTypeMetaSkipsNonTypeDecls(t *testing.T) {
+	t.Parallel()
+	decls := []ir.Decl{
+		&ir.Function{Name: "f"},
+		&ir.TypeDecl{Name: "Celsius", Underlying: &ir.Float64Type{}},
+		&ir.Function{Name: "g"},
+		&ir.TypeDecl{Name: "Point", Underlying: &ir.StructType{Fields: []*ir.StructField{
+			{Name: "X", Type: &ir.IntType{}},
+		}}},
+	}
+	set, err := collectTypeMeta(decls)
+	if err != nil {
+		t.Fatalf("collectTypeMeta: %v", err)
+	}
+	got := set.entries()
+	if len(got) != 3 {
+		t.Fatalf("want 3 entries (Celsius, Point, int), got %d: %+v", len(got), got)
+	}
+	if got[0].Name != "Celsius" || got[0].ID != 1 {
+		t.Errorf("entry 0 = %+v, want Celsius/1", got[0])
+	}
+	if got[1].Name != "Point" || got[1].ID != 2 {
+		t.Errorf("entry 1 = %+v, want Point/2", got[1])
+	}
+}
+
 // TestTypeMetaNested covers metaTypeKey's recursive branches: a
 // composite whose element / key / value is itself a composite, so the
 // canonical key is built by recursion ("[][]int", "chan []int",
@@ -2350,6 +2381,9 @@ func TestTypeMetaErrors(t *testing.T) {
 			&ir.TypeDecl{Name: "T", Underlying: &ir.StructType{Fields: []*ir.StructField{
 				{Name: "X", Type: &ir.StructType{}},
 			}}},
+		}},
+		{"nil struct field", []ir.Decl{
+			&ir.TypeDecl{Name: "T", Underlying: &ir.StructType{Fields: []*ir.StructField{nil}}},
 		}},
 		{"slice of nil", []ir.Decl{
 			&ir.TypeDecl{Name: "T", Underlying: &ir.SliceType{Elem: nil}},

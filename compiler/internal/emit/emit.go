@@ -1044,12 +1044,15 @@ func (e *emitter) emitPackageBody() {
 		}
 	}
 
-	meta, err := collectTypeMeta(e.file.Decls)
-	if err != nil {
-		e.fail(err)
-		return
+	var metaEntries []typeMetaEntry
+	if e.needsReflect {
+		meta, err := collectTypeMeta(e.file.Decls)
+		if err != nil {
+			e.fail(err)
+			return
+		}
+		metaEntries = meta.entries()
 	}
-	metaEntries := meta.entries()
 
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0

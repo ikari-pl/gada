@@ -158,6 +158,9 @@ func (s *typeMetaSet) fillComposite(entry *typeMetaEntry, t ir.Type) error {
 		entry.Elem = vid
 	case *ir.StructType:
 		for _, f := range t.Fields {
+			if f == nil {
+				return fmt.Errorf("emit: nil struct field in %q", entry.Name)
+			}
 			id, err := s.internType(f.Type)
 			if err != nil {
 				return err
@@ -206,7 +209,6 @@ func collectTypeMeta(decls []ir.Decl) (*typeMetaSet, error) {
 	// Pass 1: reserve an Id + entry for each defined type, keyed by its
 	// declared name (defined types share the Go name namespace). A
 	// defined type takes the kind of its underlying (Celsius -> Float).
-	defined := make([]*typeMetaEntry, 0)
 	for _, d := range decls {
 		td, ok := d.(*ir.TypeDecl)
 		if !ok {
@@ -223,22 +225,21 @@ func collectTypeMeta(decls []ir.Decl) (*typeMetaSet, error) {
 		set.next++
 		set.byKey[td.Name] = entry
 		set.order = append(set.order, td.Name)
-		defined = append(defined, entry)
 	}
 
 	// Pass 2: resolve each defined type's links (struct fields, or a
 	// slice/map/chan underlying's element/key), interning referenced
-	// types — which get Ids after the defined ones. Scalars no-op.
-	di := 0
+	// types — which get Ids after the defined ones. Scalars no-op. The
+	// entry is looked up directly by name (pass 1 keyed every defined
+	// type), so the two passes can never index-diverge.
 	for _, d := range decls {
 		td, ok := d.(*ir.TypeDecl)
 		if !ok {
 			continue
 		}
-		if err := set.fillComposite(defined[di], td.Underlying); err != nil {
+		if err := set.fillComposite(set.byKey[td.Name], td.Underlying); err != nil {
 			return nil, err
 		}
-		di++
 	}
 	return set, nil
 }

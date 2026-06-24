@@ -42,7 +42,7 @@ enumeration; output matches the expected fixture.
       green. The TypeOf/ValueOf entry points and the compiler's
       Register_Type emission (later items) build on this.
 
-- [ ] **Compiler — emit type metadata for every defined type**
+- [x] **Compiler — emit type metadata for every defined type**
 
   Decomposed 2026-05-31: the emission has no IR to work from yet —
   `type` declarations are still rejected at translate
@@ -111,7 +111,7 @@ enumeration; output matches the expected fixture.
         child constraint will apply to item 3's TypeOf/ValueOf — they
         ship as a child too, not in `gada-reflect.ads`.
 
-  - [ ] **(c) emit: `typemeta.go` — `Register_Type` calls at module init**
+  - [x] **(c) emit: `typemeta.go` — `Register_Type` calls at module init**
         *Files:* `compiler/internal/emit/typemeta.go`, golden tests
         (`compiler/internal/emit/testdata/type_decl.golden.adb`).
         *Verify:* `cd compiler && go test ./internal/emit/... -run TypeMeta`
@@ -120,6 +120,40 @@ enumeration; output matches the expected fixture.
         `Gada.Reflect.Register_Type (…)` sequence in the module's
         elaboration/init, with Type_Ids assigned per defined type and
         field/elem/key links resolved to those Ids.
+        *Done 2026-06-22:* `typemeta.go` walks the file's `*ir.TypeDecl`s
+        in two passes — pass 1 reserves a per-program `Type_Id` for each
+        defined type in source order (so a type's identity is stable
+        regardless of which built-ins it references), pass 2 resolves
+        each one's links. A shared `fillComposite` helper is the single
+        home for the slice/chan element, map key+value, and struct-field
+        interning (and their error paths), used by both the defined-type
+        pass and `internType` (which reserves an Id *before* recursing so
+        a self-referential composite can't loop). Every *referenced* type
+        — a struct field's type, a slice/chan element, a map key/value —
+        is itself registered with its own Id and Go-facing name
+        (`"int"`, `"[]int"`, `"map[int]string"`, …), so the descriptor
+        links resolve through `Lookup` exactly as Go's
+        `reflect.TypeOf(int)` is a real `Type`. Emission wraps the
+        sequence in a `declare … begin … end;` block placed in the
+        package body's elaboration part (or the main procedure's
+        prologue); `needsReflect` gates the `with Gada.Reflect.Types;` /
+        `with Gada.Reflect.Registry;` clauses so a file with no `type`
+        decls links neither. Corpus golden `type_decl` covers a named
+        scalar (`Celsius`→Float), a struct with two int fields
+        (`Point`→int Id reused), and the interned `int`. Unit tests add
+        scalar/struct, scalar-element composites (slice/map/chan with
+        Elem/Key emission), nested composites (`[][]int`, `[]chan int`,
+        `[]map[int]string`, `[]float64` — the only shape that drives
+        `metaTypeKey`'s recursive arms), and eight rejection cases
+        (duplicate name, nil underlying, struct field nil/anon-struct,
+        and nested nil at slice/chan/map-key/map-value). `metaTypeKey`,
+        `metaTypeKind`, `fillComposite`, `collectTypeMeta`,
+        `emitTypeMetadata` all 100%; the two residual `internType`
+        branches are unreachable defensive error checks after
+        `metaTypeKey` has already validated the type (its domain ⊆
+        `metaTypeKind`'s, and `fillComposite` re-interns the exact
+        children the key walk validated). emit/ aggregate 95.4%
+        (≥ 95 gate); go vet + golangci-lint clean.
 
 - [ ] **GADA.Reflect.TypeOf / ValueOf**
       *Files:* `runtime/src/gada-reflect.ads`, `runtime/src/gada-reflect.adb`, `runtime/tests/test_reflect.adb`

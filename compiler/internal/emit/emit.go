@@ -125,6 +125,7 @@ type emitter struct {
 	needsCorePanic      bool // any panic/recover BuiltinCall seen → emit `with Gada.Core.Panic;` and `package Panic_Of_Integer is new ...`
 	needsAsyncScheduler bool // any GoStmt seen → emit `with Gada.Async.Scheduler;` and the per-subprogram closure-and-Unused_G scaffolding
 	needsGoArgs         bool // any `go f(args)` with a non-empty arg list → emit `with Ada.Unchecked_Conversion;` / `with Ada.Unchecked_Deallocation;` / `with System;` for the per-spawn Go_Closure_<n> record + Allocate_Closure_<n> + Go_Worker_<n> scaffolding
+	needsReflect        bool // any `type` declaration → emit `with Gada.Reflect.Types; with Gada.Reflect.Registry;` and the module-init Register_Type sequence (Phase 4 item 2c)
 	sliceElems          map[string]ir.Type
 	sliceElemOrder      []string
 	mapPairs            map[string]*ir.MapType
@@ -203,6 +204,12 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 // naturally; the leaf record is keyed by its Ada base name.
 func (e *emitter) collectSliceElems() {
 	for _, d := range e.file.Decls {
+		if _, ok := d.(*ir.TypeDecl); ok {
+			// A defined type means the file carries reflect metadata to
+			// register at module init (Phase 4 item 2c).
+			e.needsReflect = true
+			continue
+		}
 		fn, ok := d.(*ir.Function)
 		if !ok {
 			continue
@@ -525,6 +532,10 @@ func (e *emitter) run() error {
 	if e.needsAsyncScheduler {
 		e.println("with Gada.Async.Scheduler;")
 	}
+	if e.needsReflect {
+		e.println("with Gada.Reflect.Types;")
+		e.println("with Gada.Reflect.Registry;")
+	}
 	if e.needsGoArgs {
 		// `go f(x, y)` lowers to a per-spawn heap closure: an Unchecked_
 		// Conversion each way between the closure-access type and the
@@ -537,7 +548,7 @@ func (e *emitter) run() error {
 	if e.needsCoreIO || len(e.sliceElemOrder) > 0 || len(e.mapPairOrder) > 0 ||
 		len(e.chanElemOrder) > 0 || len(e.selectorElemOrder) > 0 ||
 		e.needsCoreDefer || e.needsCorePanic || e.needsAsyncScheduler ||
-		e.needsGoArgs {
+		e.needsGoArgs || e.needsReflect {
 		e.println("")
 	}
 	if e.pkgName == "main" {
@@ -825,6 +836,10 @@ func (e *emitter) emitMainProcedure() {
 	main := e.findMain()
 	var others []*ir.Function
 	for _, d := range e.file.Decls {
+		if _, ok := d.(*ir.TypeDecl); ok {
+			// Collected for the metadata prologue below.
+			continue
+		}
 		fn, ok := d.(*ir.Function)
 		if !ok {
 			e.fail(fmt.Errorf("emit: top-level %T not supported in Phase 1", d))
@@ -926,6 +941,18 @@ func (e *emitter) emitMainProcedure() {
 	e.println("begin")
 	e.indent++
 
+	// Register reflect metadata for every defined type before any user
+	// code runs (a procedure body has no separate elaboration part, so
+	// the prologue of Main is the module-init point).
+	if e.needsReflect {
+		meta, err := collectTypeMeta(e.file.Decls)
+		if err != nil {
+			e.fail(err)
+			return
+		}
+		e.emitTypeMetadata(meta.entries())
+	}
+
 	// `package main` files that contain *any* go-stmt anywhere — in
 	// main itself, in a sibling subprogram, or hoisted into a closure
 	// — own the scheduler lifecycle: bring up the worker pool before
@@ -1005,12 +1032,26 @@ func (e *emitter) emitPackageBody() {
 
 	var fns []*ir.Function
 	for _, d := range e.file.Decls {
-		fn, ok := d.(*ir.Function)
-		if !ok {
+		switch d := d.(type) {
+		case *ir.Function:
+			fns = append(fns, d)
+		case *ir.TypeDecl:
+			// Collected for the module-init metadata block below; not a
+			// subprogram.
+		default:
 			e.fail(fmt.Errorf("emit: top-level %T not supported in Phase 1", d))
 			return
 		}
-		fns = append(fns, fn)
+	}
+
+	var metaEntries []typeMetaEntry
+	if e.needsReflect {
+		meta, err := collectTypeMeta(e.file.Decls)
+		if err != nil {
+			e.fail(err)
+			return
+		}
+		metaEntries = meta.entries()
 	}
 
 	hasSlices := len(e.sliceElemOrder) > 0
@@ -1065,6 +1106,14 @@ func (e *emitter) emitPackageBody() {
 
 	if hasSlices || hasMaps || hasChans || hasSelectors || len(fns) > 0 {
 		e.println("")
+	}
+	// Module-init: register every defined type's metadata in the
+	// package body's elaboration part (runs once, before any caller).
+	if len(metaEntries) > 0 {
+		e.println("begin")
+		e.indent++
+		e.emitTypeMetadata(metaEntries)
+		e.indent--
 	}
 	e.println("end " + pkg + ";")
 }

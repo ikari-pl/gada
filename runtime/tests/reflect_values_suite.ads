@@ -21,6 +21,8 @@ package Reflect_Values_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Value_Of_Composite
      (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Composite_Box_Of_Scalar_Raises
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Scalar_Accessor_Mismatch_Raises
      (T : in out AUnit.Test_Cases.Test_Case'Class);
 

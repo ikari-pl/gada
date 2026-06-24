@@ -37,11 +37,21 @@ package body Gada.Reflect.Values is
       others  => <>);
 
    --  Composite: the Kind is whatever the registry holds for Id (Slice /
-   --  Map / Struct / …), or Invalid_Kind for an unregistered Id.
+   --  Map / Struct / …), or Invalid_Kind for an unregistered Id (the
+   --  zero reflect.Value, allowed through). A *scalar* Id, though, means
+   --  the compiler should have picked a datum-carrying overload — boxing
+   --  it type-only would fabricate a scalar Value with a zero datum, so
+   --  fail fast instead.
    function Value_Of (Id : Type_Id) return Value is
-     (T      => Id,
-      V_Kind => Gada.Reflect.Types.Kind (Gada.Reflect.Registry.Lookup (Id)),
-      others => <>);
+      K : constant Type_Kind :=
+        Gada.Reflect.Types.Kind (Gada.Reflect.Registry.Lookup (Id));
+   begin
+      if K in Bool_Kind | Int_Kind | Float_Kind | String_Kind then
+         raise Constraint_Error
+           with "reflect.ValueOf type-only box of scalar kind " & K'Image;
+      end if;
+      return (T => Id, V_Kind => K, others => <>);
+   end Value_Of;
 
    ----------------------------------------------------------------
    --  reflect.Value — accessors

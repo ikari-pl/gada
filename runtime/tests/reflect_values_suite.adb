@@ -99,6 +99,35 @@ package body Reflect_Values_Suite is
    end Test_Value_Of_Composite;
 
    ----------------------------------------------------------------
+   --  Value_Of (Id) of a scalar Id is a compiler-side misuse and raises
+   ----------------------------------------------------------------
+
+   procedure Test_Composite_Box_Of_Scalar_Raises
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Scalar : constant Type_Descriptor :=
+        Make (Id => 9104, Name => "Count", Kind => Int_Kind);
+      Raised : Boolean := False;
+   begin
+      Gada.Reflect.Registry.Register_Type (Scalar);
+
+      --  The type-only box is for composites; a scalar Id would build a
+      --  zero-datum scalar Value, so it must fail fast. Consume the
+      --  result (Unused_ prefix) and assert *after* the block.
+      declare
+         Unused_Box : Value;
+      begin
+         Unused_Box := Value_Of (9104);
+      exception
+         when Constraint_Error => Raised := True;
+      end;
+      Assert (Raised,
+              "Value_Of (Id) of a scalar-kind Id raises Constraint_Error "
+              & "(scalars must use a datum-carrying overload)");
+   end Test_Composite_Box_Of_Scalar_Raises;
+
+   ----------------------------------------------------------------
    --  Kind-mismatch accessors raise Constraint_Error (Go panics)
    ----------------------------------------------------------------
 
@@ -193,6 +222,10 @@ package body Reflect_Values_Suite is
         (T, Test_Value_Of_Composite'Access,
          "Value_Of (Id) boxes a composite type-only; its Kind comes from "
          & "the registered descriptor");
+      Register_Routine
+        (T, Test_Composite_Box_Of_Scalar_Raises'Access,
+         "Value_Of (Id) of a scalar-kind Id raises Constraint_Error rather "
+         & "than fabricating a zero-datum scalar Value");
       Register_Routine
         (T, Test_Scalar_Accessor_Mismatch_Raises'Access,
          "Each scalar accessor raises Constraint_Error when V.Kind is not "

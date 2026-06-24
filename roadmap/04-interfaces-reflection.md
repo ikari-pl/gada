@@ -155,7 +155,7 @@ enumeration; output matches the expected fixture.
         children the key walk validated). emit/ aggregate 95.4%
         (≥ 95 gate); go vet + golangci-lint clean.
 
-- [ ] **GADA.Reflect.TypeOf / ValueOf**
+- [x] **GADA.Reflect.TypeOf / ValueOf**
       *Files:* `runtime/src/gada-reflect-values.ads`,
       `runtime/src/gada-reflect-values.adb`,
       `runtime/tests/reflect_values_suite.{ads,adb}` (registered in
@@ -197,6 +197,29 @@ enumeration; output matches the expected fixture.
         `Field_*` / `Num_Methods` / `Method_Name`) already ships on
         `Type_Descriptor` and is what the `iface_dispatch` exit example
         enumerates.
+
+      *Done 2026-06-25:* `Gada.Reflect.Values` ships `Type_Of (Id)`
+      (reflect.TypeOf — a thin read over `Registry.Lookup`, Invalid_Kind
+      for an unregistered Id), a flat private `Value` record (Type_Id +
+      one slot per scalar kind, no discriminant / no access — the
+      verifiable-subset-friendly shape), four overloaded scalar
+      `Value_Of` constructors (the Ada datum type fixes the reflect
+      Kind) plus a type-only `Value_Of (Id)` whose Kind comes from the
+      registered descriptor, and the `reflect.Value` accessors `Kind`,
+      `Type_Of (V)`, and `To_Int` / `To_Float` / `To_Bool` / `To_String`
+      (each a raise-expression that yields the datum on a kind match and
+      `Constraint_Error` otherwise — Go's panic on `Value.Int()` of a
+      non-int). The schema names are reached via a non-leaking `use
+      Gada.Reflect.Types` rather than re-exported subtypes, so a caller
+      that `use`s both packages sees each name once. Four AUnit cases
+      (`PKG=reflect.values`) cover Type_Of round-trip + the unregistered
+      path, all five Value_Of forms with their accessors, the composite
+      type-only box, and a Constraint_Error probe on each scalar
+      accessor mismatch — `gada-reflect-values.adb` 100% (34/34),
+      runtime/ stays 100% (850/850). The Go-call lowering of
+      `reflect.TypeOf` / `reflect.ValueOf` to these entry points rides a
+      later item (it needs the operand's static Type_Id, or the
+      interface representation from items 4/5).
 
 - [ ] **Interface satisfaction tables**
       *Files:* `runtime/src/gada-reflect-interfaces.ads`, `compiler/internal/emit/interface.go`

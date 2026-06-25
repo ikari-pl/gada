@@ -76,6 +76,8 @@ func TestCorpus(t *testing.T) {
 		"type_decl.go",
 		// Phase 4 — interface types (item 4a): method sets + empty any.
 		"interface_decl.go",
+		// Phase 4 — methods (item 4b): value + pointer receivers.
+		"method_decl.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -472,15 +474,19 @@ func TestSyntheticErrors(t *testing.T) {
 	// method declaration requires a sibling type declaration, which
 	// fails first in File's GenDecl branch. Construct the FuncDecl
 	// directly so the method-rejection path is tested.
-	t.Run("method", func(t *testing.T) {
-		t.Parallel()
-		af := &ast.File{
+	// Methods are now supported (item 4b); what natural source cannot
+	// reach is a *generic* receiver — transReceiver's two defensive
+	// branches. A generic receiver `func (c C[T]) m()` is an IndexExpr
+	// (default branch); a pointer to one `func (c *C[T]) m()` is a
+	// StarExpr over a non-Ident.
+	methodRecv := func(recvType ast.Expr) *ast.File {
+		return &ast.File{
 			Name: &ast.Ident{Name: "p"},
 			Decls: []ast.Decl{
 				&ast.FuncDecl{
 					Recv: &ast.FieldList{List: []*ast.Field{{
-						Names: []*ast.Ident{{Name: "t"}},
-						Type:  &ast.Ident{Name: "T"},
+						Names: []*ast.Ident{{Name: "c"}},
+						Type:  recvType,
 					}}},
 					Name: &ast.Ident{Name: "m"},
 					Type: &ast.FuncType{Params: &ast.FieldList{}},
@@ -488,8 +494,23 @@ func TestSyntheticErrors(t *testing.T) {
 				},
 			},
 		}
+	}
+
+	t.Run("generic receiver", func(t *testing.T) {
+		t.Parallel()
+		af := methodRecv(&ast.IndexExpr{
+			X: &ast.Ident{Name: "C"}, Index: &ast.Ident{Name: "T"}})
 		if _, err := File(af, nil); err == nil {
-			t.Fatal("expected error for method")
+			t.Fatal("expected error for generic receiver")
+		}
+	})
+
+	t.Run("pointer non-ident receiver", func(t *testing.T) {
+		t.Parallel()
+		af := methodRecv(&ast.StarExpr{X: &ast.IndexExpr{
+			X: &ast.Ident{Name: "C"}, Index: &ast.Ident{Name: "T"}}})
+		if _, err := File(af, nil); err == nil {
+			t.Fatal("expected error for pointer non-ident receiver")
 		}
 	})
 }

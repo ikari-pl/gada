@@ -488,6 +488,58 @@ func TestInterfaceTypeRoundTrip(t *testing.T) {
 	}
 }
 
+// TestFunctionReceiverRoundTrip locks Function.Receiver through the decl
+// boundary: a value receiver, a pointer receiver, and a free function
+// (nil receiver, omitted from JSON via omitempty) all survive
+// marshal -> unmarshalDecl.
+func TestFunctionReceiverRoundTrip(t *testing.T) {
+	t.Parallel()
+	cases := []*Function{
+		{
+			Name:     "Get",
+			Receiver: &Receiver{Name: "c", Type: "Counter"},
+			Results:  []*Param{{Type: &IntType{}}},
+			Body:     []Stmt{},
+		},
+		{
+			Name:     "Inc",
+			Receiver: &Receiver{Name: "c", Type: "Counter", Pointer: true},
+			Body:     []Stmt{},
+		},
+		{Name: "Zero", Results: []*Param{{Type: &IntType{}}}, Body: []Stmt{}},
+	}
+	for i, original := range cases {
+		raw, err := json.Marshal(original)
+		if err != nil {
+			t.Fatalf("case %d Marshal: %v", i, err)
+		}
+		got, err := unmarshalDecl(json.RawMessage(raw))
+		if err != nil {
+			t.Fatalf("case %d unmarshalDecl: %v", i, err)
+		}
+		if !reflect.DeepEqual(original, got) {
+			t.Fatalf("case %d round-trip mismatch:\noriginal: %#v\n     got: %#v",
+				i, original, got)
+		}
+	}
+}
+
+// TestReceiverMissingType locks Receiver.UnmarshalJSON's missing-child
+// guard: a method whose receiver carries no concrete type name is
+// malformed IR and must reject at the JSON -> IR boundary (an empty Name
+// is fine — `func (Point) M()` is legal — only Type is required).
+func TestReceiverMissingType(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{
+		`{"kind":"Function","name":"Get","receiver":{"kind":"Receiver","name":"c"}}`,
+		`{"kind":"Function","name":"Get","receiver":{"kind":"Receiver","name":"c","type":""}}`,
+	} {
+		if _, err := unmarshalDecl(json.RawMessage(raw)); err == nil {
+			t.Fatalf("expected error for receiver without type: %s", raw)
+		}
+	}
+}
+
 // TestSelectCaseMalformed locks the explicit-error branches in
 // SelectCase.UnmarshalJSON. Missing kind, unknown kind, bad child
 // in Chan / Value / Body all surface at the IR boundary rather

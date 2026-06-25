@@ -244,7 +244,7 @@ enumeration; output matches the expected fixture.
   Structural satisfaction needs both method sets, so the foundations come
   first; the parent ticks when all three sub-items do.
 
-  - [ ] **(a) IR + translate: interface types**
+  - [x] **(a) IR + translate: interface types**
         *Files:* `compiler/internal/ir/ir.go` (`*ir.InterfaceType` Type
         variant + an `*ir.MethodSig` carrying name / params / results;
         JSON round-trip + sealed-interface + missing-field guards),
@@ -255,6 +255,21 @@ enumeration; output matches the expected fixture.
         the empty `interface{}` (Go's `any`) round-trip as
         `*ir.InterfaceType`; an embedded interface rejects with a clear
         error rather than silently dropping.
+        *Done 2026-06-25:* IR adds `*ir.InterfaceType{Methods []*MethodSig}`
+        (Type variant) and `*ir.MethodSig{Name, Params, Results}` reusing
+        `*Param`, both with `kind`-tagged Marshal/Unmarshal and an
+        `InterfaceType` arm in `unmarshalType`. Translate's `transType`
+        grows an `*ast.InterfaceType` arm → `transInterfaceType`, which
+        lowers each method's signature via the existing `transFieldList`
+        and rejects embedded interfaces (a field with no names). Corpus
+        fixture `interface_decl` round-trips `Stringer` (one parameterless
+        string method), `ReadWriter` (named param + multi-value result,
+        and a second method), and the empty `interface{}` (`any`, no
+        methods). Rejections covered: embedded interface, and a method
+        with an unsupported param / result type; a synthetic non-FuncType
+        interface field pins the defensive branch. ir.go 96.75%,
+        translate/ 95.75% (both ≥ gate); go vet + golangci-lint clean.
+        Methods-on-concrete-types (4b) and satisfaction (4c) build on this.
 
   - [ ] **(b) IR + translate: methods (receivers)**
         *Files:* `compiler/internal/ir/ir.go` (`Function.Receiver *Param`,

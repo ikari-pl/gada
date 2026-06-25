@@ -74,6 +74,8 @@ func TestCorpus(t *testing.T) {
 		"println_mixed_args.go",
 		// Phase 4 — type declarations (item 2a): named scalar + struct.
 		"type_decl.go",
+		// Phase 4 — interface types (item 4a): method sets + empty any.
+		"interface_decl.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -170,6 +172,12 @@ func TestErrorCases(t *testing.T) {
 type Handler func()`, "unsupported type expr"},
 		{"struct embedded field", `package p
 type E struct{ int }`, "embedded/anonymous struct fields"},
+		{"embedded interface", `package p
+type RW interface{ Reader }`, "embedded interfaces not supported"},
+		{"interface method bad param", `package p
+type I interface{ M(x complex128) }`, "unsupported type"},
+		{"interface method bad result", `package p
+type I interface{ M() complex128 }`, "unsupported type"},
 		// Statement-level features that are out of Phase 1 scope.
 		{"compound assign", `package p
 func f() { x := 1; x += 1 }`, "assign token"},
@@ -388,6 +396,40 @@ func TestSyntheticErrors(t *testing.T) {
 		}
 		if _, err := File(af, nil); err == nil {
 			t.Fatal("expected error for body-less function")
+		}
+	})
+
+	t.Run("interface method non-func type", func(t *testing.T) {
+		t.Parallel()
+		// A named interface field whose type is not a FuncType. The
+		// parser never yields this (a named field is always a method
+		// with a signature), so it can only be built by hand — it
+		// pins transInterfaceType's defensive non-FuncType branch.
+		af := &ast.File{
+			Name: &ast.Ident{Name: "p"},
+			Decls: []ast.Decl{
+				&ast.GenDecl{
+					Tok: token.TYPE,
+					Specs: []ast.Spec{
+						&ast.TypeSpec{
+							Name: &ast.Ident{Name: "I"},
+							Type: &ast.InterfaceType{
+								Methods: &ast.FieldList{
+									List: []*ast.Field{
+										{
+											Names: []*ast.Ident{{Name: "M"}},
+											Type:  &ast.Ident{Name: "int"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		if _, err := File(af, nil); err == nil {
+			t.Fatal("expected error for interface method with non-func type")
 		}
 	})
 

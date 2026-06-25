@@ -1,0 +1,99 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "interface_decl.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "TypeDecl",
+          "name": "Stringer",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": [
+              {
+                "kind": "MethodSig",
+                "name": "String",
+                "params": null,
+                "results": [
+                  {
+                    "kind": "Param",
+                    "name": "",
+                    "type": {
+                      "kind": "StringType"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "ReadWriter",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": [
+              {
+                "kind": "MethodSig",
+                "name": "Read",
+                "params": [
+                  {
+                    "kind": "Param",
+                    "name": "p",
+                    "type": {
+                      "kind": "SliceType",
+                      "elem": {
+                        "kind": "IntType"
+                      }
+                    }
+                  }
+                ],
+                "results": [
+                  {
+                    "kind": "Param",
+                    "name": "",
+                    "type": {
+                      "kind": "IntType"
+                    }
+                  },
+                  {
+                    "kind": "Param",
+                    "name": "",
+                    "type": {
+                      "kind": "BoolType"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "MethodSig",
+                "name": "Write",
+                "params": [
+                  {
+                    "kind": "Param",
+                    "name": "n",
+                    "type": {
+                      "kind": "IntType"
+                    }
+                  }
+                ],
+                "results": null
+              }
+            ]
+          }
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Any",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": null
+          }
+        }
+      ]
+    }
+  ]
+}

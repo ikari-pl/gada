@@ -574,6 +574,29 @@ type StructType struct {
 func (*StructType) irType()          {}
 func (*StructType) NodeKind() string { return "StructType" }
 
+// MethodSig is one method in a method set: a name and a signature, no
+// body (an interface declares methods; it does not implement them). It
+// is also the shape a concrete type's method exposes for the structural
+// satisfaction check (Phase 4 item 4). Params / Results reuse *Param, so
+// `func f()`-style unnamed results round-trip as a Param with Name "".
+type MethodSig struct {
+	Name    string
+	Params  []*Param
+	Results []*Param
+}
+
+// InterfaceType is a Go `interface { ... }` type: the set of method
+// signatures a value must provide. The empty `interface{}` (Go's `any`)
+// is an InterfaceType with no methods. Embedded interfaces are out of
+// scope for now. Appears as the Underlying of a TypeDecl
+// (`type Stringer interface { ... }`). Method order follows source.
+type InterfaceType struct {
+	Methods []*MethodSig
+}
+
+func (*InterfaceType) irType()          {}
+func (*InterfaceType) NodeKind() string { return "InterfaceType" }
+
 // ---------------------------------------------------------------------------
 // JSON marshaling and unmarshaling
 //
@@ -816,6 +839,12 @@ func unmarshalType(raw json.RawMessage) (Type, error) {
 		return &n, nil
 	case "StructType":
 		var n StructType
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "InterfaceType":
+		var n InterfaceType
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1385,6 +1414,48 @@ func (t *StructType) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	t.Fields = aux.Fields
+	return nil
+}
+
+func (t *InterfaceType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind    string       `json:"kind"`
+		Methods []*MethodSig `json:"methods"`
+	}{"InterfaceType", t.Methods})
+}
+
+func (t *InterfaceType) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Methods []*MethodSig `json:"methods"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	t.Methods = aux.Methods
+	return nil
+}
+
+func (m *MethodSig) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind    string   `json:"kind"`
+		Name    string   `json:"name"`
+		Params  []*Param `json:"params"`
+		Results []*Param `json:"results"`
+	}{"MethodSig", m.Name, m.Params, m.Results})
+}
+
+func (m *MethodSig) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Name    string   `json:"name"`
+		Params  []*Param `json:"params"`
+		Results []*Param `json:"results"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	m.Name = aux.Name
+	m.Params = aux.Params
+	m.Results = aux.Results
 	return nil
 }
 

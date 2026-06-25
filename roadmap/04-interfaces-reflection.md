@@ -368,9 +368,55 @@ enumeration; output matches the expected fixture.
           typemeta.go 98.45%; go vet + golangci-lint clean.
 
 - [ ] **Compiler emission — interface method calls**
-      *Files:* `compiler/internal/emit/dispatch.go`, golden tests
-      *Verify:* `cd compiler && go test ./internal/emit/... -run Dispatch`
-      *Done when:* `iface.Method(args)` emits an interface-table-indexed call.
+
+  Decomposed 2026-06-26: the one-line "emit a dispatching call" presumes
+  a Go-type → Ada-type emission layer that **does not exist** — structs,
+  interfaces, and methods have only ever been emitted as *reflect
+  metadata* (item 2/4), never as usable Ada types. Under the Hybrid model
+  (native Ada tagged dispatch) that layer must come first. Split into four
+  sub-items; the parent ticks when all four do. All target the
+  `package main` programs in scope, where types live in the `Main`
+  procedure's declarative part (no `.ads`/spec split needed yet;
+  multi-package struct visibility is deferred). Boundaries may refine as
+  each lands.
+
+  - [ ] **(5a) struct types → Ada records**
+        *Files:* `compiler/internal/emit/emit.go` (or `struct.go`), golden
+        tests.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run Struct`
+        *Done when:* a `type Point struct { X, Y int }` emits an Ada
+        `type Point is record X, Y : Integer; end record;` (tagged when
+        the type has methods / satisfies an interface, per item 4's
+        satisfaction info; plain otherwise), and a struct value is usable
+        — a composite literal `Point{...}` lowers to an Ada aggregate and
+        a field access `p.X` to `P.X`. Makes structs real values for the
+        first time.
+
+  - [ ] **(5b) interface types → Ada interface types**
+        *Files:* `compiler/internal/emit/emit.go`, golden tests.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run Iface`
+        *Done when:* a `type Stringer interface { String() string }` emits
+        `type Stringer is interface; function String (Self : Stringer)
+        return … is abstract;`, and each satisfying concrete type's
+        record gains the `and Stringer` interface derivation with the
+        `overriding` method specs.
+
+  - [ ] **(5c) methods → overriding subprograms**
+        *Files:* `compiler/internal/emit/emit.go`, golden tests.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run Method`
+        *Done when:* each `func (p Point) M(args) …` emits the body of the
+        corresponding `overriding` subprogram (the dispatch operation
+        whose spec 5b declared), with the receiver as the controlling
+        first parameter. Closes the loop 4c-ii left open (method bodies
+        were skipped).
+
+  - [ ] **(5d) interface method calls → dispatching calls**
+        *Files:* `compiler/internal/emit/dispatch.go`, golden tests.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run Dispatch`
+        *Done when:* `iface.Method(args)` on an interface-typed value emits
+        a dispatching call on the `'Class` view (`Method (Iface, args)`),
+        resolved at run time by Ada's own tag — the Hybrid "native vtable"
+        in place of a hand-rolled itable.
 
 - [ ] **Compiler emission — type assertions and type switches**
       *Files:* `compiler/internal/emit/assert.go`, golden tests

@@ -381,16 +381,40 @@ enumeration; output matches the expected fixture.
   each lands.
 
   - [ ] **(5a) struct types → Ada records**
-        *Files:* `compiler/internal/emit/emit.go` (or `struct.go`), golden
-        tests.
-        *Verify:* `cd compiler && go test ./internal/emit/... -run Struct`
-        *Done when:* a `type Point struct { X, Y int }` emits an Ada
-        `type Point is record X, Y : Integer; end record;` (tagged when
-        the type has methods / satisfies an interface, per item 4's
-        satisfaction info; plain otherwise), and a struct value is usable
-        — a composite literal `Point{...}` lowers to an Ada aggregate and
-        a field access `p.X` to `P.X`. Makes structs real values for the
-        first time.
+
+    Split 2026-06-26 into the type declaration (5a-i, emit-only — the
+    struct IR already exists from items 2a/4a) and the value use (5a-ii,
+    full-stack — struct literals have no IR node and translate rejects
+    them). Tagged-ness + the `and Interface` derivation ride 5b.
+
+    - [x] **(5a-i) struct type declarations**
+          *Files:* `compiler/internal/emit/struct.go`, golden tests.
+          *Verify:* `cd compiler && go test ./internal/emit/... -run Struct`
+          *Done when:* a struct `TypeDecl` emits an Ada record type in the
+          enclosing unit's declarative part (the `Main` procedure for a
+          `package main`, the package body otherwise); an empty struct
+          emits `is null record`.
+          *Done 2026-06-26:* `emitStructTypes` writes one record per Go
+          struct type (`type Point is record X : Integer; Y : Integer; end
+          record;`), field types via the existing `typeName`; an empty
+          struct emits `type Empty is null record;` (a fieldless record is
+          illegal Ada). Wired into both `emitPackageBody` and
+          `emitMainProcedure` at the top of the declarative part, with the
+          blank-line bookkeeping. Goldens: `type_decl` / `iface_satisfy`
+          (Point gains its record; the named scalar Celsius and the
+          Stringer interface stay metadata-only — named-scalar and
+          interface type emission are separate) and a new `package main`
+          fixture `struct_main` (record in `Main` + the empty-struct
+          `null record`). struct.go 100%, emit/ 95.58%; vet + lint clean.
+
+    - [ ] **(5a-ii) struct values — literals + field access**
+          *Files:* `compiler/internal/ir/ir.go` (`*ir.StructLit`),
+          `compiler/internal/translate/translate.go` (`transCompositeLit`
+          struct arm), `compiler/internal/emit`, golden tests.
+          *Verify:* `cd compiler && go test ./internal/emit/... -run Struct`
+          *Done when:* a composite literal `Point{X: 1, Y: 2}` lowers to an
+          Ada positional/named aggregate and a field access `p.X` emits as
+          `P.X`, so a struct-using program round-trips end to end.
 
   - [ ] **(5b) interface types → Ada interface types**
         *Files:* `compiler/internal/emit/emit.go`, golden tests.

@@ -52,14 +52,28 @@ type Decl interface {
 
 // Function is a Go top-level `func` declaration.
 type Function struct {
-	Name    string
-	Params  []*Param
-	Results []*Param
-	Body    []Stmt
+	Name     string
+	Receiver *Receiver // nil for a free function; set for a method
+	Params   []*Param
+	Results  []*Param
+	Body     []Stmt
 }
 
 func (*Function) irDecl()          {}
 func (*Function) NodeKind() string { return "Function" }
+
+// Receiver is a method's receiver: the variable name (may be "" for an
+// unnamed receiver `func (Point) M()`), the *named type* the method is
+// declared on, and whether it is a pointer receiver (`func (p *Point)
+// M()`). The receiver type is held by name — that is all the structural
+// satisfaction check (Phase 4 item 4c) needs to attach the method to its
+// concrete type — so a method does not yet require a general named-type
+// node in the type system.
+type Receiver struct {
+	Name    string
+	Type    string
+	Pointer bool
+}
 
 // TypeDecl is a Go `type N <underlying>` declaration (a defined type).
 // Underlying is the type N is defined as: a *StructType for
@@ -961,26 +975,32 @@ func (f *File) UnmarshalJSON(b []byte) error {
 }
 
 func (f *Function) MarshalJSON() ([]byte, error) {
+	// Receiver is omitempty: a free function emits no "receiver" key, so
+	// the existing function goldens are unchanged and only methods carry
+	// the field.
 	return json.Marshal(struct {
-		Kind    string   `json:"kind"`
-		Name    string   `json:"name"`
-		Params  []*Param `json:"params"`
-		Results []*Param `json:"results"`
-		Body    []Stmt   `json:"body"`
-	}{"Function", f.Name, f.Params, f.Results, f.Body})
+		Kind     string    `json:"kind"`
+		Name     string    `json:"name"`
+		Receiver *Receiver `json:"receiver,omitempty"`
+		Params   []*Param  `json:"params"`
+		Results  []*Param  `json:"results"`
+		Body     []Stmt    `json:"body"`
+	}{"Function", f.Name, f.Receiver, f.Params, f.Results, f.Body})
 }
 
 func (f *Function) UnmarshalJSON(b []byte) error {
 	var aux struct {
-		Name    string            `json:"name"`
-		Params  []*Param          `json:"params"`
-		Results []*Param          `json:"results"`
-		Body    []json.RawMessage `json:"body"`
+		Name     string            `json:"name"`
+		Receiver *Receiver         `json:"receiver"`
+		Params   []*Param          `json:"params"`
+		Results  []*Param          `json:"results"`
+		Body     []json.RawMessage `json:"body"`
 	}
 	if err := json.Unmarshal(b, &aux); err != nil {
 		return err
 	}
 	f.Name = aux.Name
+	f.Receiver = aux.Receiver
 	f.Params = aux.Params
 	f.Results = aux.Results
 	body, err := unmarshalStmtList(aux.Body)
@@ -988,6 +1008,30 @@ func (f *Function) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	f.Body = body
+	return nil
+}
+
+func (r *Receiver) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind    string `json:"kind"`
+		Name    string `json:"name"`
+		Type    string `json:"type"`
+		Pointer bool   `json:"pointer"`
+	}{"Receiver", r.Name, r.Type, r.Pointer})
+}
+
+func (r *Receiver) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Name    string `json:"name"`
+		Type    string `json:"type"`
+		Pointer bool   `json:"pointer"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	r.Name = aux.Name
+	r.Type = aux.Type
+	r.Pointer = aux.Pointer
 	return nil
 }
 

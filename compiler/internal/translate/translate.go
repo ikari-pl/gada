@@ -81,9 +81,6 @@ func File(f *ast.File, info *types.Info) (*ir.Package, error) {
 				return nil, fmt.Errorf("translate: top-level %s decls not supported in Phase 1", d.Tok)
 			}
 		case *ast.FuncDecl:
-			if d.Recv != nil {
-				return nil, fmt.Errorf("translate: methods not supported in Phase 1")
-			}
 			fn, err := transFunc(d)
 			if err != nil {
 				return nil, err
@@ -98,15 +95,23 @@ func File(f *ast.File, info *types.Info) (*ir.Package, error) {
 	return pkg, nil
 }
 
-// transFunc produces the IR for a top-level function declaration.
-// Methods (Recv != nil) are filtered out by File before this is
-// called.
+// transFunc produces the IR for a top-level function or method
+// declaration. A method (Recv != nil) gets a non-nil Receiver naming its
+// concrete type; a free function leaves Receiver nil.
 func transFunc(fd *ast.FuncDecl) (*ir.Function, error) {
 	if fd.Body == nil {
 		return nil, fmt.Errorf("translate: function %s has no body", fd.Name.Name)
 	}
 
 	fn := &ir.Function{Name: fd.Name.Name}
+
+	if fd.Recv != nil {
+		recv, err := transReceiver(fd.Recv)
+		if err != nil {
+			return nil, err
+		}
+		fn.Receiver = recv
+	}
 
 	params, err := transFieldList(fd.Type.Params)
 	if err != nil {
@@ -126,6 +131,34 @@ func transFunc(fd *ast.FuncDecl) (*ir.Function, error) {
 	}
 	fn.Body = body
 	return fn, nil
+}
+
+// transReceiver lowers a method's receiver field list (always exactly
+// one field) to an *ir.Receiver. The receiver type is a bare named type
+// `Point` (*ast.Ident) or a pointer receiver `*Point` (*ast.StarExpr
+// over an Ident); the name part may be absent (`func (Point) M()`).
+// Generic receivers (`Point[T]`) and any other shape reject for now.
+func transReceiver(fl *ast.FieldList) (*ir.Receiver, error) {
+	field := fl.List[0]
+	recv := &ir.Receiver{}
+	if len(field.Names) > 0 {
+		recv.Name = field.Names[0].Name
+	}
+	switch t := field.Type.(type) {
+	case *ast.Ident:
+		recv.Type = t.Name
+	case *ast.StarExpr:
+		id, ok := t.X.(*ast.Ident)
+		if !ok {
+			return nil, fmt.Errorf(
+				"translate: unsupported pointer receiver type %T", t.X)
+		}
+		recv.Type = id.Name
+		recv.Pointer = true
+	default:
+		return nil, fmt.Errorf("translate: unsupported receiver type %T", field.Type)
+	}
+	return recv, nil
 }
 
 // transFieldList expands a Go FieldList (which groups parameters by

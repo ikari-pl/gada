@@ -271,8 +271,8 @@ enumeration; output matches the expected fixture.
         translate/ 95.75% (both ≥ gate); go vet + golangci-lint clean.
         Methods-on-concrete-types (4b) and satisfaction (4c) build on this.
 
-  - [ ] **(b) IR + translate: methods (receivers)**
-        *Files:* `compiler/internal/ir/ir.go` (`Function.Receiver *Param`,
+  - [x] **(b) IR + translate: methods (receivers)**
+        *Files:* `compiler/internal/ir/ir.go` (`Function.Receiver *Receiver`,
         nil for a free function; round-trip), `compiler/internal/translate/translate.go`
         (stop filtering `d.Recv`, attach the receiver, surface the method
         through `File`), testdata.
@@ -281,6 +281,24 @@ enumeration; output matches the expected fixture.
         `*ir.Function` with a non-nil Receiver naming Point; a pointer
         receiver round-trips, or rejects with a clear error if pointer
         receivers are deferred.
+        *Done 2026-06-25:* `Function` grows `Receiver *Receiver`, where
+        `*ir.Receiver{Name, Type string, Pointer bool}` holds the receiver
+        var name, the *named type* the method is declared on, and pointer-
+        ness — the type is held by name (all 4c's satisfaction check needs
+        to attach a method to its concrete type), so no general named-type
+        node is required yet. The field is `omitempty` in `Function`'s
+        JSON, so free-function goldens are untouched and only methods
+        carry it. Translate drops the `d.Recv /= nil` reject and
+        `transFunc` populates the receiver via `transReceiver`, which
+        accepts a bare named receiver (`Point`) or a pointer receiver
+        (`*Point`) and rejects generic receivers (`Point[T]`). Corpus
+        fixture `method_decl` round-trips a value-receiver method, a
+        pointer-receiver method (both naming `Counter`), and a free
+        function (nil Receiver). Two synthetic ASTs pin transReceiver's
+        generic-receiver defensive branches. `transReceiver` 100%, ir.go
+        96.64%, translate/ 95.90%; go vet + golangci-lint clean. Method
+        *emission* (the tagged-type bodies) and `Add_Method` population
+        ride 4c / item 5.
 
   - [ ] **(c) satisfaction registry + emission**
         *Files:* `runtime/src/gada-reflect-interfaces.{ads,adb}`,

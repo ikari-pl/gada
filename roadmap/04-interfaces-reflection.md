@@ -301,19 +301,45 @@ enumeration; output matches the expected fixture.
         ride 4c / item 5.
 
   - [ ] **(c) satisfaction registry + emission**
-        *Files:* `runtime/src/gada-reflect-interfaces.{ads,adb}`,
-        `runtime/tests/reflect_interfaces_suite.{ads,adb}` (registered in
-        `test_runner.adb` under `PKG=reflect.interfaces`),
-        `compiler/internal/emit/interface.go`, golden tests.
-        *Verify:* `make -C runtime test PKG=reflect.interfaces` +
-        `cd compiler && go test ./internal/emit/... -run Interface`
-        *Done when:* the compiler computes structural satisfaction for
-        every (concrete type, interface) pair in the file and emits a
-        `Register` call per pair at module init; the concrete type's
-        descriptor gains its methods via `Add_Method` (closing the loop
-        item 2c left open — reflect method enumeration); the runtime
-        `Satisfies (Concrete, Iface)` and method-enumeration lookups are
-        O(1); runtime coverage 100%, emit ≥ 95%.
+
+    Decomposed 2026-06-25 into the runtime store and the compiler
+    emission, mirroring 2b → 2c (registry first, then the calls that
+    populate it). The parent ticks when both do.
+
+    - [x] **(c-i) runtime `Gada.Reflect.Interfaces` registry**
+          *Files:* `runtime/src/gada-reflect-interfaces.{ads,adb}`,
+          `runtime/tests/reflect_interfaces_suite.{ads,adb}` (registered
+          in `test_runner.adb` under `PKG=reflect.interfaces`).
+          *Verify:* `make -C runtime test PKG=reflect.interfaces`
+          *Done when:* `Register (Concrete, Iface)` records a satisfaction
+          pair and `Satisfies (Concrete, Iface)` answers membership in
+          O(1) (a hashed store, protected for concurrent goroutine
+          reads); a `No_Type` operand on either side is rejected
+          (Constraint_Error), as in the type registry; coverage 100%.
+          *Done 2026-06-25:* `Register` / `Satisfies` front a protected
+          `Store` wrapping a `Hashed_Sets` of a `Pair{Concrete, Iface}`
+          record (hash mixes the two Type_Ids order-sensitively, so a
+          pair and its reverse are distinct facts). `Register` uses
+          `Include` (idempotent re-registration) and raises
+          `Constraint_Error` if either operand is `No_Type`; `Satisfies`
+          is a protected function (concurrent goroutine reads) returning
+          `Contains` — O(1). Four AUnit cases (`PKG=reflect.interfaces`):
+          round-trip, unregistered + directional asymmetry, idempotent
+          double-register, and the No_Type rejection on each side.
+          `gada-reflect-interfaces.adb` 100% (13/13); runtime/ stays 100%
+          (867/867). 4c-ii emits the `Register` calls against this.
+
+    - [ ] **(c-ii) compiler satisfaction computation + emission**
+          *Files:* `compiler/internal/emit/interface.go`, golden tests
+          (`compiler/internal/emit/testdata`).
+          *Verify:* `cd compiler && go test ./internal/emit/... -run Interface`
+          *Done when:* the compiler computes structural satisfaction
+          (a concrete type's method set ⊇ an interface's, by name +
+          signature) for every (concrete, interface) pair in the file and
+          emits a `Gada.Reflect.Interfaces.Register` call per satisfied
+          pair at module init; the concrete type's descriptor gains its
+          methods via `Add_Method` (closing the loop item 2c left open —
+          reflect method enumeration); emit ≥ 95%.
 
 - [ ] **Compiler emission — interface method calls**
       *Files:* `compiler/internal/emit/dispatch.go`, golden tests

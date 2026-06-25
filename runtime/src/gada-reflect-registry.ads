@@ -19,6 +19,11 @@ with Gada.Reflect.Types;
 
 package Gada.Reflect.Registry is
 
+   --  Register_Type is called from client module-init elaboration; force
+   --  this body to elaborate right after its spec so a client's call can
+   --  never precede it (Access-Before-Elaboration).
+   pragma Elaborate_Body;
+
    --  Add (or, for an Id already present, replace) T. Called once per
    --  defined type from module-init elaboration.
    procedure Register_Type (T : Gada.Reflect.Types.Type_Descriptor);

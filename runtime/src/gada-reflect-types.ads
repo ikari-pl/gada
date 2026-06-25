@@ -30,6 +30,11 @@ private with Ada.Containers.Vectors;
 
 package Gada.Reflect.Types is
 
+   --  Make / Add_Field are called from client module-init elaboration
+   --  (the compiler builds each descriptor there); force this body to
+   --  elaborate right after its spec so those calls can never precede it.
+   pragma Elaborate_Body;
+
    --  Mirrors Go's reflect.Kind for the type set GADA supports. The
    --  literals are suffixed `_Kind` to dodge Ada reserved words
    --  (`interface`) and predefined type names (`String`, `Float`).

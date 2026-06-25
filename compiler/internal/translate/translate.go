@@ -206,9 +206,49 @@ func transType(e ast.Expr) (ir.Type, error) {
 		return &ir.ChanType{Elem: elem}, nil
 	case *ast.StructType:
 		return transStructType(t)
+	case *ast.InterfaceType:
+		return transInterfaceType(t)
 	default:
 		return nil, fmt.Errorf("translate: unsupported type expr %T", e)
 	}
+}
+
+// transInterfaceType builds an *ir.InterfaceType from a Go interface
+// type's method list. Each method field carries one name and an
+// *ast.FuncType signature, lowered via transFieldList (the same params /
+// results expansion functions use). The empty `interface{}` (Go's `any`)
+// yields an InterfaceType with no methods. Embedded interfaces (a field
+// with no names — the interface is named by its type) are rejected: they
+// need method-set flattening, which is out of scope here.
+func transInterfaceType(t *ast.InterfaceType) (ir.Type, error) {
+	it := &ir.InterfaceType{}
+	if t.Methods == nil {
+		return it, nil
+	}
+	for _, field := range t.Methods.List {
+		if len(field.Names) == 0 {
+			return nil, fmt.Errorf("translate: embedded interfaces not supported")
+		}
+		ft, ok := field.Type.(*ast.FuncType)
+		if !ok {
+			return nil, fmt.Errorf(
+				"translate: interface method %q has unexpected type %T",
+				field.Names[0].Name, field.Type)
+		}
+		params, err := transFieldList(ft.Params)
+		if err != nil {
+			return nil, err
+		}
+		results, err := transFieldList(ft.Results)
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range field.Names {
+			it.Methods = append(it.Methods,
+				&ir.MethodSig{Name: name.Name, Params: params, Results: results})
+		}
+	}
+	return it, nil
 }
 
 // transStructType builds an *ir.StructType from a Go struct type's

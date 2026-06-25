@@ -63,6 +63,7 @@ func TestNodeKind(t *testing.T) {
 		{"SelectStmt", &SelectStmt{}, "SelectStmt"},
 		{"TypeDecl", &TypeDecl{}, "TypeDecl"},
 		{"StructType", &StructType{}, "StructType"},
+		{"InterfaceType", &InterfaceType{}, "InterfaceType"},
 	}
 
 	for _, tc := range cases {
@@ -120,6 +121,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Type = &MapType{}
 	var _ Type = &ChanType{}
 	var _ Type = &StructType{}
+	var _ Type = &InterfaceType{}
 }
 
 // TestRoundTripHello marshals the canonical hello-world IR, unmarshals
@@ -445,6 +447,44 @@ func TestSelectStmtRoundTrip(t *testing.T) {
 	}
 	if !reflect.DeepEqual(original, got) {
 		t.Fatalf("round-trip mismatch:\noriginal: %#v\n     got: %#v", original, got)
+	}
+}
+
+// TestInterfaceTypeRoundTrip locks InterfaceType / MethodSig through the
+// type boundary: a method-bearing interface (with named params and
+// unnamed multi-results) and the empty interface{} (Go's any, no
+// methods) both survive marshal -> unmarshalType.
+func TestInterfaceTypeRoundTrip(t *testing.T) {
+	t.Parallel()
+	cases := []*InterfaceType{
+		// type Stringer interface { String() string }
+		{Methods: []*MethodSig{
+			{Name: "String", Results: []*Param{{Type: &StringType{}}}},
+		}},
+		// type Reader interface { Read(p []int) (int, bool) }
+		{Methods: []*MethodSig{
+			{
+				Name:    "Read",
+				Params:  []*Param{{Name: "p", Type: &SliceType{Elem: &IntType{}}}},
+				Results: []*Param{{Type: &IntType{}}, {Type: &BoolType{}}},
+			},
+		}},
+		// the empty interface{} (any) — no methods
+		{},
+	}
+	for i, original := range cases {
+		raw, err := json.Marshal(original)
+		if err != nil {
+			t.Fatalf("case %d Marshal: %v", i, err)
+		}
+		got, err := unmarshalType(json.RawMessage(raw))
+		if err != nil {
+			t.Fatalf("case %d unmarshalType: %v", i, err)
+		}
+		if !reflect.DeepEqual(original, got) {
+			t.Fatalf("case %d round-trip mismatch:\noriginal: %#v\n     got: %#v",
+				i, original, got)
+		}
 	}
 }
 

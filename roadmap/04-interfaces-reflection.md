@@ -222,9 +222,65 @@ enumeration; output matches the expected fixture.
       interface representation from items 4/5).
 
 - [ ] **Interface satisfaction tables**
-      *Files:* `runtime/src/gada-reflect-interfaces.ads`, `compiler/internal/emit/interface.go`
-      *Verify:* `make test` (cross-cutting)
-      *Done when:* compiler emits a satisfaction registration for every (concrete type, interface) pair determinable at compile time; runtime can look up dispatch at O(1).
+
+  **Design — Hybrid (chosen 2026-06-25).** Go interface dispatch maps onto
+  Ada in two coordinated representations the compiler keeps in sync:
+
+  - *Native Ada tagged types drive real calls.* Each Go interface becomes
+    an Ada `interface` type; each concrete type the compiler finds
+    satisfying it becomes a tagged type (`is new … and I`) with
+    `overriding` method bodies. `iface.M (args)` is then a dispatching
+    call and `x.(T)` a membership test — Ada's own vtable, no hand-rolled
+    itable. This *emission* lands in items 5–6, where it is exercised.
+  - *A satisfaction registry answers introspection.* The runtime
+    `Gada.Reflect.Interfaces` records each (concrete, interface) pair and
+    the concrete type's method names, so `reflect.TypeOf (x)` method
+    enumeration and "does C satisfy I" queries are O(1). **This item owns
+    the registry and the IR foundations both halves need.**
+
+  Decomposed 2026-06-25: interfaces and methods are not in the IR yet —
+  `ir.Function` carries no receiver and translate *drops* every method
+  (the `d.Recv /= nil` arm), and there is no interface-type node.
+  Structural satisfaction needs both method sets, so the foundations come
+  first; the parent ticks when all three sub-items do.
+
+  - [ ] **(a) IR + translate: interface types**
+        *Files:* `compiler/internal/ir/ir.go` (`*ir.InterfaceType` Type
+        variant + an `*ir.MethodSig` carrying name / params / results;
+        JSON round-trip + sealed-interface + missing-field guards),
+        `compiler/internal/translate/translate.go` (`transType`
+        `*ast.InterfaceType` arm), `compiler/internal/translate/testdata`.
+        *Verify:* `cd compiler && go test ./internal/ir/... ./internal/translate/... -run 'TestCorpus|Interface'`
+        *Done when:* `type Stringer interface { String () string }` and
+        the empty `interface{}` (Go's `any`) round-trip as
+        `*ir.InterfaceType`; an embedded interface rejects with a clear
+        error rather than silently dropping.
+
+  - [ ] **(b) IR + translate: methods (receivers)**
+        *Files:* `compiler/internal/ir/ir.go` (`Function.Receiver *Param`,
+        nil for a free function; round-trip), `compiler/internal/translate/translate.go`
+        (stop filtering `d.Recv`, attach the receiver, surface the method
+        through `File`), testdata.
+        *Verify:* `cd compiler && go test ./internal/ir/... ./internal/translate/... -run 'TestCorpus|Method'`
+        *Done when:* `func (p Point) String () string` round-trips as an
+        `*ir.Function` with a non-nil Receiver naming Point; a pointer
+        receiver round-trips, or rejects with a clear error if pointer
+        receivers are deferred.
+
+  - [ ] **(c) satisfaction registry + emission**
+        *Files:* `runtime/src/gada-reflect-interfaces.{ads,adb}`,
+        `runtime/tests/reflect_interfaces_suite.{ads,adb}` (registered in
+        `test_runner.adb` under `PKG=reflect.interfaces`),
+        `compiler/internal/emit/interface.go`, golden tests.
+        *Verify:* `make -C runtime test PKG=reflect.interfaces` +
+        `cd compiler && go test ./internal/emit/... -run Interface`
+        *Done when:* the compiler computes structural satisfaction for
+        every (concrete type, interface) pair in the file and emits a
+        `Register` call per pair at module init; the concrete type's
+        descriptor gains its methods via `Add_Method` (closing the loop
+        item 2c left open — reflect method enumeration); the runtime
+        `Satisfies (Concrete, Iface)` and method-enumeration lookups are
+        O(1); runtime coverage 100%, emit ≥ 95%.
 
 - [ ] **Compiler emission — interface method calls**
       *Files:* `compiler/internal/emit/dispatch.go`, golden tests

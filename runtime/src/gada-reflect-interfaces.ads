@@ -22,6 +22,11 @@ with Gada.Reflect.Types;
 
 package Gada.Reflect.Interfaces is
 
+   --  Register is called from client module-init elaboration; force this
+   --  package's body to elaborate right after its spec so a client's
+   --  Register call can never precede it (Access-Before-Elaboration).
+   pragma Elaborate_Body;
+
    --  Record that the concrete type Concrete satisfies the interface
    --  Iface. Idempotent. A No_Type on either side is rejected
    --  (Constraint_Error) — the compiler never assigns Id 0, so it can

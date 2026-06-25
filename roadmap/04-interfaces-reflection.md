@@ -221,7 +221,7 @@ enumeration; output matches the expected fixture.
       later item (it needs the operand's static Type_Id, or the
       interface representation from items 4/5).
 
-- [ ] **Interface satisfaction tables**
+- [x] **Interface satisfaction tables**
 
   **Design — Hybrid (chosen 2026-06-25).** Go interface dispatch maps onto
   Ada in two coordinated representations the compiler keeps in sync:
@@ -300,7 +300,7 @@ enumeration; output matches the expected fixture.
         *emission* (the tagged-type bodies) and `Add_Method` population
         ride 4c / item 5.
 
-  - [ ] **(c) satisfaction registry + emission**
+  - [x] **(c) satisfaction registry + emission**
 
     Decomposed 2026-06-25 into the runtime store and the compiler
     emission, mirroring 2b → 2c (registry first, then the calls that
@@ -329,7 +329,7 @@ enumeration; output matches the expected fixture.
           `gada-reflect-interfaces.adb` 100% (13/13); runtime/ stays 100%
           (867/867). 4c-ii emits the `Register` calls against this.
 
-    - [ ] **(c-ii) compiler satisfaction computation + emission**
+    - [x] **(c-ii) compiler satisfaction computation + emission**
           *Files:* `compiler/internal/emit/interface.go`, golden tests
           (`compiler/internal/emit/testdata`).
           *Verify:* `cd compiler && go test ./internal/emit/... -run Interface`
@@ -340,6 +340,28 @@ enumeration; output matches the expected fixture.
           pair at module init; the concrete type's descriptor gains its
           methods via `Add_Method` (closing the loop item 2c left open —
           reflect method enumeration); emit ≥ 95%.
+          *Done 2026-06-25:* `interface.go`'s `satisfiedPairs` gathers the
+          file's interfaces (TypeDecls over `*ir.InterfaceType`) and each
+          concrete type's receiver methods, then for every (concrete,
+          interface) pair checks `methodSetSatisfies` — every interface
+          method has a concrete method of the same name and identical
+          param/result type lists (`metaTypeKey` canonicalises each type;
+          the empty `interface{}` is satisfied vacuously). It is computed
+          independent of Type_Id, so the with-clause pre-pass
+          (`needsIfaceReg`) and the emitter share it. `metaTypeKind` gains
+          the `Interface_Kind` case; `collectTypeMeta` a third pass that
+          attaches each type's method names (interface signatures, or a
+          concrete's receiver funcs) so `emitTypeMetadata` emits
+          `Add_Method` — finally populating the reflect method list item
+          2c left empty. `emitInterfaceSatisfaction` writes one
+          `Gada.Reflect.Interfaces.Register (Concrete => …, Iface => …)`
+          per pair into the module-init block. Method *bodies* are skipped
+          in the subprogram loops (dispatch is item 5). Corpus golden
+          `iface_satisfy` (Point implements Stringer) shows Add_Method on
+          both descriptors + the Register call; `TestInterfaceSatisfaction`
+          covers the match, the empty interface, and the missing-method /
+          wrong-result / wrong-arity rejections. emit/ 95.41%, interface.go
+          97.62%, typemeta.go 98.45%; go vet + golangci-lint clean.
 
 - [ ] **Compiler emission — interface method calls**
       *Files:* `compiler/internal/emit/dispatch.go`, golden tests

@@ -31,12 +31,14 @@ type typeMetaField struct {
 
 // typeMetaEntry is one type to register at module init.
 type typeMetaEntry struct {
-	ID     int
-	Name   string // Go-facing name: "int", "Point", "[]int", …
-	Kind   string // Ada Type_Kind literal: "Int_Kind", "Struct_Kind", …
-	Fields []typeMetaField
-	Elem   int // 0 == No_Type (Slice/Pointer/Chan element, Map value)
-	Key    int // 0 == No_Type (Map key)
+	ID      int
+	Name    string // Go-facing name: "int", "Point", "[]int", …
+	Kind    string // Ada Type_Kind literal: "Int_Kind", "Struct_Kind", …
+	Fields  []typeMetaField
+	Methods []string // method names: an interface's signatures, or a
+	//                  concrete type's receiver methods (reflect.Method)
+	Elem int // 0 == No_Type (Slice/Pointer/Chan element, Map value)
+	Key  int // 0 == No_Type (Map key)
 }
 
 // typeMetaSet accumulates entries keyed by a canonical type string, in
@@ -81,6 +83,8 @@ func metaTypeKind(t ir.Type) (string, error) {
 		return "Chan_Kind", nil
 	case *ir.StructType:
 		return "Struct_Kind", nil
+	case *ir.InterfaceType:
+		return "Interface_Kind", nil
 	default:
 		return "", fmt.Errorf("emit: no reflect Kind for type %T", t)
 	}
@@ -241,6 +245,31 @@ func collectTypeMeta(decls []ir.Decl) (*typeMetaSet, error) {
 			return nil, err
 		}
 	}
+
+	// Pass 3: attach methods (reflect.Type.Method enumeration). An
+	// interface's methods are its underlying signatures (declared, not
+	// implemented); a concrete type's methods are the receiver functions
+	// naming it. Source order: interface methods follow the signature
+	// order, concrete methods the order their funcs appear. A method on a
+	// type not defined in this file (an imported receiver) has no entry
+	// and is skipped.
+	for _, d := range decls {
+		switch n := d.(type) {
+		case *ir.TypeDecl:
+			if it, ok := n.Underlying.(*ir.InterfaceType); ok {
+				e := set.byKey[n.Name]
+				for _, m := range it.Methods {
+					e.Methods = append(e.Methods, m.Name)
+				}
+			}
+		case *ir.Function:
+			if n.Receiver != nil {
+				if e, ok := set.byKey[n.Receiver.Type]; ok {
+					e.Methods = append(e.Methods, n.Name)
+				}
+			}
+		}
+	}
 	return set, nil
 }
 
@@ -272,6 +301,10 @@ func (e *emitter) emitTypeMetadata(entries []typeMetaEntry) {
 			e.println(fmt.Sprintf(
 				"Gada.Reflect.Types.Add_Field (Meta, %q, Field_Type => %d);",
 				f.Name, f.TypeID))
+		}
+		for _, meth := range m.Methods {
+			e.println(fmt.Sprintf(
+				"Gada.Reflect.Types.Add_Method (Meta, %q);", meth))
 		}
 		e.println("Gada.Reflect.Registry.Register_Type (Meta);")
 	}

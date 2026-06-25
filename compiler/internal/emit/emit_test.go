@@ -60,6 +60,8 @@ var corpusFixtures = []string{
 	"println_mixed_args",
 	// Phase 4 — type metadata emission (item 2c): Register_Type per type.
 	"type_decl",
+	// Phase 4 — interface satisfaction (item 4c-ii): Add_Method + Register.
+	"iface_satisfy",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -2293,6 +2295,85 @@ func TestTypeMetaSkipsNonTypeDecls(t *testing.T) {
 	}
 	if got[1].Name != "Point" || got[1].ID != 2 {
 		t.Errorf("entry 1 = %+v, want Point/2", got[1])
+	}
+}
+
+// TestInterfaceSatisfaction covers the structural satisfaction
+// computation: a concrete type satisfies an interface iff its method set
+// provides a name+signature match for every interface method. Exercises
+// a clean match, the empty interface (satisfied by all), and the three
+// rejections — missing method, wrong result type, and wrong arity — then
+// checks the emission resolves Ids into a Register call per pair.
+func TestInterfaceSatisfaction(t *testing.T) {
+	t.Parallel()
+	str := func() *ir.Param { return &ir.Param{Type: &ir.StringType{}} }
+
+	decls := []ir.Decl{
+		// type Stringer interface { String() string }
+		&ir.TypeDecl{Name: "Stringer", Underlying: &ir.InterfaceType{
+			Methods: []*ir.MethodSig{{Name: "String", Results: []*ir.Param{str()}}}}},
+		// type Writer interface { Write(n int) }
+		&ir.TypeDecl{Name: "Writer", Underlying: &ir.InterfaceType{
+			Methods: []*ir.MethodSig{{Name: "Write",
+				Params: []*ir.Param{{Name: "n", Type: &ir.IntType{}}}}}}},
+		// type Any interface{}
+		&ir.TypeDecl{Name: "Any", Underlying: &ir.InterfaceType{}},
+		// concrete types
+		&ir.TypeDecl{Name: "Point", Underlying: &ir.StructType{}},
+		&ir.TypeDecl{Name: "Wrong", Underlying: &ir.StructType{}},
+		&ir.TypeDecl{Name: "Arity", Underlying: &ir.StructType{}},
+		&ir.TypeDecl{Name: "Bare", Underlying: &ir.StructType{}},
+		// Point.String() string -> satisfies Stringer (and Any).
+		&ir.Function{Name: "String", Receiver: &ir.Receiver{Type: "Point"},
+			Results: []*ir.Param{str()}},
+		// Wrong.String() int -> wrong result type, does NOT satisfy Stringer.
+		&ir.Function{Name: "String", Receiver: &ir.Receiver{Type: "Wrong"},
+			Results: []*ir.Param{{Type: &ir.IntType{}}}},
+		// Arity.Write() -> wrong arity (no param), does NOT satisfy Writer.
+		&ir.Function{Name: "Write", Receiver: &ir.Receiver{Type: "Arity"}},
+		// Bare has no methods -> satisfies only Any.
+	}
+
+	got := map[string]bool{}
+	for _, p := range satisfiedPairs(decls) {
+		got[p.Concrete+":"+p.Iface] = true
+	}
+
+	// Every concrete satisfies the empty interface; only Point satisfies
+	// Stringer; nobody here satisfies Writer.
+	for _, want := range []string{
+		"Point:Stringer", "Point:Any", "Wrong:Any", "Arity:Any", "Bare:Any",
+	} {
+		if !got[want] {
+			t.Errorf("expected satisfied pair %q, got %v", want, got)
+		}
+	}
+	for _, notWant := range []string{
+		"Wrong:Stringer", // String() int  != String() string
+		"Arity:Writer",   // Write()       != Write(int)
+		"Bare:Stringer",  // no String method at all
+		"Point:Writer",   // Point has no Write
+	} {
+		if got[notWant] {
+			t.Errorf("did not expect satisfied pair %q, got %v", notWant, got)
+		}
+	}
+
+	// Emission resolves each pair's Type_Ids and writes one Register
+	// call. Point (Id 4) satisfies Stringer (Id 1) — Ids follow source
+	// order of the defined types.
+	set, err := collectTypeMeta(decls)
+	if err != nil {
+		t.Fatalf("collectTypeMeta: %v", err)
+	}
+	em := newEmitter("p", &ir.File{})
+	em.emitInterfaceSatisfaction(set, satisfiedPairs(decls))
+	out := em.buf.String()
+	if !strings.Contains(out, "Gada.Reflect.Interfaces.Register (Concrete =>") {
+		t.Errorf("emitted satisfaction missing Register call:\n%s", out)
+	}
+	if !strings.Contains(out, "--  Point satisfies Stringer") {
+		t.Errorf("emitted satisfaction missing the Point/Stringer comment:\n%s", out)
 	}
 }
 

@@ -1,0 +1,91 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "iface_satisfy.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "TypeDecl",
+          "name": "Stringer",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": [
+              {
+                "kind": "MethodSig",
+                "name": "String",
+                "params": null,
+                "results": [
+                  {
+                    "kind": "Param",
+                    "name": "",
+                    "type": {
+                      "kind": "StringType"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Point",
+          "underlying": {
+            "kind": "StructType",
+            "fields": [
+              {
+                "kind": "StructField",
+                "name": "X",
+                "type": {
+                  "kind": "IntType"
+                }
+              },
+              {
+                "kind": "StructField",
+                "name": "Y",
+                "type": {
+                  "kind": "IntType"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "Function",
+          "name": "String",
+          "receiver": {
+            "kind": "Receiver",
+            "name": "pt",
+            "type": "Point",
+            "pointer": false
+          },
+          "params": null,
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "StringType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "Lit",
+                  "litKind": "string",
+                  "value": "\"pt\""
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

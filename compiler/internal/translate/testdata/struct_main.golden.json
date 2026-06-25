@@ -40,10 +40,26 @@
         },
         {
           "kind": "Function",
-          "name": "main",
+          "name": "describe",
           "params": null,
           "results": null,
           "body": null
+        },
+        {
+          "kind": "Function",
+          "name": "main",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Ident",
+                "name": "describe"
+              },
+              "args": null
+            }
+          ]
         }
       ]
     }

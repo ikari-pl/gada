@@ -12,5 +12,11 @@ type Point struct {
 // `record … end record` is illegal Ada).
 type Empty struct{}
 
+// A sibling subprogram so the declarative part holds a struct type *and*
+// a subprogram — exercising the blank line between them in Main.
+func describe() {
+}
+
 func main() {
+	describe()
 }

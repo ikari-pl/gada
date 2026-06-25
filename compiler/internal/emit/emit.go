@@ -901,7 +901,7 @@ func (e *emitter) emitMainProcedure() {
 			return
 		}
 	}
-	if hasStructs && (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(others) > 0 || len(mainDecls) > 0) {
+	if hasStructs && (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0) {
 		e.println("")
 	}
 	if hasSlices {

@@ -9,6 +9,11 @@ procedure Main is
    end record;
    type Empty is null record;
 
+   procedure Describe is
+   begin
+      null;
+   end Describe;
+
 begin
    declare
       Meta : Gada.Reflect.Types.Type_Descriptor;
@@ -25,5 +30,5 @@ begin
       Meta := Gada.Reflect.Types.Make (Id => 3, Name => "int", Kind => Gada.Reflect.Types.Int_Kind);
       Gada.Reflect.Registry.Register_Type (Meta);
    end;
-   null;
+   Describe;
 end Main;

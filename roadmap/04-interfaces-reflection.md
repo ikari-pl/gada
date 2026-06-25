@@ -155,10 +155,71 @@ enumeration; output matches the expected fixture.
         children the key walk validated). emit/ aggregate 95.4%
         (≥ 95 gate); go vet + golangci-lint clean.
 
-- [ ] **GADA.Reflect.TypeOf / ValueOf**
-      *Files:* `runtime/src/gada-reflect.ads`, `runtime/src/gada-reflect.adb`, `runtime/tests/test_reflect.adb`
-      *Verify:* `make -C runtime test PKG=reflect`
-      *Done when:* `Type_Of`, `Value_Of`, `Kind`, `Field`, `Method` all return values matching Go's `reflect` semantics; coverage 100%.
+- [x] **GADA.Reflect.TypeOf / ValueOf**
+      *Files:* `runtime/src/gada-reflect-values.ads`,
+      `runtime/src/gada-reflect-values.adb`,
+      `runtime/tests/reflect_values_suite.{ads,adb}` (registered in
+      `runtime/tests/test_runner.adb` under `PKG=reflect.values`).
+      *Verify:* `make -C runtime test PKG=reflect.values`
+      *Done when:* `Type_Of`, `Value_Of`, `Kind`, `Field`, `Method` all
+      return values matching Go's `reflect` semantics; coverage 100%.
+
+      Corrected 2026-06-25 (roadmap originally listed
+      `gada-reflect.{ads,adb}` + `test_reflect.adb` + `PKG=reflect`):
+
+      - **Child, not the parent.** The TypeOf/ValueOf surface references
+        `Gada.Reflect.Types` and `Gada.Reflect.Registry`, and an Ada
+        parent spec may not `with` its own child — the same constraint
+        that put the registry in `Gada.Reflect.Registry` (item 2b). It
+        ships as a sibling child, `Gada.Reflect.Values`, *not* in
+        `gada-reflect.ads`. `PKG=reflect` is already the registry suite's
+        filter, so the new suite filters under `reflect.values`.
+      - **Runtime-only item.** No compiler files: the API is built and
+        AUnit-tested directly. Lowering a Go `reflect.TypeOf(x)` /
+        `reflect.ValueOf(x)` *call* to these entry points is a later
+        concern (it needs the static operand Type_Id at the call site,
+        or — for an operand that is already an interface value — the
+        interface representation from items 4/5).
+      - **`Value` is a SPARK-friendly discriminated record**, not a
+        boxed `Any` (no universal value box exists in the runtime yet,
+        and one would drag in `unsafe`/tagged machinery the verifiable
+        subset rejects). It carries the operand's `Type_Id` plus, for
+        the scalar kinds, the datum: `Int` (Long_Long_Integer), `Float`
+        (Long_Float), `Bool`, `String` (Unbounded_String). `Value_Of` is
+        overloaded per scalar so the compiler picks by static operand
+        type; a type-only `Value_Of (Id)` covers the composite kinds.
+        Accessors mirror Go's `reflect.Value`: `Kind`, `Type_Of (V)`
+        (→ descriptor), and `To_Int` / `To_Float` / `To_Bool` /
+        `To_String` (each raises `Constraint_Error` on a kind mismatch,
+        Go's panic on `Value.Int()` of a non-int). Value-side composite
+        *data* walking (field values, slice indexing) is post-1.0 per
+        AGENTS.md non-goals; the *type*-side walk (`Num_Fields` /
+        `Field_*` / `Num_Methods` / `Method_Name`) already ships on
+        `Type_Descriptor` and is what the `iface_dispatch` exit example
+        enumerates.
+
+      *Done 2026-06-25:* `Gada.Reflect.Values` ships `Type_Of (Id)`
+      (reflect.TypeOf — a thin read over `Registry.Lookup`, Invalid_Kind
+      for an unregistered Id), a flat private `Value` record (Type_Id +
+      one slot per scalar kind, no discriminant / no access — the
+      verifiable-subset-friendly shape), four overloaded scalar
+      `Value_Of` constructors (the Ada datum type fixes the reflect
+      Kind) plus a type-only `Value_Of (Id)` whose Kind comes from the
+      registered descriptor, and the `reflect.Value` accessors `Kind`,
+      `Type_Of (V)`, and `To_Int` / `To_Float` / `To_Bool` / `To_String`
+      (each a raise-expression that yields the datum on a kind match and
+      `Constraint_Error` otherwise — Go's panic on `Value.Int()` of a
+      non-int). The schema names are reached via a non-leaking `use
+      Gada.Reflect.Types` rather than re-exported subtypes, so a caller
+      that `use`s both packages sees each name once. Four AUnit cases
+      (`PKG=reflect.values`) cover Type_Of round-trip + the unregistered
+      path, all five Value_Of forms with their accessors, the composite
+      type-only box, and a Constraint_Error probe on each scalar
+      accessor mismatch — `gada-reflect-values.adb` 100% (34/34),
+      runtime/ stays 100% (850/850). The Go-call lowering of
+      `reflect.TypeOf` / `reflect.ValueOf` to these entry points rides a
+      later item (it needs the operand's static Type_Id, or the
+      interface representation from items 4/5).
 
 - [ ] **Interface satisfaction tables**
       *Files:* `runtime/src/gada-reflect-interfaces.ads`, `compiler/internal/emit/interface.go`

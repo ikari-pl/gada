@@ -78,6 +78,9 @@ func TestCorpus(t *testing.T) {
 		"interface_decl.go",
 		// Phase 4 — methods (item 4b): value + pointer receivers.
 		"method_decl.go",
+		// Phase 4 — interface satisfaction (item 4c-ii): a concrete type
+		// with a method implementing an interface.
+		"iface_satisfy.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)

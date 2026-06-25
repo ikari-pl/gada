@@ -126,6 +126,7 @@ type emitter struct {
 	needsAsyncScheduler bool // any GoStmt seen → emit `with Gada.Async.Scheduler;` and the per-subprogram closure-and-Unused_G scaffolding
 	needsGoArgs         bool // any `go f(args)` with a non-empty arg list → emit `with Ada.Unchecked_Conversion;` / `with Ada.Unchecked_Deallocation;` / `with System;` for the per-spawn Go_Closure_<n> record + Allocate_Closure_<n> + Go_Worker_<n> scaffolding
 	needsReflect        bool // any `type` declaration → emit `with Gada.Reflect.Types; with Gada.Reflect.Registry;` and the module-init Register_Type sequence (Phase 4 item 2c)
+	needsIfaceReg       bool // any proven (concrete, interface) satisfaction pair → emit `with Gada.Reflect.Interfaces;` and the module-init Register calls (Phase 4 item 4c-ii)
 	sliceElems          map[string]ir.Type
 	sliceElemOrder      []string
 	mapPairs            map[string]*ir.MapType
@@ -203,6 +204,10 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 // subprogram body. Slice-of-slice (`[][]T`) recurses through Elem
 // naturally; the leaf record is keyed by its Ada base name.
 func (e *emitter) collectSliceElems() {
+	// A proven (concrete, interface) satisfaction pair means the module
+	// init also registers satisfaction (Phase 4 item 4c-ii). Computed
+	// here so run() can emit the with-clause before the body.
+	e.needsIfaceReg = len(satisfiedPairs(e.file.Decls)) > 0
 	for _, d := range e.file.Decls {
 		if _, ok := d.(*ir.TypeDecl); ok {
 			// A defined type means the file carries reflect metadata to
@@ -536,6 +541,9 @@ func (e *emitter) run() error {
 		e.println("with Gada.Reflect.Types;")
 		e.println("with Gada.Reflect.Registry;")
 	}
+	if e.needsIfaceReg {
+		e.println("with Gada.Reflect.Interfaces;")
+	}
 	if e.needsGoArgs {
 		// `go f(x, y)` lowers to a per-spawn heap closure: an Unchecked_
 		// Conversion each way between the closure-access type and the
@@ -845,6 +853,11 @@ func (e *emitter) emitMainProcedure() {
 			e.fail(fmt.Errorf("emit: top-level %T not supported in Phase 1", d))
 			return
 		}
+		if fn.Receiver != nil {
+			// A method is reflect-metadata-only for now; its dispatch
+			// body is emitted in item 5.
+			continue
+		}
 		if fn != main {
 			others = append(others, fn)
 		}
@@ -951,6 +964,7 @@ func (e *emitter) emitMainProcedure() {
 			return
 		}
 		e.emitTypeMetadata(meta.entries())
+		e.emitInterfaceSatisfaction(meta, satisfiedPairs(e.file.Decls))
 	}
 
 	// `package main` files that contain *any* go-stmt anywhere — in
@@ -1034,6 +1048,12 @@ func (e *emitter) emitPackageBody() {
 	for _, d := range e.file.Decls {
 		switch d := d.(type) {
 		case *ir.Function:
+			if d.Receiver != nil {
+				// A method contributes only to reflect metadata for now
+				// (Add_Method + satisfaction). Its dispatch body — the
+				// tagged-type overriding subprogram — is emitted in item 5.
+				continue
+			}
 			fns = append(fns, d)
 		case *ir.TypeDecl:
 			// Collected for the module-init metadata block below; not a
@@ -1045,12 +1065,14 @@ func (e *emitter) emitPackageBody() {
 	}
 
 	var metaEntries []typeMetaEntry
+	var metaSet *typeMetaSet
 	if e.needsReflect {
 		meta, err := collectTypeMeta(e.file.Decls)
 		if err != nil {
 			e.fail(err)
 			return
 		}
+		metaSet = meta
 		metaEntries = meta.entries()
 	}
 
@@ -1113,6 +1135,7 @@ func (e *emitter) emitPackageBody() {
 		e.println("begin")
 		e.indent++
 		e.emitTypeMetadata(metaEntries)
+		e.emitInterfaceSatisfaction(metaSet, satisfiedPairs(e.file.Decls))
 		e.indent--
 	}
 	e.println("end " + pkg + ";")

@@ -46,6 +46,7 @@ with Race_Suite;
 with Reflect_Types_Suite;
 with Reflect_Suite;
 with Reflect_Values_Suite;
+with Reflect_Interfaces_Suite;
 
 procedure Test_Runner is
 
@@ -79,6 +80,7 @@ procedure Test_Runner is
       or else Pkg = "reflect.type"
       or else Pkg = "reflect"
       or else Pkg = "reflect.values"
+      or else Pkg = "reflect.interfaces"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -153,6 +155,11 @@ procedure Test_Runner is
       if Should_Register ("reflect.values") then
          Add_Test (Result, new Reflect_Values_Suite.Reflect_Values_Test);
       end if;
+      if Should_Register ("reflect.interfaces") then
+         Add_Test
+           (Result,
+            new Reflect_Interfaces_Suite.Reflect_Interfaces_Test);
+      end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);
       end if;
@@ -182,7 +189,7 @@ begin
          & " core.defer, core.panic, core.maps, core.hash,"
          & " async.context, async.scheduler, async.channels.bounded,"
          & " async.channels.unbounded, async.select, async.race,"
-         & " reflect.type, reflect, reflect.values,"
+         & " reflect.type, reflect, reflect.values, reflect.interfaces,"
          & " stress.gc, stress.scheduler, stress.goroutines.");
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
       return;

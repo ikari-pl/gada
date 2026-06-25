@@ -306,7 +306,7 @@ enumeration; output matches the expected fixture.
     emission, mirroring 2b → 2c (registry first, then the calls that
     populate it). The parent ticks when both do.
 
-    - [ ] **(c-i) runtime `Gada.Reflect.Interfaces` registry**
+    - [x] **(c-i) runtime `Gada.Reflect.Interfaces` registry**
           *Files:* `runtime/src/gada-reflect-interfaces.{ads,adb}`,
           `runtime/tests/reflect_interfaces_suite.{ads,adb}` (registered
           in `test_runner.adb` under `PKG=reflect.interfaces`).
@@ -316,6 +316,18 @@ enumeration; output matches the expected fixture.
           O(1) (a hashed store, protected for concurrent goroutine
           reads); a `No_Type` operand on either side is rejected
           (Constraint_Error), as in the type registry; coverage 100%.
+          *Done 2026-06-25:* `Register` / `Satisfies` front a protected
+          `Store` wrapping a `Hashed_Sets` of a `Pair{Concrete, Iface}`
+          record (hash mixes the two Type_Ids order-sensitively, so a
+          pair and its reverse are distinct facts). `Register` uses
+          `Include` (idempotent re-registration) and raises
+          `Constraint_Error` if either operand is `No_Type`; `Satisfies`
+          is a protected function (concurrent goroutine reads) returning
+          `Contains` — O(1). Four AUnit cases (`PKG=reflect.interfaces`):
+          round-trip, unregistered + directional asymmetry, idempotent
+          double-register, and the No_Type rejection on each side.
+          `gada-reflect-interfaces.adb` 100% (13/13); runtime/ stays 100%
+          (867/867). 4c-ii emits the `Register` calls against this.
 
     - [ ] **(c-ii) compiler satisfaction computation + emission**
           *Files:* `compiler/internal/emit/interface.go`, golden tests

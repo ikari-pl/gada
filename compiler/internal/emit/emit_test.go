@@ -2323,9 +2323,16 @@ func TestInterfaceSatisfaction(t *testing.T) {
 		&ir.TypeDecl{Name: "Wrong", Underlying: &ir.StructType{}},
 		&ir.TypeDecl{Name: "Arity", Underlying: &ir.StructType{}},
 		&ir.TypeDecl{Name: "Bare", Underlying: &ir.StructType{}},
+		&ir.TypeDecl{Name: "PtrRecv", Underlying: &ir.StructType{}},
 		// Point.String() string -> satisfies Stringer (and Any).
 		&ir.Function{Name: "String", Receiver: &ir.Receiver{Type: "Point"},
 			Results: []*ir.Param{str()}},
+		// PtrRecv.String() string on a *pointer* receiver -> the value
+		// type PtrRecv does NOT satisfy Stringer (that method is in
+		// *PtrRecv's set), and it must not appear in PtrRecv's descriptor.
+		&ir.Function{Name: "String",
+			Receiver: &ir.Receiver{Type: "PtrRecv", Pointer: true},
+			Results:  []*ir.Param{str()}},
 		// Wrong.String() int -> wrong result type, does NOT satisfy Stringer.
 		&ir.Function{Name: "String", Receiver: &ir.Receiver{Type: "Wrong"},
 			Results: []*ir.Param{{Type: &ir.IntType{}}}},
@@ -2343,16 +2350,18 @@ func TestInterfaceSatisfaction(t *testing.T) {
 	// Stringer; nobody here satisfies Writer.
 	for _, want := range []string{
 		"Point:Stringer", "Point:Any", "Wrong:Any", "Arity:Any", "Bare:Any",
+		"PtrRecv:Any", // still satisfies the empty interface
 	} {
 		if !got[want] {
 			t.Errorf("expected satisfied pair %q, got %v", want, got)
 		}
 	}
 	for _, notWant := range []string{
-		"Wrong:Stringer", // String() int  != String() string
-		"Arity:Writer",   // Write()       != Write(int)
-		"Bare:Stringer",  // no String method at all
-		"Point:Writer",   // Point has no Write
+		"Wrong:Stringer",   // String() int  != String() string
+		"Arity:Writer",     // Write()       != Write(int)
+		"Bare:Stringer",    // no String method at all
+		"Point:Writer",     // Point has no Write
+		"PtrRecv:Stringer", // String() is a *pointer*-receiver method
 	} {
 		if got[notWant] {
 			t.Errorf("did not expect satisfied pair %q, got %v", notWant, got)
@@ -2365,6 +2374,14 @@ func TestInterfaceSatisfaction(t *testing.T) {
 	set, err := collectTypeMeta(decls)
 	if err != nil {
 		t.Fatalf("collectTypeMeta: %v", err)
+	}
+	// The descriptor's method set follows the same value-receiver rule:
+	// Point's value method is listed, PtrRecv's pointer method is not.
+	if ms := set.byKey["Point"].Methods; len(ms) != 1 || ms[0] != "String" {
+		t.Errorf("Point descriptor methods = %v, want [String]", ms)
+	}
+	if ms := set.byKey["PtrRecv"].Methods; len(ms) != 0 {
+		t.Errorf("PtrRecv descriptor methods = %v, want none (pointer receiver)", ms)
 	}
 	em := newEmitter("p", &ir.File{})
 	em.emitInterfaceSatisfaction(set, satisfiedPairs(decls))

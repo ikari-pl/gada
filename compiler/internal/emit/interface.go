@@ -51,7 +51,13 @@ func satisfiedPairs(decls []ir.Decl) []namePair {
 				concretes = append(concretes, n.Name)
 			}
 		case *ir.Function:
-			if n.Receiver != nil {
+			// A *value* type's method set excludes pointer-receiver
+			// methods — `func (p *T)` is in *T's set, not T's. We model
+			// only the value type as the concrete side, so a pointer
+			// receiver does not count toward its satisfaction. (Pointer-
+			// type satisfaction needs *T as its own reflect type, which
+			// rides item 5.)
+			if n.Receiver != nil && !n.Receiver.Pointer {
 				methodsByType[n.Receiver.Type] =
 					append(methodsByType[n.Receiver.Type], n)
 			}

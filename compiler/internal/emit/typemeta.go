@@ -263,7 +263,11 @@ func collectTypeMeta(decls []ir.Decl) (*typeMetaSet, error) {
 				}
 			}
 		case *ir.Function:
-			if n.Receiver != nil {
+			// Only value-receiver methods belong to the value type's
+			// method set (a `func (p *T)` is in *T's set, not T's), so a
+			// pointer receiver is excluded from the descriptor — matching
+			// reflect.TypeOf(T-value).Method and the satisfaction check.
+			if n.Receiver != nil && !n.Receiver.Pointer {
 				if e, ok := set.byKey[n.Receiver.Type]; ok {
 					e.Methods = append(e.Methods, n.Name)
 				}

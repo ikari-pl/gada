@@ -360,8 +360,12 @@ enumeration; output matches the expected fixture.
           `iface_satisfy` (Point implements Stringer) shows Add_Method on
           both descriptors + the Register call; `TestInterfaceSatisfaction`
           covers the match, the empty interface, and the missing-method /
-          wrong-result / wrong-arity rejections. emit/ 95.41%, interface.go
-          97.62%, typemeta.go 98.45%; go vet + golangci-lint clean.
+          wrong-result / wrong-arity rejections. Only *value*-receiver
+          methods count toward a value type's method set (both for
+          satisfaction and the descriptor) — a `func (p *T)` is in *T's
+          set, not T's; pointer-type satisfaction (`*T` as its own reflect
+          type) rides item 5. emit/ 95.41%, interface.go 97.62%,
+          typemeta.go 98.45%; go vet + golangci-lint clean.
 
 - [ ] **Compiler emission — interface method calls**
       *Files:* `compiler/internal/emit/dispatch.go`, golden tests

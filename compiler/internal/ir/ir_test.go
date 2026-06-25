@@ -524,6 +524,22 @@ func TestFunctionReceiverRoundTrip(t *testing.T) {
 	}
 }
 
+// TestReceiverMissingType locks Receiver.UnmarshalJSON's missing-child
+// guard: a method whose receiver carries no concrete type name is
+// malformed IR and must reject at the JSON -> IR boundary (an empty Name
+// is fine — `func (Point) M()` is legal — only Type is required).
+func TestReceiverMissingType(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{
+		`{"kind":"Function","name":"Get","receiver":{"kind":"Receiver","name":"c"}}`,
+		`{"kind":"Function","name":"Get","receiver":{"kind":"Receiver","name":"c","type":""}}`,
+	} {
+		if _, err := unmarshalDecl(json.RawMessage(raw)); err == nil {
+			t.Fatalf("expected error for receiver without type: %s", raw)
+		}
+	}
+}
+
 // TestSelectCaseMalformed locks the explicit-error branches in
 // SelectCase.UnmarshalJSON. Missing kind, unknown kind, bad child
 // in Chan / Value / Body all surface at the IR boundary rather

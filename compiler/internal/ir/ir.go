@@ -1029,6 +1029,14 @@ func (r *Receiver) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &aux); err != nil {
 		return err
 	}
+	// Type is the named concrete type a method is attached to; an empty
+	// one is malformed IR (the satisfaction check could not place the
+	// method). The Name, by contrast, may legitimately be empty —
+	// `func (Point) M()` has an unnamed receiver. Guard at this
+	// JSON -> IR boundary, like StructField / TypeDecl missing-child.
+	if aux.Type == "" {
+		return fmt.Errorf("ir: Receiver missing type")
+	}
 	r.Name = aux.Name
 	r.Type = aux.Type
 	r.Pointer = aux.Pointer

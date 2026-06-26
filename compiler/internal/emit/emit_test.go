@@ -62,6 +62,8 @@ var corpusFixtures = []string{
 	"type_decl",
 	// Phase 4 — interface satisfaction (item 4c-ii): Add_Method + Register.
 	"iface_satisfy",
+	// Phase 4 — struct type in package main (item 5a-i): record in Main.
+	"struct_main",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -2195,6 +2197,22 @@ func TestGoArgsUnnamedParam(t *testing.T) {
 // TestTypeMetaScalarStruct exercises collectTypeMeta on a named scalar
 // and a struct, mirroring the type_decl corpus but asserting the
 // resolved Ids / kinds / field links directly.
+// TestEmitStructTypesError covers emitStructTypes' typeName failure on a
+// field whose type has no Ada mapping (here a nested anonymous struct).
+// The full pipeline rejects such IR earlier at collectTypeMeta, so the
+// branch is exercised by calling emitStructTypes directly.
+func TestEmitStructTypesError(t *testing.T) {
+	t.Parallel()
+	em := newEmitter("p", &ir.File{Decls: []ir.Decl{
+		&ir.TypeDecl{Name: "Bad", Underlying: &ir.StructType{Fields: []*ir.StructField{
+			{Name: "F", Type: &ir.StructType{}},
+		}}},
+	}})
+	if err := em.emitStructTypes(); err == nil {
+		t.Fatal("expected error for struct field with no Ada type mapping")
+	}
+}
+
 func TestTypeMetaScalarStruct(t *testing.T) {
 	t.Parallel()
 	decls := []ir.Decl{

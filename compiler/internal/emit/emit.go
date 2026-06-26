@@ -886,7 +886,8 @@ func (e *emitter) emitMainProcedure() {
 	hasChans := len(e.chanElemOrder) > 0
 	hasSelectors := len(e.selectorElemOrder) > 0
 	hasPanic := e.needsCorePanic
-	hasDeclSection := hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0
+	hasStructs := e.fileHasStructs()
+	hasDeclSection := hasStructs || hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0
 
 	e.println("procedure Main is")
 	if hasDeclSection {
@@ -894,6 +895,15 @@ func (e *emitter) emitMainProcedure() {
 	}
 
 	e.indent++
+	if hasStructs {
+		if err := e.emitStructTypes(); err != nil {
+			e.fail(err)
+			return
+		}
+	}
+	if hasStructs && (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0) {
+		e.println("")
+	}
 	if hasSlices {
 		e.emitSliceInstantiations()
 	}
@@ -1081,13 +1091,23 @@ func (e *emitter) emitPackageBody() {
 	hasChans := len(e.chanElemOrder) > 0
 	hasSelectors := len(e.selectorElemOrder) > 0
 	hasPanic := e.needsCorePanic
+	hasStructs := e.fileHasStructs()
 
 	e.println("package body " + pkg + " is")
-	if hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(fns) > 0 {
+	if hasStructs || hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(fns) > 0 {
 		e.println("")
 	}
 
 	e.indent++
+	if hasStructs {
+		if err := e.emitStructTypes(); err != nil {
+			e.fail(err)
+			return
+		}
+	}
+	if hasStructs && (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) {
+		e.println("")
+	}
 	if hasSlices {
 		e.emitSliceInstantiations()
 	}
@@ -1115,7 +1135,7 @@ func (e *emitter) emitPackageBody() {
 	if hasPanic {
 		e.emitPanicInstantiation()
 	}
-	if (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) && len(fns) > 0 {
+	if (hasStructs || hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) && len(fns) > 0 {
 		e.println("")
 	}
 	for i, fn := range fns {
@@ -1126,7 +1146,7 @@ func (e *emitter) emitPackageBody() {
 	}
 	e.indent--
 
-	if hasSlices || hasMaps || hasChans || hasSelectors || len(fns) > 0 {
+	if hasStructs || hasSlices || hasMaps || hasChans || hasSelectors || len(fns) > 0 {
 		e.println("")
 	}
 	// Module-init: register every defined type's metadata in the

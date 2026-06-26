@@ -2,6 +2,12 @@ with Gada.Reflect.Types;
 with Gada.Reflect.Registry;
 
 package body P is
+
+   type Point is record
+      X : Integer;
+      Y : Integer;
+   end record;
+
 begin
    declare
       Meta : Gada.Reflect.Types.Type_Descriptor;

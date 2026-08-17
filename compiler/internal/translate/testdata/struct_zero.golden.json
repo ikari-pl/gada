@@ -1,0 +1,185 @@
+{
+  "kind": "Package",
+  "name": "main",
+  "files": [
+    {
+      "kind": "File",
+      "name": "struct_zero.go",
+      "imports": [
+        "fmt"
+      ],
+      "decls": [
+        {
+          "kind": "TypeDecl",
+          "name": "Config",
+          "underlying": {
+            "kind": "StructType",
+            "fields": [
+              {
+                "kind": "StructField",
+                "name": "Width",
+                "type": {
+                  "kind": "IntType"
+                }
+              },
+              {
+                "kind": "StructField",
+                "name": "Height",
+                "type": {
+                  "kind": "IntType"
+                }
+              },
+              {
+                "kind": "StructField",
+                "name": "Depth",
+                "type": {
+                  "kind": "IntType"
+                }
+              },
+              {
+                "kind": "StructField",
+                "name": "Verbose",
+                "type": {
+                  "kind": "BoolType"
+                }
+              },
+              {
+                "kind": "StructField",
+                "name": "Ratio",
+                "type": {
+                  "kind": "Float64Type"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "Function",
+          "name": "main",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "zero"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "StructLit",
+                  "typeName": "Config",
+                  "fields": null
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "partial"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "StructLit",
+                  "typeName": "Config",
+                  "fields": [
+                    {
+                      "kind": "StructLitField",
+                      "name": "Width",
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "80"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "zero"
+                  },
+                  "sel": "Width"
+                },
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "zero"
+                  },
+                  "sel": "Height"
+                },
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "zero"
+                  },
+                  "sel": "Depth"
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "partial"
+                  },
+                  "sel": "Width"
+                },
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "partial"
+                  },
+                  "sel": "Height"
+                },
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "partial"
+                  },
+                  "sel": "Depth"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

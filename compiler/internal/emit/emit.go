@@ -2595,10 +2595,13 @@ func (e *emitter) emitMapLit(m *ir.MapLit) string {
 // correct-or-loud rather than emit invalid Ada silently:
 //
 //   - A value for *every* component is mandatory (RM 4.3.1), so a
-//     zero-value `Point{}` or a partial `Point{X: 1}` cannot lower to a
-//     complete aggregate without synthesising the omitted fields' Go
-//     zero values — deferred to item 5a-iii. Until then they are
-//     rejected with a clear diagnostic, never mis-emitted.
+//     zero-value `Point{}` or a partial `Point{X: 1}` fills the omitted
+//     components with each field's Go zero value in declared order
+//     (item 5a-iii): `Point{X: 1}` -> `Point'(X => 1, Y => 0)`. Only
+//     int/bool/float64 fields have a synthesisable zero (see
+//     zeroValueFor); a string/slice/map/chan field is not a valid record
+//     component yet, so emitStructTypes rejects such a struct at its
+//     declaration, before any literal reaches here.
 //   - A *one-component* positional aggregate is not expressible: Ada
 //     parses `Point'(5)` as a qualified expression (the value 5 cast to
 //     type Point), a type error. A single positional field is therefore
@@ -2624,25 +2627,50 @@ func (e *emitter) emitStructLit(s *ir.StructLit) string {
 		return name + "'(null record)"
 	}
 
-	// A non-empty struct whose literal supplies no or too few fields
-	// would need the omitted components' Go zero values — item 5a-iii.
-	if len(s.Fields) < len(st.Fields) {
-		e.fail(fmt.Errorf("emit: zero-value or partial struct literal %s{…} not yet supported (item 5a-iii): give all %d fields explicitly", name, len(st.Fields)))
+	// A positional literal must give every field (Go forbids a partial
+	// positional literal), so no fill is possible or needed. An empty
+	// `Config{}` carries no fields and routes to the keyed-fill path
+	// below (every component takes its zero value).
+	if len(s.Fields) > 0 && s.Fields[0].Name == "" {
+		return e.emitPositionalStructLit(name, st, s)
+	}
+
+	// Keyed (or empty `Point{}`) literal: fill every declared component
+	// in declared order — a provided value where the literal names the
+	// field, its Go zero value otherwise (item 5a-iii). Ada requires a
+	// value for every component; Go leaves omitted fields at zero.
+	provided := make(map[string]ir.Expr, len(s.Fields))
+	for _, f := range s.Fields {
+		provided[f.Name] = f.Value
+	}
+	parts := make([]string, 0, len(st.Fields))
+	for _, decl := range st.Fields {
+		var val string
+		if v, ok := provided[decl.Name]; ok {
+			val = e.emitExpr(v)
+		} else {
+			z, err := zeroValueFor(decl.Type)
+			if err != nil {
+				e.fail(fmt.Errorf("emit: cannot fill omitted field %q of %s: %w", decl.Name, name, err))
+				return ""
+			}
+			val = z
+		}
+		parts = append(parts, adaIdent(decl.Name)+" => "+val)
+	}
+	return name + "'(" + strings.Join(parts, ", ") + ")"
+}
+
+// emitPositionalStructLit renders a complete positional struct literal.
+// A single positional field must use named notation to avoid the
+// qualified-expression ambiguity (`Tick'(7)` parses as a qualified
+// expression, not a one-component aggregate); resolve its name from the
+// sole declared field. Two-plus fields emit as a positional aggregate.
+func (e *emitter) emitPositionalStructLit(name string, st *ir.StructType, s *ir.StructLit) string {
+	if len(s.Fields) != len(st.Fields) {
+		e.fail(fmt.Errorf("emit: positional struct literal %s{…} gives %d of %d fields (Go forbids a partial positional literal)", name, len(s.Fields), len(st.Fields)))
 		return ""
 	}
-
-	keyed := s.Fields[0].Name != ""
-	if keyed {
-		parts := make([]string, 0, len(s.Fields))
-		for _, f := range s.Fields {
-			parts = append(parts, adaIdent(f.Name)+" => "+e.emitExpr(f.Value))
-		}
-		return name + "'(" + strings.Join(parts, ", ") + ")"
-	}
-
-	// Positional. A single positional field must use named notation to
-	// avoid the qualified-expression ambiguity; resolve the name from
-	// the sole declared field.
 	if len(s.Fields) == 1 {
 		return name + "'(" + adaIdent(st.Fields[0].Name) + " => " + e.emitExpr(s.Fields[0].Value) + ")"
 	}
@@ -2651,6 +2679,25 @@ func (e *emitter) emitStructLit(s *ir.StructLit) string {
 		parts = append(parts, e.emitExpr(f.Value))
 	}
 	return name + "'(" + strings.Join(parts, ", ") + ")"
+}
+
+// zeroValueFor returns the Ada rendering of a Go field's zero value, so
+// emitStructLit can fill components omitted from a struct literal. Go
+// zeroes are explicit (a scalar 0/False/0.0), not Ada's `<>`
+// default-init — the box would leave a scalar uninitialised, not zero.
+// The literal itself comes from zeroLiteralOf (shared with the channel
+// Default_Element and single-result paths); zeroValueFor adds the
+// scalar gate, so it accepts exactly the field types validStructFieldType
+// admits as record components. Anything else — string (unconstrained
+// component), slice/map/chan (un-instantiated package) — is rejected
+// loudly: emitStructTypes rejects such a field before any literal
+// reaches here, so this is the matching guard on the fill path.
+func zeroValueFor(t ir.Type) (string, error) {
+	switch t.(type) {
+	case *ir.IntType, *ir.BoolType, *ir.Float64Type:
+		return zeroLiteralOf(t), nil
+	}
+	return "", fmt.Errorf("emit: no zero value for struct field %w", validStructFieldType(t))
 }
 
 // emitSliceExpr dispatches `s[lo:hi]` (and the elided forms) to

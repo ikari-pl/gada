@@ -514,7 +514,9 @@ enumeration; output matches the expected fixture.
         done (5b-i interface declarations + abstract ops, 5b-ii
         satisfying-record derivation + overriding specs).
         *Files:* `compiler/internal/emit/emit.go`, golden tests.
-        *Verify:* `cd compiler && go test ./internal/emit/... -run Iface`
+        *Verify:* the two sub-items' commands (a bare `-run Iface`
+        matches no test); to run both halves at once:
+        `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Iface|Interface|Overriding|TestCorpus'`
         *Done when:* a `type Stringer interface { String() string }` emits
         `type Stringer is interface; function String (Self : Stringer)
         return … is abstract;`, and each satisfying concrete type's
@@ -585,12 +587,31 @@ enumeration; output matches the expected fixture.
           Writer with a shared Close; Nop derives Reader with a null
           record); `iface_satisfy`'s Point now derives Stringer.
           `overridingSpecs` dedup / missing-method-skip / multi-result
-          error paths pinned by `TestOverridingSpecs`. struct.go 97.67%,
-          emit/ 95.78%; vet + lint + gate clean. Specs only — the
-          overriding *bodies* ride 5c, so the emitted unit is
-          intentionally incomplete (a declared primitive op with no body)
-          until then; the byte-checked goldens capture it without
-          compiling.
+          error paths pinned by `TestOverridingSpecs`. vet + lint + gate
+          clean. Specs only — the overriding *bodies* ride 5c, so the
+          emitted unit is intentionally incomplete (a declared primitive
+          op with no body) until then; the byte-checked goldens capture it
+          without compiling.
+          *Code-review fixes (2026-08-17, PR #40):* (a) a method-less
+          interface (`type Any interface{}`) is excluded from *derivation*
+          — every type satisfies it vacuously, so deriving it would flip
+          every struct in the file from an untagged record to a tagged
+          type for no dispatch; the empty interface still emits its bare
+          declaration and its reflect-registry satisfaction (`ifacesFor`
+          filters by method count; fixture `iface_empty`). (b) A method
+          parameter whose Ada form collides case-insensitively with the
+          controlling `Self` (a Go param named `self`) — or with another
+          param (`x`/`X`) — is uniquified (`Self_2`) so the spec compiles
+          (`dispatchOpSpec` via `uniqueParamName`). (c) `valueMethodsByType`
+          is now shared with `satisfiedPairs` (one definition of the
+          value-type method set, no drift). Unnamed receiver → `Self` and
+          the pointer-receiver exclusion are now directly tested.
+          *Deferred (SPARK):* the emitted `interface`/tagged types use Ada
+          dynamic dispatch, which the verifiable-subset target
+          (`-mode=spark`, Pure Goal 4) restricts; making the Hybrid
+          dispatch SPARK-compatible (or gating it out under spark mode) is
+          an open question for the profile/verification work, not this
+          item.
 
   - [ ] **(5c) methods → overriding subprograms**
         *Files:* `compiler/internal/emit/emit.go`, golden tests.

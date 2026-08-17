@@ -91,6 +91,8 @@ func TestCorpus(t *testing.T) {
 		"interface_types.go",
 		// Phase 4 — multi-interface record derivation (item 5b-ii).
 		"iface_multi.go",
+		// Phase 4 — empty interface must not tag a coexisting struct (5b review).
+		"iface_empty.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)

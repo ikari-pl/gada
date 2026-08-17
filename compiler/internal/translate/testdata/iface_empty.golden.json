@@ -1,0 +1,37 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "iface_empty.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "TypeDecl",
+          "name": "Any",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": null
+          }
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Blank",
+          "underlying": {
+            "kind": "StructType",
+            "fields": [
+              {
+                "kind": "StructField",
+                "name": "N",
+                "type": {
+                  "kind": "IntType"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

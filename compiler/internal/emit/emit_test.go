@@ -72,6 +72,8 @@ var corpusFixtures = []string{
 	"interface_types",
 	// Phase 4 — multi-interface record derivation (item 5b-ii).
 	"iface_multi",
+	// Phase 4 — empty interface must not tag a coexisting struct (5b review).
+	"iface_empty",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -2384,6 +2386,29 @@ func TestInterfaceMethodSpec(t *testing.T) {
 		t.Fatalf("error %q does not mention the one-value constraint", err.Error())
 	}
 
+	// A Go parameter named `self` collides case-insensitively with the
+	// injected controlling `Self`; the param is uniquified to `Self_2`.
+	spec, err = e.interfaceMethodSpec("I", &ir.MethodSig{
+		Name: "M", Params: []*ir.Param{{Name: "self", Type: &ir.IntType{}}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "procedure M (Self : I; Self_2 : Integer) is abstract;"; spec != want {
+		t.Fatalf("spec = %q, want %q", spec, want)
+	}
+
+	// Two params whose Ada forms fold together (`x`, `X`) also uniquify.
+	spec, err = e.interfaceMethodSpec("I", &ir.MethodSig{
+		Name: "M", Params: []*ir.Param{{Name: "x", Type: &ir.IntType{}}, {Name: "X", Type: &ir.IntType{}}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "procedure M (Self : I; X : Integer; X_2 : Integer) is abstract;"; spec != want {
+		t.Fatalf("spec = %q, want %q", spec, want)
+	}
+
 	// An un-renderable parameter type propagates the typeName error.
 	if _, err := e.interfaceMethodSpec("I", &ir.MethodSig{
 		Name: "M", Params: []*ir.Param{{Type: nil}},
@@ -2463,6 +2488,39 @@ func TestOverridingSpecs(t *testing.T) {
 	if _, err := e.overridingSpecs("C", []string{"Reader"},
 		map[string][]*ir.MethodSig{"Reader": {read}}, bad); err == nil {
 		t.Fatal("expected error for un-renderable overriding method")
+	}
+
+	// An unnamed Go receiver falls back to the controlling name `Self`.
+	unnamed := map[string][]*ir.Function{
+		"C": {{Name: "Read", Receiver: &ir.Receiver{Type: "C"}, Results: []*ir.Param{{Type: &ir.IntType{}}}}},
+	}
+	specs, err = e.overridingSpecs("C", []string{"Reader"},
+		map[string][]*ir.MethodSig{"Reader": {read}}, unnamed)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(specs) != 1 || specs[0] != "overriding function Read (Self : C) return Integer;" {
+		t.Fatalf("specs = %v, want [overriding function Read (Self : C) return Integer;]", specs)
+	}
+}
+
+// TestValueMethodsByType locks that valueMethodsByType indexes only
+// value-receiver methods — a pointer-receiver method belongs to *T's set
+// and must not count toward the value type's interface satisfaction or
+// its overriding specs.
+func TestValueMethodsByType(t *testing.T) {
+	t.Parallel()
+	decls := []ir.Decl{
+		&ir.Function{Name: "Read", Receiver: &ir.Receiver{Name: "b", Type: "Buffer"}},
+		&ir.Function{Name: "Flush", Receiver: &ir.Receiver{Name: "b", Type: "Buffer", Pointer: true}},
+		&ir.Function{Name: "Free"}, // not a method
+	}
+	m := valueMethodsByType(decls)
+	if got := len(m["Buffer"]); got != 1 {
+		t.Fatalf("Buffer value methods = %d, want 1 (pointer-receiver Flush excluded)", got)
+	}
+	if m["Buffer"][0].Name != "Read" {
+		t.Fatalf("indexed method = %q, want Read", m["Buffer"][0].Name)
 	}
 }
 

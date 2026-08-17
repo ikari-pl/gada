@@ -62,7 +62,7 @@ func (e *emitter) emitStructTypes() error {
 			continue
 		}
 		name := adaIdent(td.Name)
-		ifaces := ifacesFor(td.Name, pairs)
+		ifaces := ifacesFor(td.Name, pairs, ifaceMethods)
 
 		// Record header: a plain `is record` / `is null record`, or the
 		// tagged `is new I1 and I2 with record` derivation.
@@ -145,12 +145,19 @@ func (e *emitter) overridingSpecs(concrete string, ifaces []string, ifaceMethods
 	return specs, nil
 }
 
-// ifacesFor returns the interface names a concrete type satisfies, in
-// the source order satisfiedPairs produced (interface-declaration order).
-func ifacesFor(concrete string, pairs []namePair) []string {
+// ifacesFor returns the interfaces a concrete type derives — the
+// interfaces it satisfies that carry at least one method — in the source
+// order satisfiedPairs produced (interface-declaration order). A
+// method-less interface (Go's `any`, or any `interface{}` alias) is
+// excluded: every type satisfies it vacuously, so deriving it would flip
+// every struct in a file that merely *declares* an empty interface from
+// an untagged record (5a-i) to a tagged type, adding taggedness with no
+// operation to dispatch. Empty-interface satisfaction still lives in the
+// reflect registry (item 4c) — this filter governs only Ada derivation.
+func ifacesFor(concrete string, pairs []namePair, ifaceMethods map[string][]*ir.MethodSig) []string {
 	var out []string
 	for _, p := range pairs {
-		if p.Concrete == concrete {
+		if p.Concrete == concrete && len(ifaceMethods[p.Iface]) > 0 {
 			out = append(out, p.Iface)
 		}
 	}
@@ -166,20 +173,6 @@ func interfaceMethodsByName(decls []ir.Decl) map[string][]*ir.MethodSig {
 			if it, ok := td.Underlying.(*ir.InterfaceType); ok {
 				m[td.Name] = it.Methods
 			}
-		}
-	}
-	return m
-}
-
-// valueMethodsByType indexes value-receiver methods by their receiver
-// type name — the method set that counts toward interface satisfaction
-// for the value type (a pointer-receiver method belongs to *T's set,
-// which rides a later item).
-func valueMethodsByType(decls []ir.Decl) map[string][]*ir.Function {
-	m := map[string][]*ir.Function{}
-	for _, d := range decls {
-		if fn, ok := d.(*ir.Function); ok && fn.Receiver != nil && !fn.Receiver.Pointer {
-			m[fn.Receiver.Type] = append(m[fn.Receiver.Type], fn)
 		}
 	}
 	return m

@@ -47,15 +47,16 @@ func (e *emitter) fileHasTypeDecls() bool {
 // Indent is owned by the caller.
 func (e *emitter) emitTypeDecls() error {
 	hasI := e.fileHasInterfaces()
+	hasS := e.fileHasStructs()
 	if hasI {
 		if err := e.emitInterfaceTypes(); err != nil {
 			return err
 		}
 	}
-	if hasI && e.fileHasStructs() {
+	if hasI && hasS {
 		e.println("")
 	}
-	if e.fileHasStructs() {
+	if hasS {
 		if err := e.emitStructTypes(); err != nil {
 			return err
 		}
@@ -106,13 +107,20 @@ func (e *emitter) interfaceMethodSpec(ifaceName string, m *ir.MethodSig) (string
 // methods have no single Ada function form, so 2+ results are rejected
 // loudly.
 func dispatchOpSpec(prefix, ctrlName, ctrlType, name string, params, results []*ir.Param, tail string) (string, error) {
+	// Ada identifiers are case-insensitive, so a method parameter whose
+	// Ada form matches the injected controlling parameter (a Go param
+	// named `self` against `Self`) — or another parameter (`x` and `X`
+	// both fold to `X`) — would emit a duplicate parameter name and fail
+	// to compile. Reserve the controlling name and uniquify each param
+	// against the names already used, case-insensitively.
+	used := map[string]bool{strings.ToLower(ctrlName): true}
 	ps := []string{ctrlName + " : " + ctrlType}
 	for i, p := range params {
 		t, err := typeName(p.Type)
 		if err != nil {
 			return "", err
 		}
-		ps = append(ps, methodParamName(p.Name, i)+" : "+t)
+		ps = append(ps, uniqueParamName(methodParamName(p.Name, i), used)+" : "+t)
 	}
 	plist := " (" + strings.Join(ps, "; ") + ")"
 	ada := adaIdent(name)
@@ -138,6 +146,18 @@ func methodParamName(goName string, index int) string {
 		return adaIdent(goName)
 	}
 	return fmt.Sprintf("Arg_%d", index+1)
+}
+
+// uniqueParamName returns base, or base with a numeric suffix, so its
+// case-folded form is absent from used; it then records the choice.
+// Ada's case-insensitivity means the collision test folds to lower case.
+func uniqueParamName(base string, used map[string]bool) string {
+	name := base
+	for n := 2; used[strings.ToLower(name)]; n++ {
+		name = fmt.Sprintf("%s_%d", base, n)
+	}
+	used[strings.ToLower(name)] = true
+	return name
 }
 
 // Interface satisfaction emission (Phase 4 item 4c-ii).
@@ -174,26 +194,18 @@ func satisfiedPairs(decls []ir.Decl) []namePair {
 	}
 	var ifaces []ifaceDef
 	var concretes []string
-	methodsByType := map[string][]*ir.Function{}
+	// valueMethodsByType keys each concrete type by its value-receiver
+	// method set — the set that counts toward satisfaction (a
+	// pointer-receiver method belongs to *T's set, which rides a later
+	// item). The same index drives 5b-ii's overriding specs.
+	methodsByType := valueMethodsByType(decls)
 
 	for _, d := range decls {
-		switch n := d.(type) {
-		case *ir.TypeDecl:
-			if it, ok := n.Underlying.(*ir.InterfaceType); ok {
-				ifaces = append(ifaces, ifaceDef{n.Name, it.Methods})
+		if td, ok := d.(*ir.TypeDecl); ok {
+			if it, ok := td.Underlying.(*ir.InterfaceType); ok {
+				ifaces = append(ifaces, ifaceDef{td.Name, it.Methods})
 			} else {
-				concretes = append(concretes, n.Name)
-			}
-		case *ir.Function:
-			// A *value* type's method set excludes pointer-receiver
-			// methods — `func (p *T)` is in *T's set, not T's. We model
-			// only the value type as the concrete side, so a pointer
-			// receiver does not count toward its satisfaction. (Pointer-
-			// type satisfaction needs *T as its own reflect type, which
-			// rides item 5.)
-			if n.Receiver != nil && !n.Receiver.Pointer {
-				methodsByType[n.Receiver.Type] =
-					append(methodsByType[n.Receiver.Type], n)
+				concretes = append(concretes, td.Name)
 			}
 		}
 	}
@@ -207,6 +219,22 @@ func satisfiedPairs(decls []ir.Decl) []namePair {
 		}
 	}
 	return pairs
+}
+
+// valueMethodsByType indexes value-receiver methods by their receiver
+// type name — the method set that counts toward interface satisfaction
+// for the value type (a pointer-receiver method belongs to *T's set,
+// which rides a later item). Shared by satisfiedPairs (the satisfaction
+// check) and overridingSpecs (item 5b-ii's overriding op emission), so
+// the two never drift on what "the value type's method set" means.
+func valueMethodsByType(decls []ir.Decl) map[string][]*ir.Function {
+	m := map[string][]*ir.Function{}
+	for _, d := range decls {
+		if fn, ok := d.(*ir.Function); ok && fn.Receiver != nil && !fn.Receiver.Pointer {
+			m[fn.Receiver.Type] = append(m[fn.Receiver.Type], fn)
+		}
+	}
+	return m
 }
 
 // methodSetSatisfies reports whether the concrete method set provides a

@@ -457,7 +457,7 @@ enumeration; output matches the expected fixture.
           the translator cannot tell it from a struct, so emit fails when
           the name resolves to no struct TypeDecl).
 
-    - [ ] **(5a-iii) struct values — zero-value & partial literals**
+    - [x] **(5a-iii) struct values — zero-value & partial literals**
           *Files:* `compiler/internal/emit`, golden tests.
           *Verify:* `cd compiler && go test ./internal/emit/... -run StructZero`
           *Done when:* a zero-value `Point{}` and a partial `Point{X: 1}`
@@ -470,6 +470,30 @@ enumeration; output matches the expected fixture.
           value for every record component, which needs per-field-type
           zero-value emission — its own atomic unit rather than a rushed
           rider on 5a-ii.
+          *Done 2026-08-17:* `emitStructLit` fills a keyed/empty literal
+          by iterating the *declared* field set: a provided value where
+          the literal names the field, `zeroValueFor(field.Type)`
+          otherwise, so `Config{}` → `Config'(Width => 0, Height => 0,
+          Depth => 0)` and `Config{Width: 80}` → `Config'(Width => 80,
+          Height => 0, Depth => 0)` — omitted fields zeroed in declared
+          order (Ada named associations are order-independent, so a
+          reordered `Point{Y: 9}` still fills correctly). Zero values are
+          *explicit* Go zeroes, not Ada's `<>` box (which would leave a
+          scalar uninitialised, not zero): int→`0`, bool→`False`,
+          string→`""`, float64→`0.0`. New corpus fixture `struct_zero`
+          proves zero + partial fill end to end; the non-int scalar
+          spellings and declared-vs-literal order are pinned by
+          `TestStructZeroFill`. emit/ 95.64%, translate/ 96.13%,
+          runtime/ 100%; vet + lint + gate clean.
+          *Scoped to scalar fields:* a slice/map/chan struct field has no
+          synthesisable zero yet — its `Slices_Of_<T>`/`Maps_Of_…`/
+          `Channels_Of_<T>` instantiation is not driven from struct
+          fields (`recordTypeInTree` does not recurse into a
+          `StructType`), so a record with such a field does not compile at
+          the 5a-i level regardless. `zeroValueFor` fails loudly for those
+          rather than reference an un-instantiated package; lifting both
+          (field-type collection walk + non-scalar zeroes) rides a later
+          item once struct fields of composite/nested type are supported.
 
   - [ ] **(5b) interface types → Ada interface types**
         *Files:* `compiler/internal/emit/emit.go`, golden tests.

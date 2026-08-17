@@ -1,0 +1,237 @@
+{
+  "kind": "Package",
+  "name": "main",
+  "files": [
+    {
+      "kind": "File",
+      "name": "struct_values.go",
+      "imports": [
+        "fmt"
+      ],
+      "decls": [
+        {
+          "kind": "TypeDecl",
+          "name": "Point",
+          "underlying": {
+            "kind": "StructType",
+            "fields": [
+              {
+                "kind": "StructField",
+                "name": "X",
+                "type": {
+                  "kind": "IntType"
+                }
+              },
+              {
+                "kind": "StructField",
+                "name": "Y",
+                "type": {
+                  "kind": "IntType"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Tick",
+          "underlying": {
+            "kind": "StructType",
+            "fields": [
+              {
+                "kind": "StructField",
+                "name": "N",
+                "type": {
+                  "kind": "IntType"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "Function",
+          "name": "main",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "p"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "StructLit",
+                  "typeName": "Point",
+                  "fields": [
+                    {
+                      "kind": "StructLitField",
+                      "name": "X",
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "1"
+                      }
+                    },
+                    {
+                      "kind": "StructLitField",
+                      "name": "Y",
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "2"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "q"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "StructLit",
+                  "typeName": "Point",
+                  "fields": [
+                    {
+                      "kind": "StructLitField",
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "3"
+                      }
+                    },
+                    {
+                      "kind": "StructLitField",
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "4"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "t"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "StructLit",
+                  "typeName": "Tick",
+                  "fields": [
+                    {
+                      "kind": "StructLitField",
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "7"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "p"
+                  },
+                  "sel": "X"
+                },
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "p"
+                  },
+                  "sel": "Y"
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "q"
+                  },
+                  "sel": "X"
+                },
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "q"
+                  },
+                  "sel": "Y"
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "t"
+                  },
+                  "sel": "N"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

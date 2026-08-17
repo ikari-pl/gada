@@ -897,10 +897,14 @@ func transExpr(e ast.Expr) (ir.Expr, error) {
 	}
 }
 
-// transCompositeLit handles slice and map composite literals —
-// `[]T{e1, e2}` and `map[K]V{k1: v1, k2: v2}` — which lower to
-// `*ir.SliceLit` and `*ir.MapLit` respectively. Struct literals and
-// fixed-size array literals are post-1.0.
+// transCompositeLit handles slice, map and named-struct composite
+// literals — `[]T{e1, e2}`, `map[K]V{k1: v1, k2: v2}` and
+// `Point{X: 1, Y: 2}` — which lower to `*ir.SliceLit`, `*ir.MapLit`
+// and `*ir.StructLit` respectively. A named type used as the literal's
+// type (`*ast.Ident`) is assumed to name a struct: without *types.Info
+// threaded through the translator we cannot yet tell `Point{…}` (struct)
+// from `Ints{…}` (a named slice type), and named slice/map types are
+// not a supported feature. Fixed-size array literals are post-1.0.
 func transCompositeLit(c *ast.CompositeLit) (ir.Expr, error) {
 	if c.Type == nil {
 		return nil, fmt.Errorf("translate: composite literal with elided type not supported in Phase 2")
@@ -933,9 +937,58 @@ func transCompositeLit(c *ast.CompositeLit) (ir.Expr, error) {
 			return nil, err
 		}
 		return &ir.MapLit{Key: k, Value: v, Entries: entries}, nil
+	case *ast.Ident:
+		fields, err := transStructFields(c.Elts)
+		if err != nil {
+			return nil, err
+		}
+		return &ir.StructLit{TypeName: ct.Name, Fields: fields}, nil
 	default:
-		return nil, fmt.Errorf("translate: only []T and map[K]V composite literals are supported in Phase 2 (got %T)", c.Type)
+		return nil, fmt.Errorf("translate: only []T, map[K]V and named-struct composite literals are supported in Phase 4 (got %T)", c.Type)
 	}
+}
+
+// transStructFields lifts a struct composite literal's element list into
+// the IR's *StructLitField slice. Go allows two mutually exclusive
+// forms: keyed (`Point{X: 1, Y: 2}`, every element a *ast.KeyValueExpr)
+// and positional (`Point{1, 2}`, no keys). Mixing them is a Go compile
+// error, so we key off the first element and require the rest to match.
+// A keyed field's key must be a plain field-name *ast.Ident — the
+// parser guarantees that for struct literals, but re-checking here keeps
+// a hand-built AST from smuggling a computed key past the IR boundary.
+func transStructFields(elts []ast.Expr) ([]*ir.StructLitField, error) {
+	if len(elts) == 0 {
+		return nil, nil
+	}
+	keyed := false
+	if _, ok := elts[0].(*ast.KeyValueExpr); ok {
+		keyed = true
+	}
+	fields := make([]*ir.StructLitField, 0, len(elts))
+	for _, elt := range elts {
+		kv, isKV := elt.(*ast.KeyValueExpr)
+		if isKV != keyed {
+			return nil, fmt.Errorf("translate: struct literal mixes keyed and positional fields")
+		}
+		if keyed {
+			key, ok := kv.Key.(*ast.Ident)
+			if !ok {
+				return nil, fmt.Errorf("translate: struct literal field key must be an identifier (got %T)", kv.Key)
+			}
+			val, err := transExpr(kv.Value)
+			if err != nil {
+				return nil, err
+			}
+			fields = append(fields, &ir.StructLitField{Name: key.Name, Value: val})
+			continue
+		}
+		val, err := transExpr(elt)
+		if err != nil {
+			return nil, err
+		}
+		fields = append(fields, &ir.StructLitField{Value: val})
+	}
+	return fields, nil
 }
 
 // transMapEntries lifts a Go composite-literal element list into the

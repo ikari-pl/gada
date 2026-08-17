@@ -407,14 +407,69 @@ enumeration; output matches the expected fixture.
           fixture `struct_main` (record in `Main` + the empty-struct
           `null record`). struct.go 100%, emit/ 95.58%; vet + lint clean.
 
-    - [ ] **(5a-ii) struct values — literals + field access**
+    - [x] **(5a-ii) struct values — literals + field access**
           *Files:* `compiler/internal/ir/ir.go` (`*ir.StructLit`),
           `compiler/internal/translate/translate.go` (`transCompositeLit`
           struct arm), `compiler/internal/emit`, golden tests.
-          *Verify:* `cd compiler && go test ./internal/emit/... -run Struct`
-          *Done when:* a composite literal `Point{X: 1, Y: 2}` lowers to an
-          Ada positional/named aggregate and a field access `p.X` emits as
-          `P.X`, so a struct-using program round-trips end to end.
+          *Verify:* `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Struct|TestCorpus'`
+          *Done when:* a *complete* composite literal `Point{X: 1, Y: 2}`
+          lowers to an Ada named/positional aggregate and a field access
+          `p.X` emits as `P.X`, so a struct-using program round-trips end
+          to end. (`TestCorpus` — not matched by `-run Struct` alone — is
+          the test that diffs the `struct_values` golden, so the verify
+          command names it explicitly.)
+          *Done 2026-08-17:* new `*ir.StructLit{TypeName, Fields}` +
+          `*ir.StructLitField{Name, Value}` (kind-tagged JSON, `typeName`
+          missing-child guard, a required-`value` guard — a struct field
+          value is never optional, unlike a MapEntry — golangci
+          exclusion, direct Unmarshal error-path tests mirroring
+          `TestMapEntryDirect`). `transCompositeLit` gains an `*ast.Ident`
+          arm via `transStructFields`, handling the keyed (`Point{X:1}`)
+          and positional (`Point{1,2}`) forms and rejecting a
+          keyed/positional mix or a non-ident key; an *anonymous* struct
+          literal (`*ast.StructType`) stays rejected (no named Ada record
+          to name).
+          Emit consults the declared field set (`structByName`) to stay
+          **correct-or-loud** — an Ada record aggregate must supply a
+          value for every component (RM 4.3.1), which Go literals need
+          not: `emitStructLit` renders a qualified aggregate for a
+          *complete* keyed (`Point'(X => 1, Y => 2)`) or multi-field
+          positional (`Point'(3, 4)`) literal, emits the **named** form
+          `Tick'(N => 7)` for a *single* positional field (a
+          one-component positional aggregate `Tick'(7)` is a qualified
+          expression in Ada, not an aggregate), and `Empty'(null record)`
+          for a genuinely fieldless struct. `inferDeclType` types a `:=`
+          struct-literal decl by its named type; `emitSelector` runs the
+          field through `adaIdent` so a lowercase Go field (`p.count`)
+          lines up with the capitalised record component 5a-i emits.
+          Corpus fixture `struct_values` proves the round trip (complete
+          keyed + multi-field positional + single-field positional +
+          field access via `fmt.Println`); the empty-struct,
+          lowercase-field, and every rejection branch are pinned by
+          direct emit unit tests. emit/ + translate/ ≥95%, runtime/ 100%;
+          vet + lint + gate clean.
+          *Rejected loudly, not mis-emitted* (each a clear emit
+          diagnostic, no silent-broken Ada — deferred correctness is
+          [[5a-iii]]): a zero-value `Point{}` or partial `Point{X: 1}`
+          literal of a non-empty struct (needs the omitted fields' Go
+          zero values), and a composite literal on a non-struct/undeclared
+          named type (`type Ints []int; Ints{…}` — without *types.Info*
+          the translator cannot tell it from a struct, so emit fails when
+          the name resolves to no struct TypeDecl).
+
+    - [ ] **(5a-iii) struct values — zero-value & partial literals**
+          *Files:* `compiler/internal/emit`, golden tests.
+          *Verify:* `cd compiler && go test ./internal/emit/... -run StructZero`
+          *Done when:* a zero-value `Point{}` and a partial `Point{X: 1}`
+          literal lower to a *complete* Ada aggregate whose omitted
+          components carry each field's Go zero value (int→0, bool→False,
+          string→"", float→0.0, slice/map→the runtime empty, nested
+          struct→its own zero aggregate), so `emitStructLit` no longer
+          rejects them (see the 5a-ii "rejected loudly" note). Surfaced by
+          the item-5a-ii code review (2026-08-17): emit must synthesise a
+          value for every record component, which needs per-field-type
+          zero-value emission — its own atomic unit rather than a rushed
+          rider on 5a-ii.
 
   - [ ] **(5b) interface types → Ada interface types**
         *Files:* `compiler/internal/emit/emit.go`, golden tests.

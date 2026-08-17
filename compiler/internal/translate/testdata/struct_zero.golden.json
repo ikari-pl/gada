@@ -35,6 +35,20 @@
                 "type": {
                   "kind": "IntType"
                 }
+              },
+              {
+                "kind": "StructField",
+                "name": "Verbose",
+                "type": {
+                  "kind": "BoolType"
+                }
+              },
+              {
+                "kind": "StructField",
+                "name": "Ratio",
+                "type": {
+                  "kind": "Float64Type"
+                }
               }
             ]
           }

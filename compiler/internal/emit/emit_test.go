@@ -2153,9 +2153,12 @@ func structLitEmitFile() *ir.File {
 		&ir.TypeDecl{Name: "Tick", Underlying: &ir.StructType{Fields: []*ir.StructField{sf("N")}}},
 		&ir.TypeDecl{Name: "Empty", Underlying: &ir.StructType{}},
 		&ir.TypeDecl{Name: "Low", Underlying: &ir.StructType{Fields: []*ir.StructField{sf("count")}}},
-		// Mix exercises the non-int scalar zero spellings.
+		// Mix exercises the non-int scalar zero spellings (bool, float).
+		// A string field is deliberately absent: an unconstrained String
+		// record component is invalid Ada, so a string struct field is
+		// rejected at declaration (see TestStructTypeRejectsUnsupportedField).
 		&ir.TypeDecl{Name: "Mix", Underlying: &ir.StructType{Fields: []*ir.StructField{
-			field("S", &ir.StringType{}), field("B", &ir.BoolType{}), field("F", &ir.Float64Type{}),
+			field("B", &ir.BoolType{}), field("F", &ir.Float64Type{}),
 		}}},
 		// Vec has a slice field whose zero value is not yet synthesisable.
 		&ir.TypeDecl{Name: "Vec", Underlying: &ir.StructType{Fields: []*ir.StructField{
@@ -2265,7 +2268,15 @@ func TestStructZeroFill(t *testing.T) {
 		{
 			"non-int scalar zeros",
 			&ir.StructLit{TypeName: "Mix"},
-			`Mix'(S => "", B => False, F => 0.0)`,
+			"Mix'(B => False, F => 0.0)",
+		},
+		{
+			"complete keyed out of declared order fills in declared order",
+			&ir.StructLit{TypeName: "Point", Fields: []*ir.StructLitField{
+				{Name: "Y", Value: litInt("2")},
+				{Name: "X", Value: litInt("1")},
+			}},
+			"Point'(X => 1, Y => 2)",
 		},
 	}
 	for _, tc := range cases {
@@ -2305,7 +2316,21 @@ func TestStructLitEmitRejects(t *testing.T) {
 			&ir.StructLit{TypeName: "Vec", Fields: []*ir.StructLitField{
 				{Name: "N", Value: litInt("3")},
 			}},
-			"non-scalar struct field",
+			"no zero value for struct field",
+		},
+		{
+			"positional literal with too few fields",
+			&ir.StructLit{TypeName: "Point", Fields: []*ir.StructLitField{
+				{Value: litInt("3")},
+			}},
+			"positional struct literal",
+		},
+		{
+			"positional literal with too many fields",
+			&ir.StructLit{TypeName: "Tick", Fields: []*ir.StructLitField{
+				{Value: litInt("1")}, {Value: litInt("2")},
+			}},
+			"positional struct literal",
 		},
 	}
 	for _, tc := range cases {
@@ -2319,6 +2344,44 @@ func TestStructLitEmitRejects(t *testing.T) {
 			}
 			if !strings.Contains(e.err.Error(), tc.wantSub) {
 				t.Fatalf("error %q does not contain %q", e.err.Error(), tc.wantSub)
+			}
+		})
+	}
+}
+
+// TestStructTypeRejectsUnsupportedField locks that emitStructTypes
+// fails loudly for a struct field whose type does not yet lower to a
+// valid Ada record component — a string (unconstrained component) or a
+// slice/map/chan (un-instantiated package) — rather than emit a record
+// declaration that gprbuild would reject. The scalar-only boundary is
+// shared with zeroValueFor via validStructFieldType.
+func TestStructTypeRejectsUnsupportedField(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		typ     ir.Type
+		wantSub string
+	}{
+		{"string field", &ir.StringType{}, "type string not yet supported"},
+		{"slice field", &ir.SliceType{Elem: &ir.IntType{}}, "not yet supported"},
+		{"map field", &ir.MapType{Key: &ir.IntType{}, Value: &ir.IntType{}}, "not yet supported"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			file := &ir.File{Decls: []ir.Decl{
+				&ir.TypeDecl{Name: "T", Underlying: &ir.StructType{Fields: []*ir.StructField{
+					{Name: "F", Type: tc.typ},
+				}}},
+			}}
+			e := newEmitter("p", file)
+			err := e.emitStructTypes()
+			if err == nil {
+				t.Fatal("expected emitStructTypes error for unsupported field type")
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantSub)
 			}
 		})
 	}

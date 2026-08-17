@@ -9,12 +9,18 @@ import "fmt"
 // `Config{Width: 80}` fills only the unmentioned ones — each in the
 // record's declared order, regardless of literal order.
 //
-// All fields are int: a struct with a `string` field is deferred because
-// an unconstrained `String` record component is not valid Ada yet (a
-// 5a-i record-emission concern, tracked separately). The scalar zero
-// *spellings* for string/bool/float are covered by emit unit tests.
+// Fields are int, bool and float — the scalar types that lower to valid
+// Ada record components with a synthesisable Go zero. A `string` field
+// is deferred: an unconstrained `String` record component is not valid
+// Ada yet, so emit rejects a string struct field at its declaration
+// (its zero *spelling* is not needed until a bounded string component
+// lands). Only the int fields are printed — Gada.Core.IO.Print has no
+// Boolean/Long_Float overload yet — but Verbose and Ratio still exercise
+// the bool/float record components and their zero fills.
 type Config struct {
 	Width, Height, Depth int
+	Verbose              bool
+	Ratio                float64
 }
 
 func main() {

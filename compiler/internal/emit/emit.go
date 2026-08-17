@@ -2598,8 +2598,10 @@ func (e *emitter) emitMapLit(m *ir.MapLit) string {
 //     zero-value `Point{}` or a partial `Point{X: 1}` fills the omitted
 //     components with each field's Go zero value in declared order
 //     (item 5a-iii): `Point{X: 1}` -> `Point'(X => 1, Y => 0)`. Only
-//     scalar fields have a synthesisable zero today (see zeroValueFor);
-//     a slice/map/chan field in an incomplete literal fails loudly.
+//     int/bool/float64 fields have a synthesisable zero (see
+//     zeroValueFor); a string/slice/map/chan field is not a valid record
+//     component yet, so emitStructTypes rejects such a struct at its
+//     declaration, before any literal reaches here.
 //   - A *one-component* positional aggregate is not expressible: Ada
 //     parses `Point'(5)` as a qualified expression (the value 5 cast to
 //     type Point), a type error. A single positional field is therefore
@@ -2681,25 +2683,21 @@ func (e *emitter) emitPositionalStructLit(name string, st *ir.StructType, s *ir.
 
 // zeroValueFor returns the Ada rendering of a Go field's zero value, so
 // emitStructLit can fill components omitted from a struct literal. Go
-// zeroes are explicit (a scalar 0/False/""/0.0), not Ada's `<>`
+// zeroes are explicit (a scalar 0/False/0.0), not Ada's `<>`
 // default-init — the box would leave a scalar uninitialised, not zero.
-// Only scalar fields are supported: a slice/map/chan struct field needs
-// its `Slices_Of_<T>`/`Maps_Of_…`/`Channels_Of_<T>` instantiation, which
-// the type-collection walk does not yet drive from struct fields, so its
-// zero value (empty slice, empty map, nil chan) is deferred with a loud
-// error rather than a reference to an un-instantiated package.
+// The literal itself comes from zeroLiteralOf (shared with the channel
+// Default_Element and single-result paths); zeroValueFor adds the
+// scalar gate, so it accepts exactly the field types validStructFieldType
+// admits as record components. Anything else — string (unconstrained
+// component), slice/map/chan (un-instantiated package) — is rejected
+// loudly: emitStructTypes rejects such a field before any literal
+// reaches here, so this is the matching guard on the fill path.
 func zeroValueFor(t ir.Type) (string, error) {
 	switch t.(type) {
-	case *ir.IntType:
-		return "0", nil
-	case *ir.StringType:
-		return `""`, nil
-	case *ir.BoolType:
-		return "False", nil
-	case *ir.Float64Type:
-		return "0.0", nil
+	case *ir.IntType, *ir.BoolType, *ir.Float64Type:
+		return zeroLiteralOf(t), nil
 	}
-	return "", fmt.Errorf("emit: zero value for non-scalar struct field type %T not yet supported (scalar fields only until struct fields drive slice/map/chan instantiation)", t)
+	return "", fmt.Errorf("emit: no zero value for struct field %w", validStructFieldType(t))
 }
 
 // emitSliceExpr dispatches `s[lo:hi]` (and the elided forms) to

@@ -459,17 +459,19 @@ enumeration; output matches the expected fixture.
 
     - [x] **(5a-iii) struct values — zero-value & partial literals**
           *Files:* `compiler/internal/emit`, golden tests.
-          *Verify:* `cd compiler && go test ./internal/emit/... -run StructZero`
+          *Verify:* `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Struct|TestCorpus'`
           *Done when:* a zero-value `Point{}` and a partial `Point{X: 1}`
-          literal lower to a *complete* Ada aggregate whose omitted
+          literal lower to a *complete* Ada aggregate whose omitted scalar
           components carry each field's Go zero value (int→0, bool→False,
-          string→"", float→0.0, slice/map→the runtime empty, nested
-          struct→its own zero aggregate), so `emitStructLit` no longer
-          rejects them (see the 5a-ii "rejected loudly" note). Surfaced by
-          the item-5a-ii code review (2026-08-17): emit must synthesise a
-          value for every record component, which needs per-field-type
-          zero-value emission — its own atomic unit rather than a rushed
-          rider on 5a-ii.
+          float→0.0), so `emitStructLit` no longer rejects them (see the
+          5a-ii "rejected loudly" note). Surfaced by the item-5a-ii code
+          review (2026-08-17): emit must synthesise a value for every
+          record component, which needs per-field-type zero-value
+          emission — its own atomic unit rather than a rushed rider on
+          5a-ii. (Non-scalar and `string` fields are out of scope — see
+          the correct-or-loud note below; their zeroes — empty
+          slice/map, nil chan, nested-struct aggregate — ride the later
+          item that makes those valid record components.)
           *Done 2026-08-17:* `emitStructLit` fills a keyed/empty literal
           by iterating the *declared* field set: a provided value where
           the literal names the field, `zeroValueFor(field.Type)`
@@ -485,15 +487,27 @@ enumeration; output matches the expected fixture.
           spellings and declared-vs-literal order are pinned by
           `TestStructZeroFill`. emit/ 95.64%, translate/ 96.13%,
           runtime/ 100%; vet + lint + gate clean.
-          *Scoped to scalar fields:* a slice/map/chan struct field has no
-          synthesisable zero yet — its `Slices_Of_<T>`/`Maps_Of_…`/
+          *Scoped to scalar fields, made correct-or-loud (code review
+          2026-08-17):* struct fields lower to valid Ada only for
+          `int`/`bool`/`float64` (definite scalar components with a
+          synthesisable zero). A new `validStructFieldType` gate — shared
+          by `emitStructTypes` (the record declaration) and `zeroValueFor`
+          (the fill), so they stay in lockstep — rejects the rest at the
+          struct's *declaration*, before any literal: a `string` field
+          (an unconstrained `String` record component is invalid Ada) and
+          a slice/map/chan field (its `Slices_Of_<T>`/`Maps_Of_…`/
           `Channels_Of_<T>` instantiation is not driven from struct
-          fields (`recordTypeInTree` does not recurse into a
-          `StructType`), so a record with such a field does not compile at
-          the 5a-i level regardless. `zeroValueFor` fails loudly for those
-          rather than reference an un-instantiated package; lifting both
-          (field-type collection walk + non-scalar zeroes) rides a later
-          item once struct fields of composite/nested type are supported.
+          fields — `recordTypeInTree` does not recurse into a
+          `StructType`). This closes the silent-breakage the review found:
+          previously a `string`/slice field emitted an uncompilable
+          record component into a byte-checked golden. `zeroValueFor`
+          reuses the existing `zeroLiteralOf` for the literal spelling
+          (no third copy of the scalar zero table). The `struct_zero`
+          fixture now carries `bool`+`float` fields, so a compiling golden
+          exercises those components and their zero fills end to end.
+          Lifting `string` (bounded/constrained component) and the
+          composite fields (field-type collection walk + non-scalar
+          zeroes) rides a later item.
 
   - [ ] **(5b) interface types → Ada interface types**
         *Files:* `compiler/internal/emit/emit.go`, golden tests.

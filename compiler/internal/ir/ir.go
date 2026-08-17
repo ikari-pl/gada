@@ -1876,7 +1876,15 @@ func (e *StructLitField) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	e.Name = aux.Name
-	v, err := unmarshalOptionalExpr(aux.Value)
+	// A struct-literal field always carries a value — unlike a MapEntry,
+	// where a nil key/value is a documented shape. Require it at the
+	// JSON -> IR boundary so malformed IR fails here with a targeted
+	// message rather than later as a generic `emit: unsupported expr
+	// <nil>`.
+	if len(aux.Value) == 0 || string(aux.Value) == "null" {
+		return fmt.Errorf("ir: StructLitField missing value")
+	}
+	v, err := unmarshalExpr(aux.Value)
 	if err != nil {
 		return err
 	}

@@ -33,6 +33,22 @@
           }
         },
         {
+          "kind": "TypeDecl",
+          "name": "Tick",
+          "underlying": {
+            "kind": "StructType",
+            "fields": [
+              {
+                "kind": "StructField",
+                "name": "N",
+                "type": {
+                  "kind": "IntType"
+                }
+              }
+            ]
+          }
+        },
+        {
           "kind": "Function",
           "name": "main",
           "params": null,
@@ -109,6 +125,32 @@
               ]
             },
             {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "t"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "StructLit",
+                  "typeName": "Tick",
+                  "fields": [
+                    {
+                      "kind": "StructLitField",
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "7"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
               "kind": "Call",
               "fun": {
                 "kind": "Selector",
@@ -163,6 +205,27 @@
                     "name": "q"
                   },
                   "sel": "Y"
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "t"
+                  },
+                  "sel": "N"
                 }
               ]
             }

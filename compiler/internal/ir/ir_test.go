@@ -601,6 +601,48 @@ func TestStructLitMissingTypeName(t *testing.T) {
 	}
 }
 
+// TestStructLitDirect mirrors TestMapEntryDirect for StructLit: the
+// top-level json.Unmarshal error guard and the nested-field decode
+// error both surface at the boundary.
+func TestStructLitDirect(t *testing.T) {
+	t.Parallel()
+
+	var s StructLit
+	if err := s.UnmarshalJSON([]byte(`not json`)); err == nil {
+		t.Fatal("expected error for malformed StructLit JSON")
+	}
+	var s2 StructLit
+	if err := s2.UnmarshalJSON(
+		[]byte(`{"typeName":"Point","fields":[{"kind":"StructLitField","name":"X","value":{"kind":"Bogus"}}]}`),
+	); err == nil {
+		t.Fatal("expected error for StructLit with bad field value kind")
+	}
+}
+
+// TestStructLitFieldDirect mirrors TestMapEntryDirect for
+// StructLitField: malformed JSON, a bad-kind value, and — unlike
+// MapEntry — a missing value (a struct-literal field always has one).
+func TestStructLitFieldDirect(t *testing.T) {
+	t.Parallel()
+
+	var f StructLitField
+	if err := f.UnmarshalJSON([]byte(`not json`)); err == nil {
+		t.Fatal("expected error for malformed StructLitField JSON")
+	}
+	var f2 StructLitField
+	if err := f2.UnmarshalJSON([]byte(`{"name":"X","value":{"kind":"Bogus"}}`)); err == nil {
+		t.Fatal("expected error for StructLitField with bad value kind")
+	}
+	var f3 StructLitField
+	if err := f3.UnmarshalJSON([]byte(`{"name":"X"}`)); err == nil {
+		t.Fatal("expected error for StructLitField with missing value")
+	}
+	var f4 StructLitField
+	if err := f4.UnmarshalJSON([]byte(`{"name":"X","value":null}`)); err == nil {
+		t.Fatal("expected error for StructLitField with null value")
+	}
+}
+
 // TestSliceTypeBadElem covers the unmarshalType propagation when the
 // nested elem has an unknown kind.
 func TestSliceTypeBadElem(t *testing.T) {

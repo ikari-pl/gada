@@ -2134,14 +2134,31 @@ func TestExprEmitAfterError(t *testing.T) {
 	}
 }
 
-// TestStructLitEmit locks emitStructLit's three aggregate forms
-// directly: a keyed literal renders `Name'(F => V, …)`, a positional
-// one `Name'(V, …)`, and an empty struct the `Name'(null record)`
-// mirror of the `is null record` type. The corpus fixture exercises
-// keyed + positional through a full program; the empty form has no
-// compilable field-access use, so it is pinned here. A lowercase field
-// name also confirms adaIdent capitalises the aggregate component so it
-// lines up with the record declaration 5a-i emits.
+// structLitEmitFile is the shared declarative context for
+// TestStructLitEmit: emitStructLit consults the declared field set, so
+// the emitter must see these struct TypeDecls. Point (2 fields), Tick
+// (1 field), Empty (0 fields), and Low (1 lowercase field) between them
+// exercise every emitStructLit branch.
+func structLitEmitFile() *ir.File {
+	sf := func(name string) *ir.StructField {
+		return &ir.StructField{Name: name, Type: &ir.IntType{}}
+	}
+	return &ir.File{Decls: []ir.Decl{
+		&ir.TypeDecl{Name: "Point", Underlying: &ir.StructType{Fields: []*ir.StructField{sf("X"), sf("Y")}}},
+		&ir.TypeDecl{Name: "Tick", Underlying: &ir.StructType{Fields: []*ir.StructField{sf("N")}}},
+		&ir.TypeDecl{Name: "Empty", Underlying: &ir.StructType{}},
+		&ir.TypeDecl{Name: "Low", Underlying: &ir.StructType{Fields: []*ir.StructField{sf("count")}}},
+	}}
+}
+
+// TestStructLitEmit locks emitStructLit's aggregate forms directly: a
+// complete keyed literal renders `Name'(F => V, …)`, a complete
+// multi-field positional one `Name'(V, …)`, a single positional field
+// the *named* `Name'(F => V)` form (a one-component positional
+// aggregate is not valid Ada), and an empty struct the
+// `Name'(null record)` mirror of the `is null record` type. A lowercase
+// single field confirms adaIdent capitalises the aggregate component so
+// it lines up with the record declaration 5a-i emits.
 func TestStructLitEmit(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -2150,7 +2167,7 @@ func TestStructLitEmit(t *testing.T) {
 		want string
 	}{
 		{
-			"keyed",
+			"keyed complete",
 			&ir.StructLit{TypeName: "Point", Fields: []*ir.StructLitField{
 				{Name: "X", Value: litInt("1")},
 				{Name: "Y", Value: litInt("2")},
@@ -2158,7 +2175,7 @@ func TestStructLitEmit(t *testing.T) {
 			"Point'(X => 1, Y => 2)",
 		},
 		{
-			"positional",
+			"positional multi-field",
 			&ir.StructLit{TypeName: "Point", Fields: []*ir.StructLitField{
 				{Value: litInt("3")},
 				{Value: litInt("4")},
@@ -2166,25 +2183,81 @@ func TestStructLitEmit(t *testing.T) {
 			"Point'(3, 4)",
 		},
 		{
-			"empty",
+			"single positional field uses named form",
+			&ir.StructLit{TypeName: "Tick", Fields: []*ir.StructLitField{
+				{Value: litInt("7")},
+			}},
+			"Tick'(N => 7)",
+		},
+		{
+			"empty struct",
 			&ir.StructLit{TypeName: "Empty"},
 			"Empty'(null record)",
 		},
 		{
 			"lowercase field capitalised",
-			&ir.StructLit{TypeName: "Point", Fields: []*ir.StructLitField{
+			&ir.StructLit{TypeName: "Low", Fields: []*ir.StructLitField{
 				{Name: "count", Value: litInt("5")},
 			}},
-			"Point'(Count => 5)",
+			"Low'(Count => 5)",
 		},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			e := newEmitter("p", &ir.File{})
+			e := newEmitter("p", structLitEmitFile())
 			if got := e.emitExpr(tc.lit); got != tc.want {
 				t.Fatalf("emitStructLit = %q, want %q", got, tc.want)
+			}
+			if e.err != nil {
+				t.Fatalf("unexpected emit error: %v", e.err)
+			}
+		})
+	}
+}
+
+// TestStructLitEmitRejects locks emitStructLit's correct-or-loud
+// guards: a composite literal on a non-struct/undeclared type, and a
+// zero-value or partial literal of a non-empty struct (which would need
+// the omitted fields' Go zero values — item 5a-iii), all fail with a
+// clear diagnostic rather than emit invalid Ada.
+func TestStructLitEmitRejects(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		lit     *ir.StructLit
+		wantSub string
+	}{
+		{
+			"undeclared / non-struct type",
+			&ir.StructLit{TypeName: "Ints", Fields: []*ir.StructLitField{{Value: litInt("1")}}},
+			"non-struct or undeclared",
+		},
+		{
+			"zero-value literal of non-empty struct",
+			&ir.StructLit{TypeName: "Point"},
+			"partial struct literal",
+		},
+		{
+			"partial keyed literal",
+			&ir.StructLit{TypeName: "Point", Fields: []*ir.StructLitField{
+				{Name: "X", Value: litInt("1")},
+			}},
+			"partial struct literal",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEmitter("p", structLitEmitFile())
+			got := e.emitExpr(tc.lit)
+			if e.err == nil {
+				t.Fatalf("expected emit error, got output %q", got)
+			}
+			if !strings.Contains(e.err.Error(), tc.wantSub) {
+				t.Fatalf("error %q does not contain %q", e.err.Error(), tc.wantSub)
 			}
 		})
 	}

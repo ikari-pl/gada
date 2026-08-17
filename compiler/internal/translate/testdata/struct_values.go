@@ -11,9 +11,19 @@ type Point struct {
 	X, Y int
 }
 
+// A single-field struct: a positional literal `Tick{7}` must lower to
+// the *named* aggregate `Tick'(N => 7)`, because Ada parses a
+// one-component positional aggregate `Tick'(7)` as a qualified
+// expression (a type error), not a record aggregate.
+type Tick struct {
+	N int
+}
+
 func main() {
 	p := Point{X: 1, Y: 2}
 	q := Point{3, 4}
+	t := Tick{7}
 	fmt.Println(p.X, p.Y)
 	fmt.Println(q.X, q.Y)
+	fmt.Println(t.N)
 }

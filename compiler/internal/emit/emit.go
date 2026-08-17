@@ -153,10 +153,11 @@ type emitter struct {
 	selectorElemOrder []string
 	localTypes        map[string]ir.Type
 	rangeCounter      int
-	selectCounter     int                     // file-wide 1..N numbering for each emitted select site; suffixes Sel_Cases_<n> / Sel_Idx_<n> / V_<n>_<i> / OK_<n>_<i> to keep nested selects from shadowing each other's locals (Ada would shadow legally, but unique names keep gprbuild diagnostics actionable).
-	goIndex           map[*ir.GoStmt]int      // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
-	funcByName        map[string]*ir.Function // file-wide name → top-level Function decl, so a `go f(x, y)` site can resolve f's parameter names + declared types to build the matching Go_Closure_<n> record and unpack it into correctly-named locals. Populated alongside collectSliceElems.
-	pendingRecvs      []pendingChanRecv       // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
+	selectCounter     int                       // file-wide 1..N numbering for each emitted select site; suffixes Sel_Cases_<n> / Sel_Idx_<n> / V_<n>_<i> / OK_<n>_<i> to keep nested selects from shadowing each other's locals (Ada would shadow legally, but unique names keep gprbuild diagnostics actionable).
+	goIndex           map[*ir.GoStmt]int        // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
+	funcByName        map[string]*ir.Function   // file-wide name → top-level Function decl, so a `go f(x, y)` site can resolve f's parameter names + declared types to build the matching Go_Closure_<n> record and unpack it into correctly-named locals. Populated alongside collectSliceElems.
+	structByName      map[string]*ir.StructType // file-wide type name → its struct definition, so emitStructLit can consult the declared field set: an Ada record aggregate must supply a value for every component (RM 4.3.1), so a literal that omits fields, names a non-struct type, or has a single positional field needs the declared fields to lower correctly (or to be rejected loudly). Populated alongside funcByName.
+	pendingRecvs      []pendingChanRecv         // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
 	err               error
 }
 
@@ -187,6 +188,7 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		selectorElems:  map[string]ir.Type{},
 		goIndex:        map[*ir.GoStmt]int{},
 		funcByName:     map[string]*ir.Function{},
+		structByName:   map[string]*ir.StructType{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
@@ -209,10 +211,15 @@ func (e *emitter) collectSliceElems() {
 	// here so run() can emit the with-clause before the body.
 	e.needsIfaceReg = len(satisfiedPairs(e.file.Decls)) > 0
 	for _, d := range e.file.Decls {
-		if _, ok := d.(*ir.TypeDecl); ok {
+		if td, ok := d.(*ir.TypeDecl); ok {
 			// A defined type means the file carries reflect metadata to
 			// register at module init (Phase 4 item 2c).
 			e.needsReflect = true
+			// Index struct types by name so emitStructLit can check a
+			// composite literal against the declared field set.
+			if st, ok := td.Underlying.(*ir.StructType); ok {
+				e.structByName[td.Name] = st
+			}
 			continue
 		}
 		fn, ok := d.(*ir.Function)
@@ -2582,17 +2589,65 @@ func (e *emitter) emitMapLit(m *ir.MapLit) string {
 // `is null record` type emitted for a fieldless struct). The `'`
 // qualification pins the type so the aggregate resolves in any
 // expression position, not just assignments where context supplies it.
+//
+// Ada record aggregates are stricter than Go composite literals, so the
+// emitter consults the declared field set (structByName) to stay
+// correct-or-loud rather than emit invalid Ada silently:
+//
+//   - A value for *every* component is mandatory (RM 4.3.1), so a
+//     zero-value `Point{}` or a partial `Point{X: 1}` cannot lower to a
+//     complete aggregate without synthesising the omitted fields' Go
+//     zero values — deferred to item 5a-iii. Until then they are
+//     rejected with a clear diagnostic, never mis-emitted.
+//   - A *one-component* positional aggregate is not expressible: Ada
+//     parses `Point'(5)` as a qualified expression (the value 5 cast to
+//     type Point), a type error. A single positional field is therefore
+//     emitted in named form `Point'(N => 5)`, resolving the name from
+//     the sole declared field.
+//   - A composite literal on a *non-struct* named type (`type Ints
+//     []int; Ints{1, 2}`) has no record to aggregate against; without
+//     *types.Info the translator cannot tell it from a struct, so the
+//     mismatch surfaces here as a loud emit failure rather than an
+//     aggregate against a type gprbuild never declared as a record.
 func (e *emitter) emitStructLit(s *ir.StructLit) string {
+	st, ok := e.structByName[s.TypeName]
+	if !ok {
+		e.fail(fmt.Errorf("emit: composite literal on non-struct or undeclared type %q (struct literals require a struct TypeDecl in the same file)", s.TypeName))
+		return ""
+	}
 	name := adaIdent(s.TypeName)
-	if len(s.Fields) == 0 {
+
+	// A genuinely fieldless struct (`type Empty struct{}`): the only
+	// legal literal is `Empty{}`, which mirrors the `is null record`
+	// type.
+	if len(st.Fields) == 0 {
 		return name + "'(null record)"
+	}
+
+	// A non-empty struct whose literal supplies no or too few fields
+	// would need the omitted components' Go zero values — item 5a-iii.
+	if len(s.Fields) < len(st.Fields) {
+		e.fail(fmt.Errorf("emit: zero-value or partial struct literal %s{…} not yet supported (item 5a-iii): give all %d fields explicitly", name, len(st.Fields)))
+		return ""
+	}
+
+	keyed := s.Fields[0].Name != ""
+	if keyed {
+		parts := make([]string, 0, len(s.Fields))
+		for _, f := range s.Fields {
+			parts = append(parts, adaIdent(f.Name)+" => "+e.emitExpr(f.Value))
+		}
+		return name + "'(" + strings.Join(parts, ", ") + ")"
+	}
+
+	// Positional. A single positional field must use named notation to
+	// avoid the qualified-expression ambiguity; resolve the name from
+	// the sole declared field.
+	if len(s.Fields) == 1 {
+		return name + "'(" + adaIdent(st.Fields[0].Name) + " => " + e.emitExpr(s.Fields[0].Value) + ")"
 	}
 	parts := make([]string, 0, len(s.Fields))
 	for _, f := range s.Fields {
-		if f.Name != "" {
-			parts = append(parts, adaIdent(f.Name)+" => "+e.emitExpr(f.Value))
-			continue
-		}
 		parts = append(parts, e.emitExpr(f.Value))
 	}
 	return name + "'(" + strings.Join(parts, ", ") + ")"

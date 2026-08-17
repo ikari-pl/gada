@@ -310,6 +310,30 @@ type MapLit struct {
 func (*MapLit) irExpr()          {}
 func (*MapLit) NodeKind() string { return "MapLit" }
 
+// StructLitField is one field initialiser inside a StructLit. Name is
+// the field name for a keyed literal (`X: 1`) and empty for a
+// positional one (`1`). Go forbids mixing the two forms in a single
+// composite literal, so a StructLit's fields are either all-named or
+// all-unnamed. Not a sum-type variant — has its own
+// MarshalJSON/UnmarshalJSON pair like *MapEntry.
+type StructLitField struct {
+	Name  string
+	Value Expr
+}
+
+// StructLit is a Go struct composite literal: `T{X: 1, Y: 2}` (keyed)
+// or `T{1, 2}` (positional). TypeName is the struct type's name; the
+// emitter renders it as an Ada aggregate — `(X => 1, Y => 2)` for the
+// keyed form, `(1, 2)` for the positional one, and `(null record)` for
+// an empty struct.
+type StructLit struct {
+	TypeName string
+	Fields   []*StructLitField
+}
+
+func (*StructLit) irExpr()          {}
+func (*StructLit) NodeKind() string { return "StructLit" }
+
 // RangeStmt is Go `for k, v := range x { ... }` (and the elided
 // `for k := range x` / `for range x` shapes; empty KeyName/ValueName
 // means the corresponding bound was absent or blank-identifier in
@@ -808,6 +832,12 @@ func unmarshalExpr(raw json.RawMessage) (Expr, error) {
 		return &n, nil
 	case "MapLit":
 		var n MapLit
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "StructLit":
+		var n StructLit
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1826,6 +1856,55 @@ func (e *MapLit) UnmarshalJSON(b []byte) error {
 	}
 	e.Value = v
 	e.Entries = aux.Entries
+	return nil
+}
+
+func (e *StructLitField) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind  string `json:"kind"`
+		Name  string `json:"name,omitempty"`
+		Value Expr   `json:"value"`
+	}{"StructLitField", e.Name, e.Value})
+}
+
+func (e *StructLitField) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Name  string          `json:"name"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	e.Name = aux.Name
+	v, err := unmarshalOptionalExpr(aux.Value)
+	if err != nil {
+		return err
+	}
+	e.Value = v
+	return nil
+}
+
+func (e *StructLit) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind     string            `json:"kind"`
+		TypeName string            `json:"typeName"`
+		Fields   []*StructLitField `json:"fields"`
+	}{"StructLit", e.TypeName, e.Fields})
+}
+
+func (e *StructLit) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		TypeName string            `json:"typeName"`
+		Fields   []*StructLitField `json:"fields"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if aux.TypeName == "" {
+		return fmt.Errorf("ir: StructLit missing typeName")
+	}
+	e.TypeName = aux.TypeName
+	e.Fields = aux.Fields
 	return nil
 }
 

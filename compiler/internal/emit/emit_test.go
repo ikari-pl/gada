@@ -64,6 +64,8 @@ var corpusFixtures = []string{
 	"iface_satisfy",
 	// Phase 4 — struct type in package main (item 5a-i): record in Main.
 	"struct_main",
+	// Phase 4 — struct values: literals + field access (item 5a-ii).
+	"struct_values",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -2129,6 +2131,75 @@ func TestExprEmitAfterError(t *testing.T) {
 
 	if e.err == nil || e.err.Error() != "primary" {
 		t.Fatalf("expected sticky primary error preserved, got %v", e.err)
+	}
+}
+
+// TestStructLitEmit locks emitStructLit's three aggregate forms
+// directly: a keyed literal renders `Name'(F => V, …)`, a positional
+// one `Name'(V, …)`, and an empty struct the `Name'(null record)`
+// mirror of the `is null record` type. The corpus fixture exercises
+// keyed + positional through a full program; the empty form has no
+// compilable field-access use, so it is pinned here. A lowercase field
+// name also confirms adaIdent capitalises the aggregate component so it
+// lines up with the record declaration 5a-i emits.
+func TestStructLitEmit(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		lit  *ir.StructLit
+		want string
+	}{
+		{
+			"keyed",
+			&ir.StructLit{TypeName: "Point", Fields: []*ir.StructLitField{
+				{Name: "X", Value: litInt("1")},
+				{Name: "Y", Value: litInt("2")},
+			}},
+			"Point'(X => 1, Y => 2)",
+		},
+		{
+			"positional",
+			&ir.StructLit{TypeName: "Point", Fields: []*ir.StructLitField{
+				{Value: litInt("3")},
+				{Value: litInt("4")},
+			}},
+			"Point'(3, 4)",
+		},
+		{
+			"empty",
+			&ir.StructLit{TypeName: "Empty"},
+			"Empty'(null record)",
+		},
+		{
+			"lowercase field capitalised",
+			&ir.StructLit{TypeName: "Point", Fields: []*ir.StructLitField{
+				{Name: "count", Value: litInt("5")},
+			}},
+			"Point'(Count => 5)",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEmitter("p", &ir.File{})
+			if got := e.emitExpr(tc.lit); got != tc.want {
+				t.Fatalf("emitStructLit = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSelectorFieldCapitalised locks that a field access through a
+// lowercase Go field name (`p.count`) renders the capitalised record
+// component (`P.Count`) 5a-i declares — a no-op on already-exported
+// fields but essential for unexported ones to compile.
+func TestSelectorFieldCapitalised(t *testing.T) {
+	t.Parallel()
+	e := newEmitter("p", &ir.File{})
+	got := e.emitExpr(&ir.Selector{X: idn("p"), Sel: "count"})
+	if want := "P.Count"; got != want {
+		t.Fatalf("emitSelector = %q, want %q", got, want)
 	}
 }
 

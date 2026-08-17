@@ -407,7 +407,7 @@ enumeration; output matches the expected fixture.
           fixture `struct_main` (record in `Main` + the empty-struct
           `null record`). struct.go 100%, emit/ 95.58%; vet + lint clean.
 
-    - [ ] **(5a-ii) struct values — literals + field access**
+    - [x] **(5a-ii) struct values — literals + field access**
           *Files:* `compiler/internal/ir/ir.go` (`*ir.StructLit`),
           `compiler/internal/translate/translate.go` (`transCompositeLit`
           struct arm), `compiler/internal/emit`, golden tests.
@@ -415,6 +415,29 @@ enumeration; output matches the expected fixture.
           *Done when:* a composite literal `Point{X: 1, Y: 2}` lowers to an
           Ada positional/named aggregate and a field access `p.X` emits as
           `P.X`, so a struct-using program round-trips end to end.
+          *Done 2026-08-17:* new `*ir.StructLit{TypeName, Fields}` +
+          `*ir.StructLitField{Name, Value}` (kind-tagged JSON, `typeName`
+          missing-child guard, golangci exclusion). `transCompositeLit`
+          gains an `*ast.Ident` arm via `transStructFields`, handling the
+          keyed (`Point{X:1}`) and positional (`Point{1,2}`) forms and
+          rejecting a keyed/positional mix or a non-ident key; an
+          *anonymous* struct literal (`*ast.StructType`) stays rejected
+          (no named Ada record to name). Emit: `emitStructLit` renders a
+          qualified aggregate — `Point'(X => 1, Y => 2)`, `Point'(3, 4)`,
+          empty `Empty'(null record)` — `inferDeclType` types a `:=`
+          struct-literal decl by its named type, and `emitSelector` now
+          runs the field through `adaIdent` so a lowercase Go field
+          (`p.count`) lines up with the capitalised record component 5a-i
+          emits. New corpus fixture `struct_values` (keyed + positional +
+          field access through `fmt.Println`); the empty-literal and
+          lowercase-field branches are pinned by direct emit unit tests.
+          emit/ 95.68%, translate/ 95.93%, emitStructLit + emitSelector
+          100%; vet + lint + gate clean. Field-access selector correctness
+          for unexported fields (the adaIdent fix) is the round-trip
+          enabler beyond the roadmap's stated keyed/positional cases.
+          *Not yet:* named slice/map types used as a literal type
+          (`type Ints []int; Ints{…}`) — needs *types.Info* threaded
+          through the translator, which no Phase-2/4 path plumbs yet.
 
   - [ ] **(5b) interface types → Ada interface types**
         *Files:* `compiler/internal/emit/emit.go`, golden tests.

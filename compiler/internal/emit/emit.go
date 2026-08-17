@@ -1957,6 +1957,9 @@ func inferDeclType(x ir.Expr) (string, error) {
 			return "", err
 		}
 		return pkg + ".Channel", nil
+	case *ir.StructLit:
+		// The literal names its own record type; no *types.Info needed.
+		return adaIdent(x.TypeName), nil
 	}
 	return "", fmt.Errorf("emit: := requires a literal or composite RHS, got %T", x)
 }
@@ -2467,6 +2470,8 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		return e.emitSliceLit(x)
 	case *ir.MapLit:
 		return e.emitMapLit(x)
+	case *ir.StructLit:
+		return e.emitStructLit(x)
 	case *ir.MakeChan:
 		return e.emitMakeChan(x)
 	case *ir.IndexExpr:
@@ -2568,6 +2573,29 @@ func (e *emitter) emitMapLit(m *ir.MapLit) string {
 			"(K => "+e.emitExpr(ent.Key)+", V => "+e.emitExpr(ent.Value)+")")
 	}
 	return pkg + ".From_Pairs ([" + strings.Join(parts, ", ") + "])"
+}
+
+// emitStructLit renders a Go struct composite literal as a qualified
+// Ada record aggregate: `Point{X: 1, Y: 2}` -> `Point'(X => 1, Y => 2)`
+// (keyed), `Point{1, 2}` -> `Point'(1, 2)` (positional), and an empty
+// `Empty{}` -> `Empty'(null record)` (the aggregate mirror of the
+// `is null record` type emitted for a fieldless struct). The `'`
+// qualification pins the type so the aggregate resolves in any
+// expression position, not just assignments where context supplies it.
+func (e *emitter) emitStructLit(s *ir.StructLit) string {
+	name := adaIdent(s.TypeName)
+	if len(s.Fields) == 0 {
+		return name + "'(null record)"
+	}
+	parts := make([]string, 0, len(s.Fields))
+	for _, f := range s.Fields {
+		if f.Name != "" {
+			parts = append(parts, adaIdent(f.Name)+" => "+e.emitExpr(f.Value))
+			continue
+		}
+		parts = append(parts, e.emitExpr(f.Value))
+	}
+	return name + "'(" + strings.Join(parts, ", ") + ")"
 }
 
 // emitSliceExpr dispatches `s[lo:hi]` (and the elided forms) to
@@ -3189,8 +3217,11 @@ func (e *emitter) emitUnaryOp(u *ir.UnaryOp) string {
 func (e *emitter) emitSelector(s *ir.Selector) string {
 	// `fmt.Println` in statement position is intercepted by emitCallStmt
 	// (-> emitFmtPrintln), so it never reaches here. Any other selector
-	// renders as the Ada dotted form.
-	return e.emitExpr(s.X) + "." + s.Sel
+	// renders as the Ada dotted form. The selected name goes through
+	// adaIdent so a lowercase Go field (`p.count`) lines up with the
+	// capitalised record component 5a-i emits (`Count`); it is a no-op
+	// on already-exported fields and method names.
+	return e.emitExpr(s.X) + "." + adaIdent(s.Sel)
 }
 
 // --- identifiers ----------------------------------------------------------

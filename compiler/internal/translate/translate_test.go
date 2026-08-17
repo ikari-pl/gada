@@ -83,6 +83,8 @@ func TestCorpus(t *testing.T) {
 		"iface_satisfy.go",
 		// Phase 4 — struct type in package main (item 5a-i).
 		"struct_main.go",
+		// Phase 4 — struct values: literals + field access (item 5a-ii).
+		"struct_values.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -208,10 +210,22 @@ func f() { _ = 1i }`, "literal kind"},
 		{"call as expr in rhs", `package p
 func g() int { return 0 }
 func f() { _ = g() }`, "general call-as-expression"},
-		{"struct composite lit on rhs", `package p
-func f() { _ = struct{}{} }`, "only []T and map[K]V"},
+		// Named-struct literals are supported (item 5a-ii); an *anonymous*
+		// struct literal (`c.Type` is *ast.StructType, not *ast.Ident) has
+		// no named Ada record to name, so it stays rejected.
+		{"anon struct composite lit on rhs", `package p
+func f() { _ = struct{}{} }`, "named-struct composite literals"},
 		{"fixed-size array composite", `package p
 func f() { _ = [3]int{1, 2, 3} }`, "fixed-size array composite"},
+		// Named-struct literal error paths (item 5a-ii, transStructFields).
+		{"struct lit mixed keyed/positional", `package p
+func f() { _ = Point{X: 1, 2} }`, "mixes keyed and positional"},
+		{"struct lit non-ident key", `package p
+func f() { _ = Point{1: 2} }`, "field key must be an identifier"},
+		{"struct lit bad keyed value", `package p
+func f() { _ = Point{X: 1i} }`, "literal kind"},
+		{"struct lit bad positional value", `package p
+func f() { _ = Point{1i} }`, "literal kind"},
 		{"map lit bad key type", `package p
 func f() { _ = map[complex128]int{} }`, "unsupported type"},
 		{"map lit bad value type", `package p

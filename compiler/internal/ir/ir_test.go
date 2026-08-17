@@ -53,6 +53,7 @@ func TestNodeKind(t *testing.T) {
 		{"BuiltinCall", &BuiltinCall{}, "BuiltinCall"},
 		{"MapType", &MapType{}, "MapType"},
 		{"MapLit", &MapLit{}, "MapLit"},
+		{"StructLit", &StructLit{}, "StructLit"},
 		{"RangeStmt", &RangeStmt{}, "RangeStmt"},
 		{"DeferStmt", &DeferStmt{}, "DeferStmt"},
 		{"GoStmt", &GoStmt{}, "GoStmt"},
@@ -110,6 +111,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Expr = &SliceExpr{}
 	var _ Expr = &BuiltinCall{} // recover() at expression position
 	var _ Expr = &MapLit{}
+	var _ Expr = &StructLit{}
 	var _ Expr = &MakeChan{}
 	var _ Expr = &ChanRecv{}
 
@@ -582,6 +584,20 @@ func TestSliceLitMissingElem(t *testing.T) {
 	}
 	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"SliceLit","elem":null}`)); err == nil {
 		t.Fatal("expected error for SliceLit with null elem")
+	}
+}
+
+// TestStructLitMissingTypeName locks StructLit.UnmarshalJSON's
+// missing-child guard: a struct literal without its named type is
+// malformed IR — the emitter renders the type name as the aggregate's
+// qualified prefix, so it must be present at the JSON -> IR boundary.
+func TestStructLitMissingTypeName(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"StructLit"}`)); err == nil {
+		t.Fatal("expected error for StructLit without typeName")
+	}
+	if _, err := unmarshalExpr(json.RawMessage(`{"kind":"StructLit","typeName":""}`)); err == nil {
+		t.Fatal("expected error for StructLit with empty typeName")
 	}
 }
 

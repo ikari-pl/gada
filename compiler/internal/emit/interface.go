@@ -92,30 +92,41 @@ func (e *emitter) emitInterfaceTypes() error {
 // operation controlled by the interface type: a `function … is
 // abstract;` for a single-result method, a `procedure … is abstract;`
 // for a result-less one. The interface type is the controlling first
-// parameter `Self`. Go's multi-result methods have no direct Ada
-// function form, so 2+ results are rejected loudly.
+// parameter `Self`.
 func (e *emitter) interfaceMethodSpec(ifaceName string, m *ir.MethodSig) (string, error) {
-	params := []string{"Self : " + adaIdent(ifaceName)}
-	for i, p := range m.Params {
+	return dispatchOpSpec("", "Self", adaIdent(ifaceName), m.Name, m.Params, m.Results, " is abstract;")
+}
+
+// dispatchOpSpec renders a dispatching-operation spec shared by an
+// interface's abstract op (item 5b-i) and a concrete type's overriding
+// op (item 5b-ii): `<prefix>function Name (ctrlName : ctrlType[; …])
+// return R<tail>`, or the `procedure` form when there is no result.
+// prefix is "" or "overriding "; tail is " is abstract;" (abstract op)
+// or ";" (a concrete spec whose body 5c supplies). Go's multi-result
+// methods have no single Ada function form, so 2+ results are rejected
+// loudly.
+func dispatchOpSpec(prefix, ctrlName, ctrlType, name string, params, results []*ir.Param, tail string) (string, error) {
+	ps := []string{ctrlName + " : " + ctrlType}
+	for i, p := range params {
 		t, err := typeName(p.Type)
 		if err != nil {
 			return "", err
 		}
-		params = append(params, methodParamName(p.Name, i)+" : "+t)
+		ps = append(ps, methodParamName(p.Name, i)+" : "+t)
 	}
-	plist := " (" + strings.Join(params, "; ") + ")"
-	name := adaIdent(m.Name)
-	switch len(m.Results) {
+	plist := " (" + strings.Join(ps, "; ") + ")"
+	ada := adaIdent(name)
+	switch len(results) {
 	case 0:
-		return "procedure " + name + plist + " is abstract;", nil
+		return prefix + "procedure " + ada + plist + tail, nil
 	case 1:
-		rt, err := typeName(m.Results[0].Type)
+		rt, err := typeName(results[0].Type)
 		if err != nil {
 			return "", err
 		}
-		return "function " + name + plist + " return " + rt + " is abstract;", nil
+		return prefix + "function " + ada + plist + " return " + rt + tail, nil
 	default:
-		return "", fmt.Errorf("emit: interface method %s has %d results; an Ada function returns one value (multi-result interface methods not supported)", m.Name, len(m.Results))
+		return "", fmt.Errorf("emit: method %s has %d results; an Ada function returns one value (multi-result methods not supported)", name, len(results))
 	}
 }
 

@@ -7,10 +7,11 @@ package body P is
    type Stringer is interface;
    function String (Self : Stringer) return String is abstract;
 
-   type Point is record
+   type Point is new Stringer with record
       X : Integer;
       Y : Integer;
    end record;
+   overriding function String (Pt : Point) return String;
 
 begin
    declare

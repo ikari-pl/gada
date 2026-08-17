@@ -1,0 +1,209 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "iface_multi.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "TypeDecl",
+          "name": "Reader",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": [
+              {
+                "kind": "MethodSig",
+                "name": "Read",
+                "params": null,
+                "results": [
+                  {
+                    "kind": "Param",
+                    "name": "",
+                    "type": {
+                      "kind": "IntType"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "MethodSig",
+                "name": "Close",
+                "params": null,
+                "results": null
+              }
+            ]
+          }
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Writer",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": [
+              {
+                "kind": "MethodSig",
+                "name": "Write",
+                "params": [
+                  {
+                    "kind": "Param",
+                    "name": "n",
+                    "type": {
+                      "kind": "IntType"
+                    }
+                  }
+                ],
+                "results": null
+              },
+              {
+                "kind": "MethodSig",
+                "name": "Close",
+                "params": null,
+                "results": null
+              }
+            ]
+          }
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Buffer",
+          "underlying": {
+            "kind": "StructType",
+            "fields": [
+              {
+                "kind": "StructField",
+                "name": "data",
+                "type": {
+                  "kind": "IntType"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "Function",
+          "name": "Read",
+          "receiver": {
+            "kind": "Receiver",
+            "name": "b",
+            "type": "Buffer",
+            "pointer": false
+          },
+          "params": null,
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "b"
+                  },
+                  "sel": "data"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "Write",
+          "receiver": {
+            "kind": "Receiver",
+            "name": "b",
+            "type": "Buffer",
+            "pointer": false
+          },
+          "params": [
+            {
+              "kind": "Param",
+              "name": "n",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "results": null,
+          "body": null
+        },
+        {
+          "kind": "Function",
+          "name": "Close",
+          "receiver": {
+            "kind": "Receiver",
+            "name": "b",
+            "type": "Buffer",
+            "pointer": false
+          },
+          "params": null,
+          "results": null,
+          "body": null
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Nop",
+          "underlying": {
+            "kind": "StructType",
+            "fields": null
+          }
+        },
+        {
+          "kind": "Function",
+          "name": "Read",
+          "receiver": {
+            "kind": "Receiver",
+            "name": "n",
+            "type": "Nop",
+            "pointer": false
+          },
+          "params": null,
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "Lit",
+                  "litKind": "int",
+                  "value": "0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "Close",
+          "receiver": {
+            "kind": "Receiver",
+            "name": "n",
+            "type": "Nop",
+            "pointer": false
+          },
+          "params": null,
+          "results": null,
+          "body": null
+        }
+      ]
+    }
+  ]
+}

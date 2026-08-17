@@ -510,7 +510,9 @@ enumeration; output matches the expected fixture.
           composite fields (field-type collection walk + non-scalar
           zeroes) rides a later item.
 
-  - [ ] **(5b) interface types → Ada interface types**
+  - [x] **(5b) interface types → Ada interface types** — both sub-items
+        done (5b-i interface declarations + abstract ops, 5b-ii
+        satisfying-record derivation + overriding specs).
         *Files:* `compiler/internal/emit/emit.go`, golden tests.
         *Verify:* `cd compiler && go test ./internal/emit/... -run Iface`
         *Done when:* a `type Stringer interface { String() string }` emits
@@ -559,9 +561,9 @@ enumeration; output matches the expected fixture.
           the derivation and 5c the bodies); the byte-checked goldens
           capture the text without compiling.
 
-    - [ ] **(5b-ii) satisfying records derive the interface(s)**
+    - [x] **(5b-ii) satisfying records derive the interface(s)**
           *Files:* `compiler/internal/emit/struct.go`, golden tests.
-          *Verify:* `cd compiler && go test ./internal/emit/... -run Iface`
+          *Verify:* `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Iface|Overriding|TestCorpus'`
           *Done when:* a struct that satisfies ≥1 interface (per
           `satisfiedPairs`) emits its record as `type C is new I1 [and I2
           …] with record … end record;` (or `with null record;` when
@@ -569,6 +571,26 @@ enumeration; output matches the expected fixture.
           followed by the `overriding` spec of every method it implements
           from those interfaces. A struct that satisfies no interface
           stays the plain untagged record 5a-i emits.
+          *Done 2026-08-17:* `emitStructTypes` consults `satisfiedPairs`
+          and, for a satisfying struct, emits the tagged derivation
+          header (`is new Reader and Writer with record …` / `with null
+          record;`) plus `overridingSpecs` — one `overriding` op per
+          distinct interface method the type implements, in
+          interface-then-method source order, deduped by name (a method
+          shared by two derived interfaces is overridden once), each spec
+          mirroring the concrete method's signature with its receiver as
+          the controlling first parameter (`overriding function Read
+          (B : Buffer) return Integer;`). Reuses `dispatchOpSpec` with
+          5b-i. New corpus fixture `iface_multi` (Buffer derives Reader +
+          Writer with a shared Close; Nop derives Reader with a null
+          record); `iface_satisfy`'s Point now derives Stringer.
+          `overridingSpecs` dedup / missing-method-skip / multi-result
+          error paths pinned by `TestOverridingSpecs`. struct.go 97.67%,
+          emit/ 95.78%; vet + lint + gate clean. Specs only — the
+          overriding *bodies* ride 5c, so the emitted unit is
+          intentionally incomplete (a declared primitive op with no body)
+          until then; the byte-checked goldens capture it without
+          compiling.
 
   - [ ] **(5c) methods → overriding subprograms**
         *Files:* `compiler/internal/emit/emit.go`, golden tests.

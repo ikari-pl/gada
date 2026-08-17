@@ -70,6 +70,8 @@ var corpusFixtures = []string{
 	"struct_zero",
 	// Phase 4 — interface type declarations + abstract ops (item 5b-i).
 	"interface_types",
+	// Phase 4 — multi-interface record derivation (item 5b-ii).
+	"iface_multi",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -2410,6 +2412,57 @@ func TestInterfaceTypeEmitError(t *testing.T) {
 	e := newEmitter("p", file)
 	if err := e.emitTypeDecls(); err == nil {
 		t.Fatal("expected error from emitTypeDecls for un-renderable interface method")
+	}
+}
+
+// TestOverridingSpecs locks overridingSpecs' behaviour the corpus
+// fixtures reach only indirectly: dedup of a method shared by two
+// derived interfaces, skipping an interface method the concrete type
+// does not implement (the defensive fn==nil guard), and propagating a
+// dispatchOpSpec error when a concrete method is un-renderable.
+func TestOverridingSpecs(t *testing.T) {
+	t.Parallel()
+	e := newEmitter("p", &ir.File{})
+
+	read := &ir.MethodSig{Name: "Read", Results: []*ir.Param{{Type: &ir.IntType{}}}}
+	closeM := &ir.MethodSig{Name: "Close"}
+	missing := &ir.MethodSig{Name: "Missing"}
+	ifaceMethods := map[string][]*ir.MethodSig{
+		"Reader": {read, closeM, missing},
+		"Writer": {closeM}, // Close shared with Reader
+	}
+	// The concrete type implements Read and Close but not Missing.
+	valueMethods := map[string][]*ir.Function{
+		"C": {
+			{Name: "Read", Receiver: &ir.Receiver{Name: "c", Type: "C"}, Results: []*ir.Param{{Type: &ir.IntType{}}}},
+			{Name: "Close", Receiver: &ir.Receiver{Name: "c", Type: "C"}},
+		},
+	}
+	specs, err := e.overridingSpecs("C", []string{"Reader", "Writer"}, ifaceMethods, valueMethods)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{
+		"overriding function Read (C : C) return Integer;",
+		"overriding procedure Close (C : C);",
+	}
+	if len(specs) != len(want) {
+		t.Fatalf("specs = %v, want %v", specs, want)
+	}
+	for i := range want {
+		if specs[i] != want[i] {
+			t.Fatalf("specs[%d] = %q, want %q", i, specs[i], want[i])
+		}
+	}
+
+	// An un-renderable concrete method (2 results) propagates the error.
+	bad := map[string][]*ir.Function{
+		"C": {{Name: "Read", Receiver: &ir.Receiver{Name: "c", Type: "C"},
+			Results: []*ir.Param{{Type: &ir.IntType{}}, {Type: &ir.BoolType{}}}}},
+	}
+	if _, err := e.overridingSpecs("C", []string{"Reader"},
+		map[string][]*ir.MethodSig{"Reader": {read}}, bad); err == nil {
+		t.Fatal("expected error for un-renderable overriding method")
 	}
 }
 

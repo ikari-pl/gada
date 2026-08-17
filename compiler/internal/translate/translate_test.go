@@ -89,6 +89,8 @@ func TestCorpus(t *testing.T) {
 		"struct_zero.go",
 		// Phase 4 — interface type declarations + abstract ops (item 5b-i).
 		"interface_types.go",
+		// Phase 4 — multi-interface record derivation (item 5b-ii).
+		"iface_multi.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)

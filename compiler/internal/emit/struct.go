@@ -2,6 +2,7 @@ package emit
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/gada-lang/gada/compiler/internal/ir"
 )
@@ -39,7 +40,18 @@ func (e *emitter) fileHasStructs() bool {
 
 // emitStructTypes writes one Ada record type declaration per Go struct
 // type in the file, in source order. Indent is owned by the caller.
+//
+// A struct that satisfies one or more interfaces (item 5b-ii) becomes a
+// tagged type deriving them — `type C is new I1 [and I2 …] with record
+// … end record;` (or `with null record;` when fieldless) — followed by
+// an `overriding` spec for every distinct interface method it
+// implements. A struct that satisfies no interface stays the plain
+// untagged record of item 5a-i. Bodies for the overriding ops ride 5c.
 func (e *emitter) emitStructTypes() error {
+	pairs := satisfiedPairs(e.file.Decls)
+	ifaceMethods := interfaceMethodsByName(e.file.Decls)
+	valueMethods := valueMethodsByType(e.file.Decls)
+
 	for _, d := range e.file.Decls {
 		td, ok := d.(*ir.TypeDecl)
 		if !ok {
@@ -50,24 +62,135 @@ func (e *emitter) emitStructTypes() error {
 			continue
 		}
 		name := adaIdent(td.Name)
-		if len(st.Fields) == 0 {
-			e.println("type " + name + " is null record;")
-			continue
-		}
-		e.println("type " + name + " is record")
-		e.indent++
-		for _, f := range st.Fields {
-			if err := validStructFieldType(f.Type); err != nil {
-				return fmt.Errorf("emit: struct %s field %q: %w", td.Name, f.Name, err)
+		ifaces := ifacesFor(td.Name, pairs)
+
+		// Record header: a plain `is record` / `is null record`, or the
+		// tagged `is new I1 and I2 with record` derivation.
+		header := "type " + name + " is "
+		if len(ifaces) > 0 {
+			derived := make([]string, len(ifaces))
+			for i, in := range ifaces {
+				derived[i] = adaIdent(in)
 			}
-			tn, err := typeName(f.Type)
+			header += "new " + strings.Join(derived, " and ") + " with "
+		}
+
+		if len(st.Fields) == 0 {
+			e.println(header + "null record;")
+		} else {
+			e.println(header + "record")
+			e.indent++
+			for _, f := range st.Fields {
+				if err := validStructFieldType(f.Type); err != nil {
+					return fmt.Errorf("emit: struct %s field %q: %w", td.Name, f.Name, err)
+				}
+				tn, err := typeName(f.Type)
+				if err != nil {
+					return err
+				}
+				e.println(adaIdent(f.Name) + " : " + tn + ";")
+			}
+			e.indent--
+			e.println("end record;")
+		}
+
+		if len(ifaces) > 0 {
+			specs, err := e.overridingSpecs(td.Name, ifaces, ifaceMethods, valueMethods)
 			if err != nil {
 				return err
 			}
-			e.println(adaIdent(f.Name) + " : " + tn + ";")
+			for _, spec := range specs {
+				e.println(spec)
+			}
 		}
-		e.indent--
-		e.println("end record;")
+	}
+	return nil
+}
+
+// overridingSpecs returns the `overriding` operation specs a concrete
+// type must declare: one per distinct interface method it implements
+// across the interfaces it derives, in interface-then-method source
+// order, deduplicated by method name (a method shared by two derived
+// interfaces is overridden once). Each spec mirrors the concrete
+// method's own signature, with its receiver as the controlling first
+// parameter; the body rides 5c.
+func (e *emitter) overridingSpecs(concrete string, ifaces []string, ifaceMethods map[string][]*ir.MethodSig, valueMethods map[string][]*ir.Function) ([]string, error) {
+	ctype := adaIdent(concrete)
+	seen := map[string]bool{}
+	var specs []string
+	for _, in := range ifaces {
+		for _, m := range ifaceMethods[in] {
+			if seen[m.Name] {
+				continue
+			}
+			seen[m.Name] = true
+			fn := findMethod(valueMethods[concrete], m.Name)
+			if fn == nil {
+				// satisfiedPairs proved concrete implements the interface,
+				// so a matching value-receiver method exists; guard rather
+				// than emit a spec for a method we cannot render.
+				continue
+			}
+			recv := "Self"
+			if fn.Receiver != nil && fn.Receiver.Name != "" {
+				recv = adaIdent(fn.Receiver.Name)
+			}
+			spec, err := dispatchOpSpec("overriding ", recv, ctype, fn.Name, fn.Params, fn.Results, ";")
+			if err != nil {
+				return nil, err
+			}
+			specs = append(specs, spec)
+		}
+	}
+	return specs, nil
+}
+
+// ifacesFor returns the interface names a concrete type satisfies, in
+// the source order satisfiedPairs produced (interface-declaration order).
+func ifacesFor(concrete string, pairs []namePair) []string {
+	var out []string
+	for _, p := range pairs {
+		if p.Concrete == concrete {
+			out = append(out, p.Iface)
+		}
+	}
+	return out
+}
+
+// interfaceMethodsByName indexes each interface type's method set by the
+// interface's name.
+func interfaceMethodsByName(decls []ir.Decl) map[string][]*ir.MethodSig {
+	m := map[string][]*ir.MethodSig{}
+	for _, d := range decls {
+		if td, ok := d.(*ir.TypeDecl); ok {
+			if it, ok := td.Underlying.(*ir.InterfaceType); ok {
+				m[td.Name] = it.Methods
+			}
+		}
+	}
+	return m
+}
+
+// valueMethodsByType indexes value-receiver methods by their receiver
+// type name — the method set that counts toward interface satisfaction
+// for the value type (a pointer-receiver method belongs to *T's set,
+// which rides a later item).
+func valueMethodsByType(decls []ir.Decl) map[string][]*ir.Function {
+	m := map[string][]*ir.Function{}
+	for _, d := range decls {
+		if fn, ok := d.(*ir.Function); ok && fn.Receiver != nil && !fn.Receiver.Pointer {
+			m[fn.Receiver.Type] = append(m[fn.Receiver.Type], fn)
+		}
+	}
+	return m
+}
+
+// findMethod returns the function named name from fns, or nil.
+func findMethod(fns []*ir.Function, name string) *ir.Function {
+	for _, fn := range fns {
+		if fn.Name == name {
+			return fn
+		}
 	}
 	return nil
 }

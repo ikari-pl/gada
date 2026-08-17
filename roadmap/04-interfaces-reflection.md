@@ -380,7 +380,8 @@ enumeration; output matches the expected fixture.
   multi-package struct visibility is deferred). Boundaries may refine as
   each lands.
 
-  - [ ] **(5a) struct types → Ada records**
+  - [x] **(5a) struct types → Ada records** — all sub-items done
+        (5a-i type declarations, 5a-ii values, 5a-iii zero/partial fill).
 
     Split 2026-06-26 into the type declaration (5a-i, emit-only — the
     struct IR already exists from items 2a/4a) and the value use (5a-ii,
@@ -517,6 +518,37 @@ enumeration; output matches the expected fixture.
         return … is abstract;`, and each satisfying concrete type's
         record gains the `and Stringer` interface derivation with the
         `overriding` method specs.
+
+        Decomposed 2026-08-17 into the two halves, which share a
+        method-signature renderer (a `MethodSig`/receiver → Ada
+        `function`/`procedure` spec with a controlling first parameter)
+        but touch different emission sites. 5b emits *specs only* — the
+        `overriding` bodies (5c) and the first real gnat compile (item 7)
+        follow; until 5c the emitted unit is intentionally incomplete
+        (a declared primitive op with no body), which the byte-checked
+        goldens capture without compiling.
+
+    - [ ] **(5b-i) interface type declarations + abstract ops**
+          *Files:* `compiler/internal/emit/interface.go`, golden tests.
+          *Verify:* `cd compiler && go test ./internal/emit/... -run Iface`
+          *Done when:* each `type X interface { M(...) R }` TypeDecl emits
+          `type X is interface;` followed by one abstract operation per
+          method — `function M (Self : X; …) return R is abstract;` (1
+          result) or `procedure M (Self : X; …) is abstract;` (0 results)
+          — in the enclosing unit's declarative part. The empty
+          `interface{}` emits a bare `type X is interface;`. A method with
+          2+ results is rejected loudly (Ada functions return one value).
+
+    - [ ] **(5b-ii) satisfying records derive the interface(s)**
+          *Files:* `compiler/internal/emit/struct.go`, golden tests.
+          *Verify:* `cd compiler && go test ./internal/emit/... -run Iface`
+          *Done when:* a struct that satisfies ≥1 interface (per
+          `satisfiedPairs`) emits its record as `type C is new I1 [and I2
+          …] with record … end record;` (or `with null record;` when
+          fieldless), tagged and deriving each satisfied interface, each
+          followed by the `overriding` spec of every method it implements
+          from those interfaces. A struct that satisfies no interface
+          stays the plain untagged record 5a-i emits.
 
   - [ ] **(5c) methods → overriding subprograms**
         *Files:* `compiler/internal/emit/emit.go`, golden tests.

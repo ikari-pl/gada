@@ -528,9 +528,9 @@ enumeration; output matches the expected fixture.
         (a declared primitive op with no body), which the byte-checked
         goldens capture without compiling.
 
-    - [ ] **(5b-i) interface type declarations + abstract ops**
+    - [x] **(5b-i) interface type declarations + abstract ops**
           *Files:* `compiler/internal/emit/interface.go`, golden tests.
-          *Verify:* `cd compiler && go test ./internal/emit/... -run Iface`
+          *Verify:* `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Iface|Interface|TestCorpus'`
           *Done when:* each `type X interface { M(...) R }` TypeDecl emits
           `type X is interface;` followed by one abstract operation per
           method — `function M (Self : X; …) return R is abstract;` (1
@@ -538,6 +538,26 @@ enumeration; output matches the expected fixture.
           — in the enclosing unit's declarative part. The empty
           `interface{}` emits a bare `type X is interface;`. A method with
           2+ results is rejected loudly (Ada functions return one value).
+          *Done 2026-08-17:* `emitInterfaceTypes` writes each interface as
+          `type X is interface;` plus one `interfaceMethodSpec` per
+          method (function for a single result, procedure for none), the
+          interface as the controlling `Self` parameter; an unnamed method
+          parameter gets a synthetic `Arg_<n>` (Ada parameters must be
+          named). Interfaces are emitted before structs — a record that
+          derives one (5b-ii) needs it declared already — via a new
+          `emitTypeDecls` unit that replaced the `hasStructs` type slot in
+          both `emitMainProcedure` and `emitPackageBody` with a `hasTypes`
+          umbrella, keeping the declarative-part blank-line bookkeeping in
+          one place. New corpus fixture `interface_types` (parameterless
+          function, function + procedure with params, empty interface);
+          the multi-result rejection and unnamed-param + typeName error
+          paths are pinned by `TestInterfaceMethodSpec` /
+          `TestInterfaceTypeEmitError`. interface.go 97.78%, emit/ 95.71%;
+          vet + lint + gate clean. Specs only — the `overriding` bodies
+          ride 5c, so the emitted unit is intentionally incomplete (a
+          declared abstract op with no concrete override until 5b-ii adds
+          the derivation and 5c the bodies); the byte-checked goldens
+          capture the text without compiling.
 
     - [ ] **(5b-ii) satisfying records derive the interface(s)**
           *Files:* `compiler/internal/emit/struct.go`, golden tests.

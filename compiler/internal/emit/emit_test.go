@@ -68,6 +68,8 @@ var corpusFixtures = []string{
 	"struct_values",
 	// Phase 4 — struct zero-value + partial literals (item 5a-iii).
 	"struct_zero",
+	// Phase 4 — interface type declarations + abstract ops (item 5b-i).
+	"interface_types",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -2346,6 +2348,68 @@ func TestStructLitEmitRejects(t *testing.T) {
 				t.Fatalf("error %q does not contain %q", e.err.Error(), tc.wantSub)
 			}
 		})
+	}
+}
+
+// TestInterfaceMethodSpec locks interfaceMethodSpec's shapes that the
+// corpus fixture does not reach directly: an unnamed parameter gets a
+// synthetic `Arg_<n>` name (Ada parameters must be named, Go interface
+// method params need not be), and a method with 2+ results is rejected
+// loudly (an Ada function returns one value).
+func TestInterfaceMethodSpec(t *testing.T) {
+	t.Parallel()
+	e := newEmitter("p", &ir.File{})
+
+	// Unnamed parameter -> Arg_1.
+	spec, err := e.interfaceMethodSpec("Writer", &ir.MethodSig{
+		Name:   "Write",
+		Params: []*ir.Param{{Type: &ir.IntType{}}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "procedure Write (Self : Writer; Arg_1 : Integer) is abstract;"; spec != want {
+		t.Fatalf("spec = %q, want %q", spec, want)
+	}
+
+	// Two results -> loud rejection.
+	if _, err := e.interfaceMethodSpec("Reader", &ir.MethodSig{
+		Name:    "Read",
+		Results: []*ir.Param{{Type: &ir.IntType{}}, {Type: &ir.BoolType{}}},
+	}); err == nil {
+		t.Fatal("expected error for interface method with 2 results")
+	} else if !strings.Contains(err.Error(), "returns one value") {
+		t.Fatalf("error %q does not mention the one-value constraint", err.Error())
+	}
+
+	// An un-renderable parameter type propagates the typeName error.
+	if _, err := e.interfaceMethodSpec("I", &ir.MethodSig{
+		Name: "M", Params: []*ir.Param{{Type: nil}},
+	}); err == nil {
+		t.Fatal("expected error for un-renderable interface method param type")
+	}
+
+	// An un-renderable single-result type propagates too.
+	if _, err := e.interfaceMethodSpec("I", &ir.MethodSig{
+		Name: "M", Results: []*ir.Param{{Type: nil}},
+	}); err == nil {
+		t.Fatal("expected error for un-renderable interface method result type")
+	}
+}
+
+// TestInterfaceTypeEmitError locks that an un-renderable interface
+// method surfaces through emitTypeDecls (and thus emitInterfaceTypes)
+// rather than silently emitting a broken declaration.
+func TestInterfaceTypeEmitError(t *testing.T) {
+	t.Parallel()
+	file := &ir.File{Decls: []ir.Decl{
+		&ir.TypeDecl{Name: "Bad", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{
+			{Name: "M", Results: []*ir.Param{{Type: nil}}},
+		}}},
+	}}
+	e := newEmitter("p", file)
+	if err := e.emitTypeDecls(); err == nil {
+		t.Fatal("expected error from emitTypeDecls for un-renderable interface method")
 	}
 }
 

@@ -2,9 +2,132 @@ package emit
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/gada-lang/gada/compiler/internal/ir"
 )
+
+// Interface type emission (Phase 4 item 5b-i).
+//
+// A Go interface type becomes an Ada interface type — the tag-dispatched
+// contract the Hybrid model builds native dispatch on (items 5c/5d). For
+// `type Stringer interface { String() string }` the emitter writes
+//
+//	type Stringer is interface;
+//	function String (Self : Stringer) return String is abstract;
+//
+// one abstract operation per method (a `procedure` when the method
+// returns nothing). The empty `interface{}` (Go's `any`) is a bare
+// `type X is interface;` with no operations. These declarations are
+// emitted before the struct records (a record that derives an interface
+// — item 5b-ii — needs it declared already), so emitTypeDecls sequences
+// interfaces then structs.
+
+// fileHasInterfaces reports whether the file declares any interface type.
+func (e *emitter) fileHasInterfaces() bool {
+	for _, d := range e.file.Decls {
+		if td, ok := d.(*ir.TypeDecl); ok {
+			if _, ok := td.Underlying.(*ir.InterfaceType); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// fileHasTypeDecls reports whether the file declares any interface or
+// struct type — the two kinds the declarative part's type section emits.
+func (e *emitter) fileHasTypeDecls() bool {
+	return e.fileHasInterfaces() || e.fileHasStructs()
+}
+
+// emitTypeDecls emits the file's interface types then its struct types,
+// separated by a blank line when both are present. Interfaces come first
+// so a record that derives one (item 5b-ii) sees it already declared.
+// Indent is owned by the caller.
+func (e *emitter) emitTypeDecls() error {
+	hasI := e.fileHasInterfaces()
+	if hasI {
+		if err := e.emitInterfaceTypes(); err != nil {
+			return err
+		}
+	}
+	if hasI && e.fileHasStructs() {
+		e.println("")
+	}
+	if e.fileHasStructs() {
+		if err := e.emitStructTypes(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// emitInterfaceTypes writes one Ada interface type declaration per Go
+// interface type in the file, in source order, each followed by its
+// abstract operation specs. Indent is owned by the caller.
+func (e *emitter) emitInterfaceTypes() error {
+	for _, d := range e.file.Decls {
+		td, ok := d.(*ir.TypeDecl)
+		if !ok {
+			continue
+		}
+		it, ok := td.Underlying.(*ir.InterfaceType)
+		if !ok {
+			continue
+		}
+		e.println("type " + adaIdent(td.Name) + " is interface;")
+		for _, m := range it.Methods {
+			spec, err := e.interfaceMethodSpec(td.Name, m)
+			if err != nil {
+				return err
+			}
+			e.println(spec)
+		}
+	}
+	return nil
+}
+
+// interfaceMethodSpec renders one interface method as an Ada abstract
+// operation controlled by the interface type: a `function … is
+// abstract;` for a single-result method, a `procedure … is abstract;`
+// for a result-less one. The interface type is the controlling first
+// parameter `Self`. Go's multi-result methods have no direct Ada
+// function form, so 2+ results are rejected loudly.
+func (e *emitter) interfaceMethodSpec(ifaceName string, m *ir.MethodSig) (string, error) {
+	params := []string{"Self : " + adaIdent(ifaceName)}
+	for i, p := range m.Params {
+		t, err := typeName(p.Type)
+		if err != nil {
+			return "", err
+		}
+		params = append(params, methodParamName(p.Name, i)+" : "+t)
+	}
+	plist := " (" + strings.Join(params, "; ") + ")"
+	name := adaIdent(m.Name)
+	switch len(m.Results) {
+	case 0:
+		return "procedure " + name + plist + " is abstract;", nil
+	case 1:
+		rt, err := typeName(m.Results[0].Type)
+		if err != nil {
+			return "", err
+		}
+		return "function " + name + plist + " return " + rt + " is abstract;", nil
+	default:
+		return "", fmt.Errorf("emit: interface method %s has %d results; an Ada function returns one value (multi-result interface methods not supported)", m.Name, len(m.Results))
+	}
+}
+
+// methodParamName gives an Ada name to a method parameter: the Go name
+// when present, else a synthetic `Arg_<n>` (Go interface methods and
+// unnamed parameters carry no name, but Ada parameters must be named).
+func methodParamName(goName string, index int) string {
+	if goName != "" {
+		return adaIdent(goName)
+	}
+	return fmt.Sprintf("Arg_%d", index+1)
+}
 
 // Interface satisfaction emission (Phase 4 item 4c-ii).
 //

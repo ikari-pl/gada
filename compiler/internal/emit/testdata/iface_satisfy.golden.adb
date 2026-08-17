@@ -4,6 +4,9 @@ with Gada.Reflect.Interfaces;
 
 package body P is
 
+   type Stringer is interface;
+   function String (Self : Stringer) return String is abstract;
+
    type Point is record
       X : Integer;
       Y : Integer;

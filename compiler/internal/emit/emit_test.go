@@ -68,6 +68,12 @@ var corpusFixtures = []string{
 	"struct_values",
 	// Phase 4 — struct zero-value + partial literals (item 5a-iii).
 	"struct_zero",
+	// Phase 4 — interface type declarations + abstract ops (item 5b-i).
+	"interface_types",
+	// Phase 4 — multi-interface record derivation (item 5b-ii).
+	"iface_multi",
+	// Phase 4 — empty interface must not tag a coexisting struct (5b review).
+	"iface_empty",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -2346,6 +2352,175 @@ func TestStructLitEmitRejects(t *testing.T) {
 				t.Fatalf("error %q does not contain %q", e.err.Error(), tc.wantSub)
 			}
 		})
+	}
+}
+
+// TestInterfaceMethodSpec locks interfaceMethodSpec's shapes that the
+// corpus fixture does not reach directly: an unnamed parameter gets a
+// synthetic `Arg_<n>` name (Ada parameters must be named, Go interface
+// method params need not be), and a method with 2+ results is rejected
+// loudly (an Ada function returns one value).
+func TestInterfaceMethodSpec(t *testing.T) {
+	t.Parallel()
+	e := newEmitter("p", &ir.File{})
+
+	// Unnamed parameter -> Arg_1.
+	spec, err := e.interfaceMethodSpec("Writer", &ir.MethodSig{
+		Name:   "Write",
+		Params: []*ir.Param{{Type: &ir.IntType{}}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "procedure Write (Self : Writer; Arg_1 : Integer) is abstract;"; spec != want {
+		t.Fatalf("spec = %q, want %q", spec, want)
+	}
+
+	// Two results -> loud rejection.
+	if _, err := e.interfaceMethodSpec("Reader", &ir.MethodSig{
+		Name:    "Read",
+		Results: []*ir.Param{{Type: &ir.IntType{}}, {Type: &ir.BoolType{}}},
+	}); err == nil {
+		t.Fatal("expected error for interface method with 2 results")
+	} else if !strings.Contains(err.Error(), "returns one value") {
+		t.Fatalf("error %q does not mention the one-value constraint", err.Error())
+	}
+
+	// A Go parameter named `self` collides case-insensitively with the
+	// injected controlling `Self`; the param is uniquified to `Self_2`.
+	spec, err = e.interfaceMethodSpec("I", &ir.MethodSig{
+		Name: "M", Params: []*ir.Param{{Name: "self", Type: &ir.IntType{}}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "procedure M (Self : I; Self_2 : Integer) is abstract;"; spec != want {
+		t.Fatalf("spec = %q, want %q", spec, want)
+	}
+
+	// Two params whose Ada forms fold together (`x`, `X`) also uniquify.
+	spec, err = e.interfaceMethodSpec("I", &ir.MethodSig{
+		Name: "M", Params: []*ir.Param{{Name: "x", Type: &ir.IntType{}}, {Name: "X", Type: &ir.IntType{}}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := "procedure M (Self : I; X : Integer; X_2 : Integer) is abstract;"; spec != want {
+		t.Fatalf("spec = %q, want %q", spec, want)
+	}
+
+	// An un-renderable parameter type propagates the typeName error.
+	if _, err := e.interfaceMethodSpec("I", &ir.MethodSig{
+		Name: "M", Params: []*ir.Param{{Type: nil}},
+	}); err == nil {
+		t.Fatal("expected error for un-renderable interface method param type")
+	}
+
+	// An un-renderable single-result type propagates too.
+	if _, err := e.interfaceMethodSpec("I", &ir.MethodSig{
+		Name: "M", Results: []*ir.Param{{Type: nil}},
+	}); err == nil {
+		t.Fatal("expected error for un-renderable interface method result type")
+	}
+}
+
+// TestInterfaceTypeEmitError locks that an un-renderable interface
+// method surfaces through emitTypeDecls (and thus emitInterfaceTypes)
+// rather than silently emitting a broken declaration.
+func TestInterfaceTypeEmitError(t *testing.T) {
+	t.Parallel()
+	file := &ir.File{Decls: []ir.Decl{
+		&ir.TypeDecl{Name: "Bad", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{
+			{Name: "M", Results: []*ir.Param{{Type: nil}}},
+		}}},
+	}}
+	e := newEmitter("p", file)
+	if err := e.emitTypeDecls(); err == nil {
+		t.Fatal("expected error from emitTypeDecls for un-renderable interface method")
+	}
+}
+
+// TestOverridingSpecs locks overridingSpecs' behaviour the corpus
+// fixtures reach only indirectly: dedup of a method shared by two
+// derived interfaces, skipping an interface method the concrete type
+// does not implement (the defensive fn==nil guard), and propagating a
+// dispatchOpSpec error when a concrete method is un-renderable.
+func TestOverridingSpecs(t *testing.T) {
+	t.Parallel()
+	e := newEmitter("p", &ir.File{})
+
+	read := &ir.MethodSig{Name: "Read", Results: []*ir.Param{{Type: &ir.IntType{}}}}
+	closeM := &ir.MethodSig{Name: "Close"}
+	missing := &ir.MethodSig{Name: "Missing"}
+	ifaceMethods := map[string][]*ir.MethodSig{
+		"Reader": {read, closeM, missing},
+		"Writer": {closeM}, // Close shared with Reader
+	}
+	// The concrete type implements Read and Close but not Missing.
+	valueMethods := map[string][]*ir.Function{
+		"C": {
+			{Name: "Read", Receiver: &ir.Receiver{Name: "c", Type: "C"}, Results: []*ir.Param{{Type: &ir.IntType{}}}},
+			{Name: "Close", Receiver: &ir.Receiver{Name: "c", Type: "C"}},
+		},
+	}
+	specs, err := e.overridingSpecs("C", []string{"Reader", "Writer"}, ifaceMethods, valueMethods)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{
+		"overriding function Read (C : C) return Integer;",
+		"overriding procedure Close (C : C);",
+	}
+	if len(specs) != len(want) {
+		t.Fatalf("specs = %v, want %v", specs, want)
+	}
+	for i := range want {
+		if specs[i] != want[i] {
+			t.Fatalf("specs[%d] = %q, want %q", i, specs[i], want[i])
+		}
+	}
+
+	// An un-renderable concrete method (2 results) propagates the error.
+	bad := map[string][]*ir.Function{
+		"C": {{Name: "Read", Receiver: &ir.Receiver{Name: "c", Type: "C"},
+			Results: []*ir.Param{{Type: &ir.IntType{}}, {Type: &ir.BoolType{}}}}},
+	}
+	if _, err := e.overridingSpecs("C", []string{"Reader"},
+		map[string][]*ir.MethodSig{"Reader": {read}}, bad); err == nil {
+		t.Fatal("expected error for un-renderable overriding method")
+	}
+
+	// An unnamed Go receiver falls back to the controlling name `Self`.
+	unnamed := map[string][]*ir.Function{
+		"C": {{Name: "Read", Receiver: &ir.Receiver{Type: "C"}, Results: []*ir.Param{{Type: &ir.IntType{}}}}},
+	}
+	specs, err = e.overridingSpecs("C", []string{"Reader"},
+		map[string][]*ir.MethodSig{"Reader": {read}}, unnamed)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(specs) != 1 || specs[0] != "overriding function Read (Self : C) return Integer;" {
+		t.Fatalf("specs = %v, want [overriding function Read (Self : C) return Integer;]", specs)
+	}
+}
+
+// TestValueMethodsByType locks that valueMethodsByType indexes only
+// value-receiver methods — a pointer-receiver method belongs to *T's set
+// and must not count toward the value type's interface satisfaction or
+// its overriding specs.
+func TestValueMethodsByType(t *testing.T) {
+	t.Parallel()
+	decls := []ir.Decl{
+		&ir.Function{Name: "Read", Receiver: &ir.Receiver{Name: "b", Type: "Buffer"}},
+		&ir.Function{Name: "Flush", Receiver: &ir.Receiver{Name: "b", Type: "Buffer", Pointer: true}},
+		&ir.Function{Name: "Free"}, // not a method
+	}
+	m := valueMethodsByType(decls)
+	if got := len(m["Buffer"]); got != 1 {
+		t.Fatalf("Buffer value methods = %d, want 1 (pointer-receiver Flush excluded)", got)
+	}
+	if m["Buffer"][0].Name != "Read" {
+		t.Fatalf("indexed method = %q, want Read", m["Buffer"][0].Name)
 	}
 }
 

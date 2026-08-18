@@ -1,0 +1,103 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "interface_types.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "TypeDecl",
+          "name": "Stringer",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": [
+              {
+                "kind": "MethodSig",
+                "name": "String",
+                "params": null,
+                "results": [
+                  {
+                    "kind": "Param",
+                    "name": "",
+                    "type": {
+                      "kind": "StringType"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Shape",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": [
+              {
+                "kind": "MethodSig",
+                "name": "Area",
+                "params": null,
+                "results": [
+                  {
+                    "kind": "Param",
+                    "name": "",
+                    "type": {
+                      "kind": "IntType"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "MethodSig",
+                "name": "Scale",
+                "params": [
+                  {
+                    "kind": "Param",
+                    "name": "factor",
+                    "type": {
+                      "kind": "IntType"
+                    }
+                  }
+                ],
+                "results": null
+              },
+              {
+                "kind": "MethodSig",
+                "name": "SetName",
+                "params": [
+                  {
+                    "kind": "Param",
+                    "name": "name",
+                    "type": {
+                      "kind": "StringType"
+                    }
+                  }
+                ],
+                "results": [
+                  {
+                    "kind": "Param",
+                    "name": "",
+                    "type": {
+                      "kind": "BoolType"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Any",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": null
+          }
+        }
+      ]
+    }
+  ]
+}

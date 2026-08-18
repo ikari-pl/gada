@@ -380,7 +380,8 @@ enumeration; output matches the expected fixture.
   multi-package struct visibility is deferred). Boundaries may refine as
   each lands.
 
-  - [ ] **(5a) struct types → Ada records**
+  - [x] **(5a) struct types → Ada records** — all sub-items done
+        (5a-i type declarations, 5a-ii values, 5a-iii zero/partial fill).
 
     Split 2026-06-26 into the type declaration (5a-i, emit-only — the
     struct IR already exists from items 2a/4a) and the value use (5a-ii,
@@ -509,14 +510,108 @@ enumeration; output matches the expected fixture.
           composite fields (field-type collection walk + non-scalar
           zeroes) rides a later item.
 
-  - [ ] **(5b) interface types → Ada interface types**
+  - [x] **(5b) interface types → Ada interface types** — both sub-items
+        done (5b-i interface declarations + abstract ops, 5b-ii
+        satisfying-record derivation + overriding specs).
         *Files:* `compiler/internal/emit/emit.go`, golden tests.
-        *Verify:* `cd compiler && go test ./internal/emit/... -run Iface`
+        *Verify:* the two sub-items' commands (a bare `-run Iface`
+        matches no test); to run both halves at once:
+        `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Iface|Interface|Overriding|TestCorpus'`
         *Done when:* a `type Stringer interface { String() string }` emits
         `type Stringer is interface; function String (Self : Stringer)
         return … is abstract;`, and each satisfying concrete type's
         record gains the `and Stringer` interface derivation with the
         `overriding` method specs.
+
+        Decomposed 2026-08-17 into the two halves, which share a
+        method-signature renderer (a `MethodSig`/receiver → Ada
+        `function`/`procedure` spec with a controlling first parameter)
+        but touch different emission sites. 5b emits *specs only* — the
+        `overriding` bodies (5c) and the first real gnat compile (item 7)
+        follow; until 5c the emitted unit is intentionally incomplete
+        (a declared primitive op with no body), which the byte-checked
+        goldens capture without compiling.
+
+    - [x] **(5b-i) interface type declarations + abstract ops**
+          *Files:* `compiler/internal/emit/interface.go`, golden tests.
+          *Verify:* `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Iface|Interface|TestCorpus'`
+          *Done when:* each `type X interface { M(...) R }` TypeDecl emits
+          `type X is interface;` followed by one abstract operation per
+          method — `function M (Self : X; …) return R is abstract;` (1
+          result) or `procedure M (Self : X; …) is abstract;` (0 results)
+          — in the enclosing unit's declarative part. The empty
+          `interface{}` emits a bare `type X is interface;`. A method with
+          2+ results is rejected loudly (Ada functions return one value).
+          *Done 2026-08-17:* `emitInterfaceTypes` writes each interface as
+          `type X is interface;` plus one `interfaceMethodSpec` per
+          method (function for a single result, procedure for none), the
+          interface as the controlling `Self` parameter; an unnamed method
+          parameter gets a synthetic `Arg_<n>` (Ada parameters must be
+          named). Interfaces are emitted before structs — a record that
+          derives one (5b-ii) needs it declared already — via a new
+          `emitTypeDecls` unit that replaced the `hasStructs` type slot in
+          both `emitMainProcedure` and `emitPackageBody` with a `hasTypes`
+          umbrella, keeping the declarative-part blank-line bookkeeping in
+          one place. New corpus fixture `interface_types` (parameterless
+          function, function + procedure with params, empty interface);
+          the multi-result rejection and unnamed-param + typeName error
+          paths are pinned by `TestInterfaceMethodSpec` /
+          `TestInterfaceTypeEmitError`. interface.go 97.78%, emit/ 95.71%;
+          vet + lint + gate clean. Specs only — the `overriding` bodies
+          ride 5c, so the emitted unit is intentionally incomplete (a
+          declared abstract op with no concrete override until 5b-ii adds
+          the derivation and 5c the bodies); the byte-checked goldens
+          capture the text without compiling.
+
+    - [x] **(5b-ii) satisfying records derive the interface(s)**
+          *Files:* `compiler/internal/emit/struct.go`, golden tests.
+          *Verify:* `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Iface|Overriding|TestCorpus'`
+          *Done when:* a struct that satisfies ≥1 interface (per
+          `satisfiedPairs`) emits its record as `type C is new I1 [and I2
+          …] with record … end record;` (or `with null record;` when
+          fieldless), tagged and deriving each satisfied interface, each
+          followed by the `overriding` spec of every method it implements
+          from those interfaces. A struct that satisfies no interface
+          stays the plain untagged record 5a-i emits.
+          *Done 2026-08-17:* `emitStructTypes` consults `satisfiedPairs`
+          and, for a satisfying struct, emits the tagged derivation
+          header (`is new Reader and Writer with record …` / `with null
+          record;`) plus `overridingSpecs` — one `overriding` op per
+          distinct interface method the type implements, in
+          interface-then-method source order, deduped by name (a method
+          shared by two derived interfaces is overridden once), each spec
+          mirroring the concrete method's signature with its receiver as
+          the controlling first parameter (`overriding function Read
+          (B : Buffer) return Integer;`). Reuses `dispatchOpSpec` with
+          5b-i. New corpus fixture `iface_multi` (Buffer derives Reader +
+          Writer with a shared Close; Nop derives Reader with a null
+          record); `iface_satisfy`'s Point now derives Stringer.
+          `overridingSpecs` dedup / missing-method-skip / multi-result
+          error paths pinned by `TestOverridingSpecs`. vet + lint + gate
+          clean. Specs only — the overriding *bodies* ride 5c, so the
+          emitted unit is intentionally incomplete (a declared primitive
+          op with no body) until then; the byte-checked goldens capture it
+          without compiling.
+          *Code-review fixes (2026-08-17, PR #40):* (a) a method-less
+          interface (`type Any interface{}`) is excluded from *derivation*
+          — every type satisfies it vacuously, so deriving it would flip
+          every struct in the file from an untagged record to a tagged
+          type for no dispatch; the empty interface still emits its bare
+          declaration and its reflect-registry satisfaction (`ifacesFor`
+          filters by method count; fixture `iface_empty`). (b) A method
+          parameter whose Ada form collides case-insensitively with the
+          controlling `Self` (a Go param named `self`) — or with another
+          param (`x`/`X`) — is uniquified (`Self_2`) so the spec compiles
+          (`dispatchOpSpec` via `uniqueParamName`). (c) `valueMethodsByType`
+          is now shared with `satisfiedPairs` (one definition of the
+          value-type method set, no drift). Unnamed receiver → `Self` and
+          the pointer-receiver exclusion are now directly tested.
+          *Deferred (SPARK):* the emitted `interface`/tagged types use Ada
+          dynamic dispatch, which the verifiable-subset target
+          (`-mode=spark`, Pure Goal 4) restricts; making the Hybrid
+          dispatch SPARK-compatible (or gating it out under spark mode) is
+          an open question for the profile/verification work, not this
+          item.
 
   - [ ] **(5c) methods → overriding subprograms**
         *Files:* `compiler/internal/emit/emit.go`, golden tests.

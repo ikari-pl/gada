@@ -116,33 +116,45 @@ func (e *emitter) emitStructTypes() error {
 // parameter; the body rides 5c.
 func (e *emitter) overridingSpecs(concrete string, ifaces []string, ifaceMethods map[string][]*ir.MethodSig, valueMethods map[string][]*ir.Function) ([]string, error) {
 	ctype := adaIdent(concrete)
-	seen := map[string]bool{}
 	var specs []string
+	for _, fn := range overridingFuncsFor(concrete, ifaces, ifaceMethods, valueMethods) {
+		recv := "Self"
+		if fn.Receiver != nil && fn.Receiver.Name != "" {
+			recv = adaIdent(fn.Receiver.Name)
+		}
+		spec, err := dispatchOpSpec("overriding ", recv, ctype, fn.Name, fn.Params, fn.Results, ";")
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, spec)
+	}
+	return specs, nil
+}
+
+// overridingFuncsFor returns the concrete type's methods that override an
+// interface method — one per distinct interface method it implements
+// across the interfaces it derives, in interface-then-method source
+// order, deduplicated by name (a method shared by two derived interfaces
+// is overridden once). Shared by overridingSpecs (item 5b-ii, which
+// renders each as a spec) and overridingMethods (item 5c, which emits
+// each a body), so the spec and body sets never diverge. A required
+// method with no matching value-receiver function is skipped defensively
+// — satisfiedPairs already proved one exists.
+func overridingFuncsFor(concrete string, ifaces []string, ifaceMethods map[string][]*ir.MethodSig, valueMethods map[string][]*ir.Function) []*ir.Function {
+	seen := map[string]bool{}
+	var fns []*ir.Function
 	for _, in := range ifaces {
 		for _, m := range ifaceMethods[in] {
 			if seen[m.Name] {
 				continue
 			}
 			seen[m.Name] = true
-			fn := findMethod(valueMethods[concrete], m.Name)
-			if fn == nil {
-				// satisfiedPairs proved concrete implements the interface,
-				// so a matching value-receiver method exists; guard rather
-				// than emit a spec for a method we cannot render.
-				continue
+			if fn := findMethod(valueMethods[concrete], m.Name); fn != nil {
+				fns = append(fns, fn)
 			}
-			recv := "Self"
-			if fn.Receiver != nil && fn.Receiver.Name != "" {
-				recv = adaIdent(fn.Receiver.Name)
-			}
-			spec, err := dispatchOpSpec("overriding ", recv, ctype, fn.Name, fn.Params, fn.Results, ";")
-			if err != nil {
-				return nil, err
-			}
-			specs = append(specs, spec)
 		}
 	}
-	return specs, nil
+	return fns
 }
 
 // ifacesFor returns the interfaces a concrete type derives — the
@@ -176,6 +188,36 @@ func interfaceMethodsByName(decls []ir.Decl) map[string][]*ir.MethodSig {
 		}
 	}
 	return m
+}
+
+// overridingMethods returns the set of value-receiver methods that are
+// overriding dispatch operations — the methods 5b-ii declares specs for
+// and 5c emits bodies for. A method qualifies when its receiver type
+// derives at least one interface (method-less interfaces excluded, per
+// ifacesFor) and its name matches a method of one of those interfaces.
+// A method on a non-deriving type, or one not part of any derived
+// interface, is not `overriding` and is excluded (direct-call emission
+// for such methods rides a later item). Keyed by the *ir.Function so the
+// emitter can decide per-decl whether to emit a body.
+func overridingMethods(decls []ir.Decl) map[*ir.Function]bool {
+	pairs := satisfiedPairs(decls)
+	ifaceMethods := interfaceMethodsByName(decls)
+	valueMethods := valueMethodsByType(decls)
+	set := map[*ir.Function]bool{}
+	for _, d := range decls {
+		td, ok := d.(*ir.TypeDecl)
+		if !ok {
+			continue
+		}
+		if _, ok := td.Underlying.(*ir.StructType); !ok {
+			continue
+		}
+		ifaces := ifacesFor(td.Name, pairs, ifaceMethods)
+		for _, fn := range overridingFuncsFor(td.Name, ifaces, ifaceMethods, valueMethods) {
+			set[fn] = true
+		}
+	}
+	return set
 }
 
 // findMethod returns the function named name from fns, or nil.

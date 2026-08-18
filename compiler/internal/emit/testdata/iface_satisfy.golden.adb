@@ -13,6 +13,11 @@ package body P is
    end record;
    overriding function String (Pt : Point) return String;
 
+   overriding function String (Pt : Point) return String is
+   begin
+      return "pt";
+   end String;
+
 begin
    declare
       Meta : Gada.Reflect.Types.Type_Descriptor;

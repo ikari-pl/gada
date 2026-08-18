@@ -74,6 +74,11 @@ var corpusFixtures = []string{
 	"iface_multi",
 	// Phase 4 — empty interface must not tag a coexisting struct (5b review).
 	"iface_empty",
+	// Phase 4 — a method on a non-deriving type is not an overriding body (5c):
+	// Counter.Get emits no body, only the free function Zero does.
+	"method_decl",
+	// Phase 4 — interface + overriding method body in `package main` (5c).
+	"iface_main",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -2501,6 +2506,58 @@ func TestOverridingSpecs(t *testing.T) {
 	}
 	if len(specs) != 1 || specs[0] != "overriding function Read (Self : C) return Integer;" {
 		t.Fatalf("specs = %v, want [overriding function Read (Self : C) return Integer;]", specs)
+	}
+}
+
+// TestSubpHeaderMethod locks the item-5c method path of subpHeader: a
+// method renders an `overriding` body header via the same dispatchOpSpec
+// the 5b spec used, with the receiver as the controlling parameter (its
+// Go name, or `Self` when unnamed), and an un-renderable signature
+// fails.
+func TestSubpHeaderMethod(t *testing.T) {
+	t.Parallel()
+	e := newEmitter("p", &ir.File{})
+
+	h, _, ok := e.subpHeader(&ir.Function{
+		Name: "Read", Receiver: &ir.Receiver{Name: "b", Type: "Buffer"},
+		Results: []*ir.Param{{Type: &ir.IntType{}}},
+	})
+	if !ok || h != "overriding function Read (B : Buffer) return Integer is" {
+		t.Fatalf("named-receiver header = %q ok=%v", h, ok)
+	}
+
+	h, _, ok = e.subpHeader(&ir.Function{
+		Name: "Close", Receiver: &ir.Receiver{Type: "Nop"},
+	})
+	if !ok || h != "overriding procedure Close (Self : Nop) is" {
+		t.Fatalf("unnamed-receiver header = %q ok=%v", h, ok)
+	}
+
+	if _, _, ok := e.subpHeader(&ir.Function{
+		Name: "M", Receiver: &ir.Receiver{Name: "c", Type: "C"},
+		Params: []*ir.Param{{Type: nil}},
+	}); ok {
+		t.Fatal("expected subpHeader to fail for un-renderable method param type")
+	}
+
+	// A param whose Ada name folds onto the receiver is rejected: the
+	// body would reference the original Go name, which a rename no longer
+	// matches (would bind the wrong argument).
+	e2 := newEmitter("p", &ir.File{})
+	if _, _, ok := e2.subpHeader(&ir.Function{
+		Name: "M", Receiver: &ir.Receiver{Name: "b", Type: "Buffer"},
+		Params: []*ir.Param{{Name: "b", Type: &ir.IntType{}}},
+	}); ok {
+		t.Fatal("expected subpHeader to reject a param colliding with the receiver")
+	}
+
+	// A param folding onto an earlier param is rejected the same way.
+	e3 := newEmitter("p", &ir.File{})
+	if _, _, ok := e3.subpHeader(&ir.Function{
+		Name: "M", Receiver: &ir.Receiver{Name: "c", Type: "C"},
+		Params: []*ir.Param{{Name: "x", Type: &ir.IntType{}}, {Name: "X", Type: &ir.IntType{}}},
+	}); ok {
+		t.Fatal("expected subpHeader to reject two params folding to one name")
 	}
 }
 

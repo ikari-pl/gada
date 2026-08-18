@@ -157,6 +157,7 @@ type emitter struct {
 	goIndex           map[*ir.GoStmt]int        // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
 	funcByName        map[string]*ir.Function   // file-wide name → top-level Function decl, so a `go f(x, y)` site can resolve f's parameter names + declared types to build the matching Go_Closure_<n> record and unpack it into correctly-named locals. Populated alongside collectSliceElems.
 	structByName      map[string]*ir.StructType // file-wide type name → its struct definition, so emitStructLit can consult the declared field set: an Ada record aggregate must supply a value for every component (RM 4.3.1), so a literal that omits fields, names a non-struct type, or has a single positional field needs the declared fields to lower correctly (or to be rejected loudly). Populated alongside funcByName.
+	interfaceNames    map[string]bool           // file-wide set of interface type names, so typeName renders a NamedType referring to an interface as the class-wide `Name'Class` view (which dispatches) rather than a plain type name. Populated alongside structByName.
 	pendingRecvs      []pendingChanRecv         // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
 	err               error
 }
@@ -189,6 +190,7 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		goIndex:        map[*ir.GoStmt]int{},
 		funcByName:     map[string]*ir.Function{},
 		structByName:   map[string]*ir.StructType{},
+		interfaceNames: map[string]bool{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
@@ -216,9 +218,14 @@ func (e *emitter) collectSliceElems() {
 			// register at module init (Phase 4 item 2c).
 			e.needsReflect = true
 			// Index struct types by name so emitStructLit can check a
-			// composite literal against the declared field set.
-			if st, ok := td.Underlying.(*ir.StructType); ok {
-				e.structByName[td.Name] = st
+			// composite literal against the declared field set, and
+			// interface names so typeName renders a NamedType referring
+			// to one as `Name'Class`.
+			switch u := td.Underlying.(type) {
+			case *ir.StructType:
+				e.structByName[td.Name] = u
+			case *ir.InterfaceType:
+				e.interfaceNames[td.Name] = true
 			}
 			continue
 		}
@@ -1682,7 +1689,7 @@ func (e *emitter) emitGoClosureWithArgs(n int, g *ir.GoStmt) {
 	names := make([]string, len(fn.Params))
 	types := make([]string, len(fn.Params))
 	for i, p := range fn.Params {
-		t, err := typeName(p.Type)
+		t, err := e.typeName(p.Type)
 		if err != nil {
 			e.fail(err)
 			return
@@ -1812,7 +1819,7 @@ func (e *emitter) subpHeader(fn *ir.Function) (string, string, bool) {
 			e.fail(fmt.Errorf("emit: method %s has a parameter whose name collides case-insensitively with the receiver or another parameter (Ada identifiers are case-insensitive); rename the Go parameter — method-body emission for this shape is not yet supported", fn.Name))
 			return "", name, false
 		}
-		header, err := dispatchOpSpec("overriding ", recv, adaIdent(fn.Receiver.Type), fn.Name, fn.Params, fn.Results, " is")
+		header, err := e.dispatchOpSpec("overriding ", recv, adaIdent(fn.Receiver.Type), fn.Name, fn.Params, fn.Results, " is")
 		if err != nil {
 			e.fail(err)
 			return "", name, false
@@ -1824,7 +1831,7 @@ func (e *emitter) subpHeader(fn *ir.Function) (string, string, bool) {
 	if len(fn.Params) > 0 {
 		ps := make([]string, 0, len(fn.Params))
 		for _, p := range fn.Params {
-			t, err := typeName(p.Type)
+			t, err := e.typeName(p.Type)
 			if err != nil {
 				e.fail(err)
 				return "", name, false
@@ -1841,7 +1848,7 @@ func (e *emitter) subpHeader(fn *ir.Function) (string, string, bool) {
 		e.fail(fmt.Errorf("emit: multi-value return on %s not supported in Phase 1", fn.Name))
 		return "", name, false
 	}
-	rt, err := typeName(fn.Results[0].Type)
+	rt, err := e.typeName(fn.Results[0].Type)
 	if err != nil {
 		e.fail(err)
 		return "", name, false
@@ -1945,7 +1952,7 @@ func (e *emitter) emitChanRecvDecl(a *ir.Assign, cr *ir.ChanRecv) {
 		e.fail(fmt.Errorf("emit: ChanRecv on non-chan or non-ident operand not supported in Phase 3"))
 		return
 	}
-	tname, err := typeName(elem)
+	tname, err := e.typeName(elem)
 	if err != nil {
 		e.fail(err)
 		return
@@ -3075,7 +3082,7 @@ func (e *emitter) emitSelectStmt(s *ir.SelectStmt) {
 	}
 	pkg := "Selectors_Of_" + elemBase
 	chanPkg := "Channels_Of_" + elemBase
-	tName, err := typeName(elemType)
+	tName, err := e.typeName(elemType)
 	if err != nil {
 		e.fail(err)
 		return
@@ -3415,7 +3422,13 @@ func isAdaReserved(s string) bool {
 // typeName maps an IR type to its Ada surface form. Phase 1's four
 // basic types are unchanged; Phase 2 adds *ir.SliceType which lowers
 // to the corresponding `Slices_Of_<T>.Slice` instantiation alias.
-func typeName(t ir.Type) (string, error) {
+// typeName renders an IR type as its Ada type name. It is a method
+// because a NamedType resolves against the file's declarations: a name
+// that denotes an interface becomes the class-wide `Name'Class` view
+// (RM 3.9.2 — a call on a class-wide operand dispatches), a struct name
+// becomes the plain record type, and a name that resolves to neither is
+// a loud error.
+func (e *emitter) typeName(t ir.Type) (string, error) {
 	switch t := t.(type) {
 	case *ir.IntType:
 		return "Integer", nil
@@ -3425,6 +3438,14 @@ func typeName(t ir.Type) (string, error) {
 		return "Boolean", nil
 	case *ir.Float64Type:
 		return "Long_Float", nil
+	case *ir.NamedType:
+		if e.interfaceNames[t.Name] {
+			return adaIdent(t.Name) + "'Class", nil
+		}
+		if _, ok := e.structByName[t.Name]; ok {
+			return adaIdent(t.Name), nil
+		}
+		return "", fmt.Errorf("emit: type %q is not a declared struct or interface in this file", t.Name)
 	case *ir.SliceType:
 		pkg, err := slicePkgFor(t.Elem)
 		if err != nil {

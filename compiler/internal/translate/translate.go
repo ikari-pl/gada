@@ -190,6 +190,20 @@ func transFieldList(fl *ast.FieldList) ([]*ir.Param, error) {
 // `[]T` (slice) and `map[K]V`; Phase 3 adds `chan T`. Fixed-size
 // arrays (`[N]T`), named types, struct types, function types, and
 // directional channel types (`chan<- T`, `<-chan T`) are deferred.
+// unsupportedBuiltinType is the set of Go predeclared type names GADA
+// does not yet support. They are builtins, not user-defined types, so
+// transType rejects them rather than lowering them to a NamedType that
+// would dangle at emit. GADA's supported scalars (int, string, bool,
+// float64) are handled by transType's explicit cases and are absent
+// here; every other predeclared type name is listed.
+var unsupportedBuiltinType = map[string]bool{
+	"int8": true, "int16": true, "int32": true, "int64": true,
+	"uint": true, "uint8": true, "uint16": true, "uint32": true,
+	"uint64": true, "uintptr": true, "byte": true, "rune": true,
+	"float32": true, "complex64": true, "complex128": true,
+	"error": true, "any": true, "comparable": true,
+}
+
 func transType(e ast.Expr) (ir.Type, error) {
 	switch t := e.(type) {
 	case *ast.Ident:
@@ -203,7 +217,19 @@ func transType(e ast.Expr) (ir.Type, error) {
 		case "float64":
 			return &ir.Float64Type{}, nil
 		default:
-			return nil, fmt.Errorf("translate: unsupported type %q", t.Name)
+			// A Go *predeclared* type GADA does not support (the wider
+			// numerics, complex, byte/rune, error, any) is rejected here —
+			// it is a builtin, not a user type. Any other identifier names
+			// a type defined elsewhere in the file — a struct or interface.
+			// Without *types.Info the translator does not resolve which; it
+			// carries the name and the emitter resolves it against the
+			// file's declarations (struct → record, interface →
+			// `Name'Class`). An undefined name surfaces as a loud emit
+			// error, not here.
+			if unsupportedBuiltinType[t.Name] {
+				return nil, fmt.Errorf("translate: unsupported type %q", t.Name)
+			}
+			return &ir.NamedType{Name: t.Name}, nil
 		}
 	case *ast.ArrayType:
 		if t.Len != nil {

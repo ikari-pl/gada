@@ -1,0 +1,57 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "dispatch_call.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "TypeDecl",
+          "name": "Speaker",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": [
+              {
+                "kind": "MethodSig",
+                "name": "Speak",
+                "params": null,
+                "results": null
+              }
+            ]
+          }
+        },
+        {
+          "kind": "Function",
+          "name": "describe",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "s",
+              "type": {
+                "kind": "NamedType",
+                "name": "Speaker"
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "s"
+                },
+                "sel": "Speak"
+              },
+              "args": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

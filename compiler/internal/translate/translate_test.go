@@ -95,6 +95,8 @@ func TestCorpus(t *testing.T) {
 		"iface_empty.go",
 		// Phase 4 — interface + method in `package main` (item 5c, overridingMain).
 		"iface_main.go",
+		// Phase 4 — interface method dispatch (item 5d).
+		"dispatch_call.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)

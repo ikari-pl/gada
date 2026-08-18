@@ -46,6 +46,7 @@ func TestNodeKind(t *testing.T) {
 		{"StringType", &StringType{}, "StringType"},
 		{"BoolType", &BoolType{}, "BoolType"},
 		{"Float64Type", &Float64Type{}, "Float64Type"},
+		{"NamedType", &NamedType{}, "NamedType"},
 		{"SliceType", &SliceType{}, "SliceType"},
 		{"SliceLit", &SliceLit{}, "SliceLit"},
 		{"IndexExpr", &IndexExpr{}, "IndexExpr"},
@@ -119,6 +120,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Type = &StringType{}
 	var _ Type = &BoolType{}
 	var _ Type = &Float64Type{}
+	var _ Type = &NamedType{}
 	var _ Type = &SliceType{}
 	var _ Type = &MapType{}
 	var _ Type = &ChanType{}
@@ -296,6 +298,20 @@ func TestSliceTypeMissingElem(t *testing.T) {
 	}
 	if _, err := unmarshalType(json.RawMessage(`{"kind":"SliceType","elem":null}`)); err == nil {
 		t.Fatal("expected error for SliceType with null elem")
+	}
+}
+
+// TestNamedTypeMissingName locks NamedType.UnmarshalJSON's guard: a
+// named-type reference with no name is malformed IR — the emitter
+// resolves the name against the file's type declarations, so it must be
+// present at the JSON -> IR boundary.
+func TestNamedTypeMissingName(t *testing.T) {
+	t.Parallel()
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"NamedType"}`)); err == nil {
+		t.Fatal("expected error for NamedType without name")
+	}
+	if _, err := unmarshalType(json.RawMessage(`{"kind":"NamedType","name":""}`)); err == nil {
+		t.Fatal("expected error for NamedType with empty name")
 	}
 }
 

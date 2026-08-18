@@ -79,6 +79,8 @@ var corpusFixtures = []string{
 	"method_decl",
 	// Phase 4 — interface + overriding method body in `package main` (5c).
 	"iface_main",
+	// Phase 4 — interface method dispatch (item 5d).
+	"dispatch_call",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -1556,15 +1558,40 @@ func TestElemBaseNameTable(t *testing.T) {
 // case and the explicit nil/missing-type branch.
 func TestTypeNameSliceAndMissing(t *testing.T) {
 	t.Parallel()
-	got, err := typeName(&ir.SliceType{Elem: &ir.StringType{}})
+	e := newEmitter("p", &ir.File{})
+	got, err := e.typeName(&ir.SliceType{Elem: &ir.StringType{}})
 	if err != nil {
 		t.Fatalf("typeName(SliceType{StringType}): unexpected error %v", err)
 	}
 	if got != "Slices_Of_String.Slice" {
 		t.Errorf("typeName(SliceType{StringType}) = %q, want %q", got, "Slices_Of_String.Slice")
 	}
-	if _, err := typeName(nil); err == nil {
+	if _, err := e.typeName(nil); err == nil {
 		t.Fatal("expected error for nil type")
+	}
+}
+
+// TestTypeNameNamed covers typeName's NamedType resolution (item 5d): an
+// interface name renders the class-wide `Name'Class` view (which
+// dispatches), a struct name the plain record type, and a name that
+// resolves to neither is a loud error.
+func TestTypeNameNamed(t *testing.T) {
+	t.Parallel()
+	e := newEmitter("p", &ir.File{Decls: []ir.Decl{
+		&ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{}},
+		&ir.TypeDecl{Name: "Point", Underlying: &ir.StructType{Fields: []*ir.StructField{
+			{Name: "X", Type: &ir.IntType{}},
+		}}},
+	}})
+
+	if got, err := e.typeName(&ir.NamedType{Name: "Speaker"}); err != nil || got != "Speaker'Class" {
+		t.Fatalf("interface NamedType = %q, %v; want Speaker'Class", got, err)
+	}
+	if got, err := e.typeName(&ir.NamedType{Name: "Point"}); err != nil || got != "Point" {
+		t.Fatalf("struct NamedType = %q, %v; want Point", got, err)
+	}
+	if _, err := e.typeName(&ir.NamedType{Name: "Nope"}); err == nil {
+		t.Fatal("expected error for a name that is neither struct nor interface")
 	}
 }
 

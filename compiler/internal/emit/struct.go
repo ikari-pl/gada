@@ -84,7 +84,7 @@ func (e *emitter) emitStructTypes() error {
 				if err := validStructFieldType(f.Type); err != nil {
 					return fmt.Errorf("emit: struct %s field %q: %w", td.Name, f.Name, err)
 				}
-				tn, err := typeName(f.Type)
+				tn, err := e.typeName(f.Type)
 				if err != nil {
 					return err
 				}
@@ -122,7 +122,7 @@ func (e *emitter) overridingSpecs(concrete string, ifaces []string, ifaceMethods
 		if fn.Receiver != nil && fn.Receiver.Name != "" {
 			recv = adaIdent(fn.Receiver.Name)
 		}
-		spec, err := dispatchOpSpec("overriding ", recv, ctype, fn.Name, fn.Params, fn.Results, ";")
+		spec, err := e.dispatchOpSpec("overriding ", recv, ctype, fn.Name, fn.Params, fn.Results, ";")
 		if err != nil {
 			return nil, err
 		}

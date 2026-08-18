@@ -556,6 +556,22 @@ type Float64Type struct{}
 func (*Float64Type) irType()          {}
 func (*Float64Type) NodeKind() string { return "Float64Type" }
 
+// NamedType is a reference to a defined type by name — a struct or
+// interface declared elsewhere in the file (`type Point struct {…}`,
+// `type Stringer interface {…}`). It appears wherever a Go type is a
+// bare identifier that is not a builtin: a parameter or result type
+// (`func f(s Stringer)`), and later a struct field or variable type.
+// The IR carries only the name; the emitter resolves whether it denotes
+// a struct (rendered as the record type) or an interface (rendered as
+// the class-wide `Name'Class` view that dispatches) from the file's type
+// declarations. A name that resolves to neither is a loud emit error.
+type NamedType struct {
+	Name string
+}
+
+func (*NamedType) irType()          {}
+func (*NamedType) NodeKind() string { return "NamedType" }
+
 // SliceType is Go `[]T`. Elem is the element type. Translates to a
 // generic instantiation of `Gada.Core.Slices` per element type — the
 // emitter tracks one `Slices_Of_<T>` per file.
@@ -863,6 +879,12 @@ func unmarshalType(raw json.RawMessage) (Type, error) {
 		return &BoolType{}, nil
 	case "Float64Type":
 		return &Float64Type{}, nil
+	case "NamedType":
+		var n NamedType
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
 	case "SliceType":
 		var n SliceType
 		if err := json.Unmarshal(raw, &n); err != nil {
@@ -1429,6 +1451,27 @@ func (*BoolType) MarshalJSON() ([]byte, error) {
 
 func (*Float64Type) MarshalJSON() ([]byte, error) {
 	return []byte(`{"kind":"Float64Type"}`), nil
+}
+
+func (t *NamedType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+	}{"NamedType", t.Name})
+}
+
+func (t *NamedType) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if aux.Name == "" {
+		return fmt.Errorf("ir: NamedType missing name")
+	}
+	t.Name = aux.Name
+	return nil
 }
 
 func (t *SliceType) MarshalJSON() ([]byte, error) {

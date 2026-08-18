@@ -1802,6 +1802,16 @@ func (e *emitter) subpHeader(fn *ir.Function) (string, string, bool) {
 		if fn.Receiver.Name != "" {
 			recv = adaIdent(fn.Receiver.Name)
 		}
+		// A body references its parameters by their original Go name; if
+		// rendering would rename one to dodge a case-insensitive Ada
+		// clash (with the receiver or another param), the body would bind
+		// the wrong argument. Reject loudly until a Go-name → Ada-name
+		// alias table lands (with direct method calls) rather than
+		// silently mis-bind.
+		if paramsCollide(recv, fn.Params) {
+			e.fail(fmt.Errorf("emit: method %s has a parameter whose name collides case-insensitively with the receiver or another parameter (Ada identifiers are case-insensitive); rename the Go parameter — method-body emission for this shape is not yet supported", fn.Name))
+			return "", name, false
+		}
 		header, err := dispatchOpSpec("overriding ", recv, adaIdent(fn.Receiver.Type), fn.Name, fn.Params, fn.Results, " is")
 		if err != nil {
 			e.fail(err)

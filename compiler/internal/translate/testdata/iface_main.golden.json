@@ -1,0 +1,145 @@
+{
+  "kind": "Package",
+  "name": "main",
+  "files": [
+    {
+      "kind": "File",
+      "name": "iface_main.go",
+      "imports": [
+        "fmt"
+      ],
+      "decls": [
+        {
+          "kind": "TypeDecl",
+          "name": "Meter",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": [
+              {
+                "kind": "MethodSig",
+                "name": "Value",
+                "params": null,
+                "results": [
+                  {
+                    "kind": "Param",
+                    "name": "",
+                    "type": {
+                      "kind": "IntType"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Gauge",
+          "underlying": {
+            "kind": "StructType",
+            "fields": [
+              {
+                "kind": "StructField",
+                "name": "Reading",
+                "type": {
+                  "kind": "IntType"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "Function",
+          "name": "Value",
+          "receiver": {
+            "kind": "Receiver",
+            "name": "g",
+            "type": "Gauge",
+            "pointer": false
+          },
+          "params": null,
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "g"
+                  },
+                  "sel": "Reading"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Function",
+          "name": "main",
+          "params": null,
+          "results": null,
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "g"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "StructLit",
+                  "typeName": "Gauge",
+                  "fields": [
+                    {
+                      "kind": "StructLitField",
+                      "name": "Reading",
+                      "value": {
+                        "kind": "Lit",
+                        "litKind": "int",
+                        "value": "7"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "fmt"
+                },
+                "sel": "Println"
+              },
+              "args": [
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "g"
+                  },
+                  "sel": "Reading"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

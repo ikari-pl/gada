@@ -643,8 +643,23 @@ enumeration; output matches the expected fixture.
         and a body for the free function `Zero` only — `Get` is excluded
         (its direct-call emission rides a later item). `subpHeader`'s
         method path (named/unnamed receiver, signature error) pinned by
-        `TestSubpHeaderMethod`; `overridingMethods` 100%. emit/ 95.75%,
-        translate/ 96.13%, runtime/ 100%; vet + lint + gate clean.
+        `TestSubpHeaderMethod`; `overridingMethods` 100%. vet + lint +
+        gate clean.
+        *Code-review fixes (2026-08-18, PR #41):* (a) a method whose
+        parameter name folds case-insensitively onto the receiver or
+        another parameter is now rejected loudly (`paramsCollide` in
+        `subpHeader`) — the header uniquifies such a name (`Self_2`,
+        `X_2`, from the 5b Self-collision fix) but the *body* references
+        parameters by their original Go name, so a rename would silently
+        bind the wrong argument; honouring it (a Go-name → Ada-name alias
+        table) rides the later item that brings direct method calls.
+        (b) The `package main` overriding-method path (`emitMainProcedure`,
+        previously 0 executions) is now covered by a fixture
+        (`iface_main`: Gauge derives Meter, `Value` body nested in `Main`
+        before the `G` var freezes Gauge). (c) `overridingSpecs` (5b-ii)
+        and `overridingMethods` (5c) now share `overridingFuncsFor`, one
+        definition of which methods override, so the spec and body sets
+        cannot diverge. emit/ 96.00%, translate/ 96.13%, runtime/ 100%.
 
   - [ ] **(5d) interface method calls → dispatching calls**
         *Files:* `compiler/internal/emit/dispatch.go`, golden tests.

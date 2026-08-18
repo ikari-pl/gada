@@ -160,6 +160,32 @@ func uniqueParamName(base string, used map[string]bool) string {
 	return name
 }
 
+// paramsCollide reports whether any parameter's Ada name folds (case-
+// insensitively) onto the controlling parameter or an earlier one — the
+// condition under which dispatchOpSpec renames a parameter. In a spec or
+// abstract op the rename is harmless (nothing references the parameter),
+// but a method *body* (item 5c) references its parameters by their
+// original Go name, which a rename would no longer match — silently
+// binding the wrong argument. The body emitter uses this to reject such
+// a method loudly rather than mis-emit; honouring the rename in the body
+// (a Go-name → Ada-name alias table) rides the later item that also
+// brings direct method calls. ctrlName is the receiver/`Self` for a
+// method, or "" for a plain subprogram.
+func paramsCollide(ctrlName string, params []*ir.Param) bool {
+	seen := map[string]bool{}
+	if ctrlName != "" {
+		seen[strings.ToLower(ctrlName)] = true
+	}
+	for i, p := range params {
+		n := strings.ToLower(methodParamName(p.Name, i))
+		if seen[n] {
+			return true
+		}
+		seen[n] = true
+	}
+	return false
+}
+
 // Interface satisfaction emission (Phase 4 item 4c-ii).
 //
 // Under the Hybrid interface model, native Ada tagged types carry the

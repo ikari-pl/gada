@@ -1,0 +1,74 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "struct_param.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "TypeDecl",
+          "name": "Point",
+          "underlying": {
+            "kind": "StructType",
+            "fields": [
+              {
+                "kind": "StructField",
+                "name": "X",
+                "type": {
+                  "kind": "IntType"
+                }
+              },
+              {
+                "kind": "StructField",
+                "name": "Y",
+                "type": {
+                  "kind": "IntType"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "Function",
+          "name": "area",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "p",
+              "type": {
+                "kind": "NamedType",
+                "name": "Point"
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "Return",
+              "results": [
+                {
+                  "kind": "Selector",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "p"
+                  },
+                  "sel": "X"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

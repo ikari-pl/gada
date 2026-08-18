@@ -687,8 +687,23 @@ enumeration; output matches the expected fixture.
         { s.Speak() }` → `procedure Describe (S : Speaker'Class) is begin
         S.Speak; end;`). `typeName`'s interface/struct/undefined arms
         pinned by `TestTypeNameNamed`; `NamedType` JSON round-trip +
-        missing-name guard in ir. emit/ 96.01%, translate/ 96.15%,
-        runtime/ 100%; vet + lint + gate clean.
+        missing-name guard in ir. vet + lint + gate clean.
+        *Code-review fixes (2026-08-18, PR #42):* (a) `NamedType` made a
+        struct-typed parameter expressible, and a method call on one whose
+        method is *not* an interface method (a plain method on a
+        non-deriving type — no emitted subprogram) previously emitted a
+        dangling `C.Get`. `emitCallStmt` now rejects such a call loudly
+        (guarded by `dispatchMethodNames`, the set of interface method
+        names — the only callable ones); a direct call to a non-dispatch
+        method rides a later item. `s.Speak()` on an interface value is
+        unaffected. (b) New fixture `struct_param` proves the struct arm
+        of `typeName`'s `NamedType` resolution end to end (`func area(p
+        Point) int { return p.X }` → `function Area (P : Point) return
+        Integer`). (c) The `unsupportedBuiltinType` denylist is now
+        table-tested per entry (all 18), and a named-scalar/undefined
+        `NamedType` gets an accurate emit diagnostic instead of a
+        misleading "not a declared struct or interface". emit/ 96.02%,
+        translate/ 96.15%, runtime/ 100%.
         *Not yet (rides item 7's end-to-end example / later items):* a
         `var s I = concrete` local (`*ast.DeclStmt` is still unsupported;
         only `:=` infers a *concrete* type); a method call in *expression*

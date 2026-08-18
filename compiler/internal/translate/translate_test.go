@@ -97,6 +97,8 @@ func TestCorpus(t *testing.T) {
 		"iface_main.go",
 		// Phase 4 — interface method dispatch (item 5d).
 		"dispatch_call.go",
+		// Phase 4 — struct-typed parameter (item 5d, typeName struct arm).
+		"struct_param.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -650,5 +652,38 @@ func TestTransStructTypeNilFields(t *testing.T) {
 	}
 	if len(st.Fields) != 0 {
 		t.Fatalf("expected zero fields, got %d", len(st.Fields))
+	}
+}
+
+// TestUnsupportedBuiltinTypes locks the item-5d denylist: every Go
+// predeclared type name GADA does not support stays a loud translate
+// error rather than lowering to a NamedType that would dangle at emit,
+// while a user-defined type name lowers to a NamedType.
+func TestUnsupportedBuiltinTypes(t *testing.T) {
+	t.Parallel()
+	denied := []string{
+		"int8", "int16", "int32", "int64",
+		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+		"byte", "rune", "float32", "complex64", "complex128",
+		"error", "any", "comparable",
+	}
+	for _, name := range denied {
+		name := name
+		t.Run("denied/"+name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := transType(&ast.Ident{Name: name}); err == nil {
+				t.Fatalf("expected error for unsupported builtin %q", name)
+			}
+		})
+	}
+
+	// A user-defined type name lowers to a NamedType, resolved at emit.
+	got, err := transType(&ast.Ident{Name: "Stringer"})
+	if err != nil {
+		t.Fatalf("unexpected error for user type: %v", err)
+	}
+	nt, ok := got.(*ir.NamedType)
+	if !ok || nt.Name != "Stringer" {
+		t.Fatalf("user type = %#v, want *ir.NamedType{Name:\"Stringer\"}", got)
 	}
 }

@@ -149,17 +149,18 @@ type emitter struct {
 	// `Selectors_Of_<T>` instantiation list emitted alongside
 	// Channels_Of_<T>. Subset-of (not equal-to) chanElems because a
 	// chan type used only outside select doesn't need a Selector.
-	selectorElems     map[string]ir.Type
-	selectorElemOrder []string
-	localTypes        map[string]ir.Type
-	rangeCounter      int
-	selectCounter     int                       // file-wide 1..N numbering for each emitted select site; suffixes Sel_Cases_<n> / Sel_Idx_<n> / V_<n>_<i> / OK_<n>_<i> to keep nested selects from shadowing each other's locals (Ada would shadow legally, but unique names keep gprbuild diagnostics actionable).
-	goIndex           map[*ir.GoStmt]int        // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
-	funcByName        map[string]*ir.Function   // file-wide name → top-level Function decl, so a `go f(x, y)` site can resolve f's parameter names + declared types to build the matching Go_Closure_<n> record and unpack it into correctly-named locals. Populated alongside collectSliceElems.
-	structByName      map[string]*ir.StructType // file-wide type name → its struct definition, so emitStructLit can consult the declared field set: an Ada record aggregate must supply a value for every component (RM 4.3.1), so a literal that omits fields, names a non-struct type, or has a single positional field needs the declared fields to lower correctly (or to be rejected loudly). Populated alongside funcByName.
-	interfaceNames    map[string]bool           // file-wide set of interface type names, so typeName renders a NamedType referring to an interface as the class-wide `Name'Class` view (which dispatches) rather than a plain type name. Populated alongside structByName.
-	pendingRecvs      []pendingChanRecv         // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
-	err               error
+	selectorElems       map[string]ir.Type
+	selectorElemOrder   []string
+	localTypes          map[string]ir.Type
+	rangeCounter        int
+	selectCounter       int                       // file-wide 1..N numbering for each emitted select site; suffixes Sel_Cases_<n> / Sel_Idx_<n> / V_<n>_<i> / OK_<n>_<i> to keep nested selects from shadowing each other's locals (Ada would shadow legally, but unique names keep gprbuild diagnostics actionable).
+	goIndex             map[*ir.GoStmt]int        // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
+	funcByName          map[string]*ir.Function   // file-wide name → top-level Function decl, so a `go f(x, y)` site can resolve f's parameter names + declared types to build the matching Go_Closure_<n> record and unpack it into correctly-named locals. Populated alongside collectSliceElems.
+	structByName        map[string]*ir.StructType // file-wide type name → its struct definition, so emitStructLit can consult the declared field set: an Ada record aggregate must supply a value for every component (RM 4.3.1), so a literal that omits fields, names a non-struct type, or has a single positional field needs the declared fields to lower correctly (or to be rejected loudly). Populated alongside funcByName.
+	interfaceNames      map[string]bool           // file-wide set of interface type names, so typeName renders a NamedType referring to an interface as the class-wide `Name'Class` view (which dispatches) rather than a plain type name. Populated alongside structByName.
+	dispatchMethodNames map[string]bool           // file-wide set of interface method names — the only methods with an emitted subprogram (5b-i abstract op + 5c overriding body) and hence the only callable ones. A method-call selector whose name is absent would emit a dangling `X.M`, so emitCallStmt rejects it. Populated alongside interfaceNames.
+	pendingRecvs        []pendingChanRecv         // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
+	err                 error
 }
 
 // pendingChanRecv pairs a `v := <-c` (sub-item d) or `v, ok := <-c`
@@ -180,17 +181,18 @@ type pendingChanRecv struct {
 
 func newEmitter(pkg string, f *ir.File) *emitter {
 	e := &emitter{
-		pkgName:        pkg,
-		file:           f,
-		sliceElems:     map[string]ir.Type{},
-		mapPairs:       map[string]*ir.MapType{},
-		chanElems:      map[string]ir.Type{},
-		chanIdentTypes: map[string]ir.Type{},
-		selectorElems:  map[string]ir.Type{},
-		goIndex:        map[*ir.GoStmt]int{},
-		funcByName:     map[string]*ir.Function{},
-		structByName:   map[string]*ir.StructType{},
-		interfaceNames: map[string]bool{},
+		pkgName:             pkg,
+		file:                f,
+		sliceElems:          map[string]ir.Type{},
+		mapPairs:            map[string]*ir.MapType{},
+		chanElems:           map[string]ir.Type{},
+		chanIdentTypes:      map[string]ir.Type{},
+		selectorElems:       map[string]ir.Type{},
+		goIndex:             map[*ir.GoStmt]int{},
+		funcByName:          map[string]*ir.Function{},
+		structByName:        map[string]*ir.StructType{},
+		interfaceNames:      map[string]bool{},
+		dispatchMethodNames: map[string]bool{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
@@ -226,6 +228,9 @@ func (e *emitter) collectSliceElems() {
 				e.structByName[td.Name] = u
 			case *ir.InterfaceType:
 				e.interfaceNames[td.Name] = true
+				for _, m := range u.Methods {
+					e.dispatchMethodNames[m.Name] = true
+				}
 			}
 			continue
 		}
@@ -2451,6 +2456,20 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 		e.emitFmtPrintln(c)
 		return
 	}
+	// A selector-headed call `x.M(args)` is a method call (package-
+	// qualified calls other than fmt.Println are not supported). It emits
+	// as the Ada prefixed-view `X.M`, which is a valid primitive-operation
+	// call only when M is a dispatch operation — an interface method,
+	// which 5b-i declares as an abstract op and 5c bodies as an
+	// overriding primitive. A call to a method that is *not* part of any
+	// interface (a plain method on a non-deriving type) has no emitted
+	// subprogram, so `X.M` would dangle; reject it loudly rather than emit
+	// uncompilable Ada. Direct calls to non-dispatching methods ride a
+	// later item.
+	if sel, ok := c.Fun.(*ir.Selector); ok && !e.dispatchMethodNames[sel.Sel] {
+		e.fail(fmt.Errorf("emit: method call to %q: only interface (dispatching) methods are callable yet; a direct call to a non-interface method is not supported", sel.Sel))
+		return
+	}
 	fun := e.emitExpr(c.Fun)
 	args := make([]string, 0, len(c.Args))
 	for _, a := range c.Args {
@@ -3445,7 +3464,7 @@ func (e *emitter) typeName(t ir.Type) (string, error) {
 		if _, ok := e.structByName[t.Name]; ok {
 			return adaIdent(t.Name), nil
 		}
-		return "", fmt.Errorf("emit: type %q is not a declared struct or interface in this file", t.Name)
+		return "", fmt.Errorf("emit: type %q is not a struct or interface; only struct and interface types are usable as value types yet (a named scalar or an undefined/cross-package type reaches here)", t.Name)
 	case *ir.SliceType:
 		pkg, err := slicePkgFor(t.Elem)
 		if err != nil {

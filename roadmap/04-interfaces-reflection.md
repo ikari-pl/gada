@@ -367,7 +367,8 @@ enumeration; output matches the expected fixture.
           type) rides item 5. emit/ 95.41%, interface.go 97.62%,
           typemeta.go 98.45%; go vet + golangci-lint clean.
 
-- [ ] **Compiler emission — interface method calls**
+- [x] **Compiler emission — interface method calls** — all four
+      sub-items done (5a structs, 5b interfaces, 5c methods, 5d dispatch).
 
   Decomposed 2026-06-26: the one-line "emit a dispatching call" presumes
   a Go-type → Ada-type emission layer that **does not exist** — structs,
@@ -661,13 +662,56 @@ enumeration; output matches the expected fixture.
         definition of which methods override, so the spec and body sets
         cannot diverge. emit/ 96.00%, translate/ 96.13%, runtime/ 100%.
 
-  - [ ] **(5d) interface method calls → dispatching calls**
-        *Files:* `compiler/internal/emit/dispatch.go`, golden tests.
-        *Verify:* `cd compiler && go test ./internal/emit/... -run Dispatch`
+  - [x] **(5d) interface method calls → dispatching calls**
+        *Files:* `compiler/internal/{ir,translate,emit}`, golden tests.
+        *Verify:* `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Dispatch|TypeName|TestCorpus'`
         *Done when:* `iface.Method(args)` on an interface-typed value emits
-        a dispatching call on the `'Class` view (`Method (Iface, args)`),
-        resolved at run time by Ada's own tag — the Hybrid "native vtable"
-        in place of a hand-rolled itable.
+        a dispatching call on the `'Class` view, resolved at run time by
+        Ada's own tag — the Hybrid "native vtable" in place of a
+        hand-rolled itable.
+        *Done 2026-08-18:* the missing Go-type → Ada-type primitive for a
+        *named* type reference now exists — new `*ir.NamedType{Name}` (a
+        bare non-builtin type identifier: an interface- or struct-typed
+        parameter/result), produced by `transType` for any identifier
+        that is not a supported scalar and not an unsupported Go builtin
+        (the wider numerics / complex / byte / rune / error / any, which
+        stay loud errors). `emit.typeName` became a method (with
+        `dispatchOpSpec`) so it can resolve a `NamedType` against the
+        file's declarations: an interface name renders the class-wide
+        `Name'Class` view — the operand type on which an Ada call
+        dispatches (RM 3.9.2) — a struct name the plain record type, and a
+        name that is neither a loud error. The call site needed no new
+        form: a method call `s.Speak()` already lowers to the Ada
+        prefixed-view `S.Speak`, which *is* a dispatching call when `S` is
+        class-wide. New fixture `dispatch_call` (`func describe(s Speaker)
+        { s.Speak() }` → `procedure Describe (S : Speaker'Class) is begin
+        S.Speak; end;`). `typeName`'s interface/struct/undefined arms
+        pinned by `TestTypeNameNamed`; `NamedType` JSON round-trip +
+        missing-name guard in ir. vet + lint + gate clean.
+        *Code-review fixes (2026-08-18, PR #42):* (a) `NamedType` made a
+        struct-typed parameter expressible, and a method call on one whose
+        method is *not* an interface method (a plain method on a
+        non-deriving type — no emitted subprogram) previously emitted a
+        dangling `C.Get`. `emitCallStmt` now rejects such a call loudly
+        (guarded by `dispatchMethodNames`, the set of interface method
+        names — the only callable ones); a direct call to a non-dispatch
+        method rides a later item. `s.Speak()` on an interface value is
+        unaffected. (b) New fixture `struct_param` proves the struct arm
+        of `typeName`'s `NamedType` resolution end to end (`func area(p
+        Point) int { return p.X }` → `function Area (P : Point) return
+        Integer`). (c) The `unsupportedBuiltinType` denylist is now
+        table-tested per entry (all 18), and a named-scalar/undefined
+        `NamedType` gets an accurate emit diagnostic instead of a
+        misleading "not a declared struct or interface". emit/ 96.02%,
+        translate/ 96.15%, runtime/ 100%.
+        *Not yet (rides item 7's end-to-end example / later items):* a
+        `var s I = concrete` local (`*ast.DeclStmt` is still unsupported;
+        only `:=` infers a *concrete* type); a method call in *expression*
+        position (`x := s.String()` — call-as-expression needs
+        *types.Info*); and passing a concrete value to an interface
+        parameter (Ada widens a specific type to its class-wide view
+        automatically, so `describe(Sink'(…))` should already compile once
+        argument emission for it lands).
 
 - [ ] **Compiler emission — type assertions and type switches**
       *Files:* `compiler/internal/emit/assert.go`, golden tests

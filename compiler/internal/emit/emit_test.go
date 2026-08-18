@@ -79,6 +79,10 @@ var corpusFixtures = []string{
 	"method_decl",
 	// Phase 4 — interface + overriding method body in `package main` (5c).
 	"iface_main",
+	// Phase 4 — interface method dispatch (item 5d).
+	"dispatch_call",
+	// Phase 4 — struct-typed parameter (item 5d, typeName struct arm).
+	"struct_param",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -407,11 +411,13 @@ func TestNonTrivialForVariants(t *testing.T) {
 	}
 }
 
-// TestSelectorFallthrough exercises the dotted-selector fallback
-// path (everything that isn't fmt.Println). Phase 1 doesn't really
-// support these, but we keep the path live for later phases — and
-// the test pins the formatting so it doesn't drift accidentally.
-func TestSelectorFallthrough(t *testing.T) {
+// TestSelectorCallRejected exercises the dotted-selector call path
+// (everything that isn't fmt.Println). A bare `foo.Bar()` is a method
+// call whose selector is not an interface method, so it has no emitted
+// subprogram — emitting `Foo.Bar` would dangle at gprbuild. Item 5d
+// rejects it loudly (only interface dispatch calls are supported); a
+// direct call to a non-interface method rides a later item.
+func TestSelectorCallRejected(t *testing.T) {
 	t.Parallel()
 	pkg := wrapMain(funcMain(
 		&ir.Call{
@@ -419,11 +425,8 @@ func TestSelectorFallthrough(t *testing.T) {
 		},
 	))
 	var buf bytes.Buffer
-	if err := Package(pkg, &buf); err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	if !strings.Contains(buf.String(), "Foo.Bar;") {
-		t.Fatalf("expected dotted selector output, got:\n%s", buf.String())
+	if err := Package(pkg, &buf); err == nil {
+		t.Fatalf("expected rejection of a non-interface method call, got:\n%s", buf.String())
 	}
 }
 
@@ -1556,15 +1559,66 @@ func TestElemBaseNameTable(t *testing.T) {
 // case and the explicit nil/missing-type branch.
 func TestTypeNameSliceAndMissing(t *testing.T) {
 	t.Parallel()
-	got, err := typeName(&ir.SliceType{Elem: &ir.StringType{}})
+	e := newEmitter("p", &ir.File{})
+	got, err := e.typeName(&ir.SliceType{Elem: &ir.StringType{}})
 	if err != nil {
 		t.Fatalf("typeName(SliceType{StringType}): unexpected error %v", err)
 	}
 	if got != "Slices_Of_String.Slice" {
 		t.Errorf("typeName(SliceType{StringType}) = %q, want %q", got, "Slices_Of_String.Slice")
 	}
-	if _, err := typeName(nil); err == nil {
+	if _, err := e.typeName(nil); err == nil {
 		t.Fatal("expected error for nil type")
+	}
+}
+
+// TestMethodCallRejectsNonInterface locks the item-5d guard: a method
+// call whose selector is not an interface method has no emitted
+// subprogram (a plain method on a non-deriving type is reflect-only), so
+// emitting `X.M` would dangle. emitCallStmt rejects it loudly. A call to
+// an interface method (Speak) is accepted.
+func TestMethodCallRejectsNonInterface(t *testing.T) {
+	t.Parallel()
+	file := &ir.File{Decls: []ir.Decl{
+		&ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{{Name: "Speak"}}}},
+	}}
+
+	// A non-interface method call is rejected.
+	e := newEmitter("p", file)
+	e.emitCallStmt(&ir.Call{Fun: &ir.Selector{X: idn("c"), Sel: "Get"}})
+	if e.err == nil {
+		t.Fatal("expected error for a call to a non-interface method")
+	}
+
+	// An interface method call is accepted and emits the prefixed view.
+	e2 := newEmitter("p", file)
+	e2.emitCallStmt(&ir.Call{Fun: &ir.Selector{X: idn("s"), Sel: "Speak"}})
+	if e2.err != nil {
+		t.Fatalf("unexpected error for interface method call: %v", e2.err)
+	}
+}
+
+// TestTypeNameNamed covers typeName's NamedType resolution (item 5d): an
+// interface name renders the class-wide `Name'Class` view (which
+// dispatches), a struct name the plain record type, and a name that
+// resolves to neither is a loud error.
+func TestTypeNameNamed(t *testing.T) {
+	t.Parallel()
+	e := newEmitter("p", &ir.File{Decls: []ir.Decl{
+		&ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{}},
+		&ir.TypeDecl{Name: "Point", Underlying: &ir.StructType{Fields: []*ir.StructField{
+			{Name: "X", Type: &ir.IntType{}},
+		}}},
+	}})
+
+	if got, err := e.typeName(&ir.NamedType{Name: "Speaker"}); err != nil || got != "Speaker'Class" {
+		t.Fatalf("interface NamedType = %q, %v; want Speaker'Class", got, err)
+	}
+	if got, err := e.typeName(&ir.NamedType{Name: "Point"}); err != nil || got != "Point" {
+		t.Fatalf("struct NamedType = %q, %v; want Point", got, err)
+	}
+	if _, err := e.typeName(&ir.NamedType{Name: "Nope"}); err == nil {
+		t.Fatal("expected error for a name that is neither struct nor interface")
 	}
 }
 

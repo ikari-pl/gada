@@ -95,7 +95,7 @@ func (e *emitter) emitInterfaceTypes() error {
 // for a result-less one. The interface type is the controlling first
 // parameter `Self`.
 func (e *emitter) interfaceMethodSpec(ifaceName string, m *ir.MethodSig) (string, error) {
-	return dispatchOpSpec("", "Self", adaIdent(ifaceName), m.Name, m.Params, m.Results, " is abstract;")
+	return e.dispatchOpSpec("", "Self", adaIdent(ifaceName), m.Name, m.Params, m.Results, " is abstract;")
 }
 
 // dispatchOpSpec renders a dispatching-operation spec shared by an
@@ -106,7 +106,7 @@ func (e *emitter) interfaceMethodSpec(ifaceName string, m *ir.MethodSig) (string
 // or ";" (a concrete spec whose body 5c supplies). Go's multi-result
 // methods have no single Ada function form, so 2+ results are rejected
 // loudly.
-func dispatchOpSpec(prefix, ctrlName, ctrlType, name string, params, results []*ir.Param, tail string) (string, error) {
+func (e *emitter) dispatchOpSpec(prefix, ctrlName, ctrlType, name string, params, results []*ir.Param, tail string) (string, error) {
 	// Ada identifiers are case-insensitive, so a method parameter whose
 	// Ada form matches the injected controlling parameter (a Go param
 	// named `self` against `Self`) — or another parameter (`x` and `X`
@@ -116,7 +116,7 @@ func dispatchOpSpec(prefix, ctrlName, ctrlType, name string, params, results []*
 	used := map[string]bool{strings.ToLower(ctrlName): true}
 	ps := []string{ctrlName + " : " + ctrlType}
 	for i, p := range params {
-		t, err := typeName(p.Type)
+		t, err := e.typeName(p.Type)
 		if err != nil {
 			return "", err
 		}
@@ -128,7 +128,7 @@ func dispatchOpSpec(prefix, ctrlName, ctrlType, name string, params, results []*
 	case 0:
 		return prefix + "procedure " + ada + plist + tail, nil
 	case 1:
-		rt, err := typeName(results[0].Type)
+		rt, err := e.typeName(results[0].Type)
 		if err != nil {
 			return "", err
 		}

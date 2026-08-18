@@ -613,14 +613,38 @@ enumeration; output matches the expected fixture.
           an open question for the profile/verification work, not this
           item.
 
-  - [ ] **(5c) methods → overriding subprograms**
+  - [x] **(5c) methods → overriding subprograms**
         *Files:* `compiler/internal/emit/emit.go`, golden tests.
-        *Verify:* `cd compiler && go test ./internal/emit/... -run Method`
+        *Verify:* `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Method|Iface|SubpHeader|TestCorpus'`
         *Done when:* each `func (p Point) M(args) …` emits the body of the
         corresponding `overriding` subprogram (the dispatch operation
         whose spec 5b declared), with the receiver as the controlling
         first parameter. Closes the loop 4c-ii left open (method bodies
         were skipped).
+        *Done 2026-08-18:* the two subprogram-emission loops
+        (`emitPackageBody`, `emitMainProcedure`) no longer skip methods;
+        `overridingMethods` selects exactly the value-receiver methods
+        whose (concrete, method) 5b-ii declared an overriding spec for
+        (receiver type derives ≥1 method-bearing interface, method name
+        matches one of those interfaces' methods), and `subpHeader`
+        renders a method as `overriding function/procedure Name (Recv :
+        Type; …) [return R] is` — the *same* `dispatchOpSpec` the 5b spec
+        used, tail ` is` instead of `;`, so spec and body match exactly.
+        The body reuses the whole `emitSubprogram` machinery (decls,
+        defers, panic handler, `end Name;`); the receiver reaches the
+        body as an ordinary identifier, so `b.data` → `B.Data`. With this
+        the interface unit is finally *complete* — `iface_satisfy`
+        (Point.String → `return "pt"`) and `iface_multi` (Buffer.Read →
+        `return B.Data`, Nop.Read → `return 0`, the rest `null`) each emit
+        a tagged type, its abstract op, the overriding spec, and now the
+        matching body, forming compilable Ada (first gnat compile still
+        rides item 7). A method on a non-deriving type stays reflect-only:
+        `method_decl` (new emit fixture) emits `Counter` as a plain record
+        and a body for the free function `Zero` only — `Get` is excluded
+        (its direct-call emission rides a later item). `subpHeader`'s
+        method path (named/unnamed receiver, signature error) pinned by
+        `TestSubpHeaderMethod`; `overridingMethods` 100%. emit/ 95.75%,
+        translate/ 96.13%, runtime/ 100%; vet + lint + gate clean.
 
   - [ ] **(5d) interface method calls → dispatching calls**
         *Files:* `compiler/internal/emit/dispatch.go`, golden tests.

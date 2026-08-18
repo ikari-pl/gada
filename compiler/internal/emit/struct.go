@@ -178,6 +178,39 @@ func interfaceMethodsByName(decls []ir.Decl) map[string][]*ir.MethodSig {
 	return m
 }
 
+// overridingMethods returns the set of value-receiver methods that are
+// overriding dispatch operations — the methods 5b-ii declares specs for
+// and 5c emits bodies for. A method qualifies when its receiver type
+// derives at least one interface (method-less interfaces excluded, per
+// ifacesFor) and its name matches a method of one of those interfaces.
+// A method on a non-deriving type, or one not part of any derived
+// interface, is not `overriding` and is excluded (direct-call emission
+// for such methods rides a later item). Keyed by the *ir.Function so the
+// emitter can decide per-decl whether to emit a body.
+func overridingMethods(decls []ir.Decl) map[*ir.Function]bool {
+	pairs := satisfiedPairs(decls)
+	ifaceMethods := interfaceMethodsByName(decls)
+	valueMethods := valueMethodsByType(decls)
+	set := map[*ir.Function]bool{}
+	for _, d := range decls {
+		td, ok := d.(*ir.TypeDecl)
+		if !ok {
+			continue
+		}
+		if _, ok := td.Underlying.(*ir.StructType); !ok {
+			continue
+		}
+		for _, in := range ifacesFor(td.Name, pairs, ifaceMethods) {
+			for _, m := range ifaceMethods[in] {
+				if fn := findMethod(valueMethods[td.Name], m.Name); fn != nil {
+					set[fn] = true
+				}
+			}
+		}
+	}
+	return set
+}
+
 // findMethod returns the function named name from fns, or nil.
 func findMethod(fns []*ir.Function, name string) *ir.Function {
 	for _, fn := range fns {

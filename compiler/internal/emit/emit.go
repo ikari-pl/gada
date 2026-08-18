@@ -849,6 +849,7 @@ func (e *emitter) findMain() *ir.Function {
 // Main;` form.
 func (e *emitter) emitMainProcedure() {
 	main := e.findMain()
+	overridingMain := overridingMethods(e.file.Decls)
 	var others []*ir.Function
 	for _, d := range e.file.Decls {
 		if _, ok := d.(*ir.TypeDecl); ok {
@@ -861,8 +862,11 @@ func (e *emitter) emitMainProcedure() {
 			return
 		}
 		if fn.Receiver != nil {
-			// A method is reflect-metadata-only for now; its dispatch
-			// body is emitted in item 5.
+			// An overriding method emits its body as a sibling subprogram
+			// (item 5c); a non-overriding method stays reflect-only.
+			if overridingMain[fn] {
+				others = append(others, fn)
+			}
 			continue
 		}
 		if fn != main {
@@ -1061,14 +1065,22 @@ func (e *emitter) emitMainProcedure() {
 func (e *emitter) emitPackageBody() {
 	pkg := adaIdent(e.pkgName)
 
+	// fns holds every subprogram body to emit, in source order: plain
+	// top-level functions and (item 5c) the overriding method bodies of
+	// interface-deriving tagged types — the bodies completing the specs
+	// 5b-ii declared. A method that is not an overriding op (a receiver
+	// on a non-deriving type, or a method outside any derived interface)
+	// stays reflect-metadata-only; its direct-call emission rides a later
+	// item.
+	overriding := overridingMethods(e.file.Decls)
 	var fns []*ir.Function
 	for _, d := range e.file.Decls {
 		switch d := d.(type) {
 		case *ir.Function:
 			if d.Receiver != nil {
-				// A method contributes only to reflect metadata for now
-				// (Add_Method + satisfaction). Its dispatch body — the
-				// tagged-type overriding subprogram — is emitted in item 5.
+				if overriding[d] {
+					fns = append(fns, d)
+				}
 				continue
 			}
 			fns = append(fns, d)
@@ -1779,6 +1791,24 @@ func zeroLiteralOf(t ir.Type) string {
 // unsupported.
 func (e *emitter) subpHeader(fn *ir.Function) (string, string, bool) {
 	name := adaIdent(fn.Name)
+
+	// A method (Receiver != nil) is an overriding dispatch operation of
+	// its receiver's tagged type (item 5c). Its header must match the
+	// spec 5b declared exactly, so it comes from the same dispatchOpSpec
+	// with the receiver as the controlling first parameter — only the
+	// tail differs (` is` opens the body; `;` closed the spec).
+	if fn.Receiver != nil {
+		recv := "Self"
+		if fn.Receiver.Name != "" {
+			recv = adaIdent(fn.Receiver.Name)
+		}
+		header, err := dispatchOpSpec("overriding ", recv, adaIdent(fn.Receiver.Type), fn.Name, fn.Params, fn.Results, " is")
+		if err != nil {
+			e.fail(err)
+			return "", name, false
+		}
+		return header, name, true
+	}
 
 	var params string
 	if len(fn.Params) > 0 {

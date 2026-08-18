@@ -21,6 +21,31 @@ package body P is
    overriding function Read (N : Nop) return Integer;
    overriding procedure Close (N : Nop);
 
+   overriding function Read (B : Buffer) return Integer is
+   begin
+      return B.Data;
+   end Read;
+
+   overriding procedure Write (B : Buffer; N : Integer) is
+   begin
+      null;
+   end Write;
+
+   overriding procedure Close (B : Buffer) is
+   begin
+      null;
+   end Close;
+
+   overriding function Read (N : Nop) return Integer is
+   begin
+      return 0;
+   end Read;
+
+   overriding procedure Close (N : Nop) is
+   begin
+      null;
+   end Close;
+
 begin
    declare
       Meta : Gada.Reflect.Types.Type_Descriptor;

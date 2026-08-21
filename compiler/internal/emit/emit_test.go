@@ -1614,26 +1614,30 @@ func TestEmitTypeAssert(t *testing.T) {
 		&ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{
 			{Name: "Legs", Type: &ir.IntType{}},
 		}}},
+		&ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{}},
 	}}
 
-	// Happy path: single assertion renders the view conversion.
+	// Happy path: a concrete struct target renders the view conversion.
 	e := newEmitter("p", file)
 	if got := e.emitExpr(&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}}); got != "Dog (S)" {
 		t.Fatalf("emitTypeAssert = %q, want %q", got, "Dog (S)")
 	}
 
-	// Comma-ok has no expression value — rejected.
-	e2 := newEmitter("p", file)
-	e2.emitExpr(&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}, CommaOK: true})
-	if e2.err == nil {
-		t.Fatal("expected error for comma-ok type assertion at expression position")
+	// Every rejected shape: comma-ok (no expression value), an interface
+	// target, a scalar/builtin target, a non-named target, and an
+	// undeclared name — each a loud error, never invalid Ada.
+	reject := []*ir.TypeAssert{
+		{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}, CommaOK: true},
+		{X: idn("s"), Type: &ir.NamedType{Name: "Speaker"}}, // interface target
+		{X: idn("s"), Type: &ir.IntType{}},                  // builtin target
+		{X: idn("s"), Type: &ir.NamedType{Name: "Nope"}},    // undeclared
 	}
-
-	// An unresolvable asserted type propagates the typeName error.
-	e3 := newEmitter("p", file)
-	e3.emitExpr(&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Nope"}})
-	if e3.err == nil {
-		t.Fatal("expected error for assertion to an undeclared type")
+	for i, ta := range reject {
+		ei := newEmitter("p", file)
+		ei.emitExpr(ta)
+		if ei.err == nil {
+			t.Fatalf("reject case %d: expected error, got none", i)
+		}
 	}
 }
 

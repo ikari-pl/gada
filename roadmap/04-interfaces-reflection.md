@@ -740,8 +740,15 @@ enumeration; output matches the expected fixture.
         → `D : Dog := Dog (S); return D.Legs;`), integrating the interface
         param (5d) + tagged type (5b/5c) + assertion. `emitTypeAssert`
         comma-ok/error arms pinned by `TestEmitTypeAssert`; `TypeAssert`
-        round-trips in ir. emit/ 96.04%, translate/ 95.63%, runtime/
+        round-trips in ir. emit/ 96.05%, translate/ 96.02%, runtime/
         100%; vet + lint + gate clean.
+        *Correct-or-loud:* only a concrete struct target is a valid Ada
+        view conversion of a class-wide operand, so `emitTypeAssert`
+        rejects an interface target (`x.(I)` is a does-it-implement check,
+        not a down-conversion), a named-scalar/builtin target (`Integer
+        (X)` on a class-wide operand is not a legal conversion), and a
+        non-named target — each a loud error, deferred to a later item —
+        rather than emit invalid Ada.
 
   - [ ] **(6b) comma-ok assertion `v, ok := x.(T)`**
         *Files:* `compiler/internal/emit`, golden tests.

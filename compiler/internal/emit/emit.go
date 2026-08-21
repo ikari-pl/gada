@@ -2784,12 +2784,22 @@ func (e *emitter) emitTypeAssert(a *ir.TypeAssert) string {
 		e.fail(fmt.Errorf("emit: comma-ok type assertion `v, ok := x.(T)` is not supported yet (item 6b); only the single-value form `x.(T)` is"))
 		return ""
 	}
-	tn, err := e.typeName(a.Type)
-	if err != nil {
-		e.fail(err)
+	// Only a concrete struct target is a valid Ada view conversion of a
+	// class-wide operand. An interface target (`x.(I)` — a
+	// does-it-implement check, not a down-conversion), and scalar/builtin
+	// targets (`x.(int)`, `x.(Celsius)` — `Integer (X)` on a class-wide
+	// operand is not a legal conversion) need different machinery and
+	// ride a later item; reject them loudly rather than emit invalid Ada.
+	nt, ok := a.Type.(*ir.NamedType)
+	if !ok {
+		e.fail(fmt.Errorf("emit: type assertion to a non-named type is not supported yet (item 6a covers a concrete struct target)"))
 		return ""
 	}
-	return tn + " (" + e.emitExpr(a.X) + ")"
+	if _, isStruct := e.structByName[nt.Name]; !isStruct {
+		e.fail(fmt.Errorf("emit: type assertion x.(%s): only a concrete struct target is supported yet (item 6a); interface, named-scalar, and builtin targets ride later items", nt.Name))
+		return ""
+	}
+	return adaIdent(nt.Name) + " (" + e.emitExpr(a.X) + ")"
 }
 
 // emitSliceExpr dispatches `s[lo:hi]` (and the elided forms) to

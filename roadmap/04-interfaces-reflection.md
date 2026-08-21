@@ -714,9 +714,76 @@ enumeration; output matches the expected fixture.
         argument emission for it lands).
 
 - [ ] **Compiler emission — type assertions and type switches**
-      *Files:* `compiler/internal/emit/assert.go`, golden tests
+      *Files:* `compiler/internal/{ir,translate,emit}`, golden tests
       *Verify:* `cd compiler && go test ./internal/emit/... -run Assert`
       *Done when:* `x.(T)`, `x.(T, ok)`, `switch x := y.(type) { ... }` all emit correctly.
+
+  Decomposed 2026-08-21: three forms, each greenfield (no IR node, no
+  translate/emit path existed), sharing the class-wide operand and tag
+  machinery. The parent ticks when all three do.
+
+  - [x] **(6a) single-value assertion `x.(T)`**
+        *Files:* `compiler/internal/{ir,translate,emit}`, golden tests.
+        *Verify:* `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Assert|TypeAssert|TestCorpus'`
+        *Done when:* `v := x.(T)` on an interface-typed value lowers to the
+        Ada view conversion `T (X)` and binds v to T.
+        *Done 2026-08-21:* new `*ir.TypeAssert{X, Type, CommaOK}` (kind-
+        tagged JSON, x/type missing-child guards); `transExpr` lowers
+        `*ast.TypeAssertExpr` (rejecting the `x.(type)` guard shape, which
+        is a type switch); `emitTypeAssert` renders the view conversion
+        `T (X)` — converting a class-wide operand to a specific type in
+        its class checks the tag (RM 4.6) and raises Constraint_Error on a
+        mismatch (Go panics; a faithful Gada.Core panic rides a later
+        item), and `inferDeclType` binds a `:=` assertion to the asserted
+        type. `typeName`/`inferDeclType` are now methods (NamedType
+        resolution). Fixture `type_assert` (`d := s.(Dog); return d.Legs`
+        → `D : Dog := Dog (S); return D.Legs;`), integrating the interface
+        param (5d) + tagged type (5b/5c) + assertion. `emitTypeAssert`
+        comma-ok/error arms pinned by `TestEmitTypeAssert`; `TypeAssert`
+        round-trips in ir. emit/ 96.05%, translate/ 96.02%, runtime/
+        100%; vet + lint + gate clean.
+        *Correct-or-loud:* only a concrete struct target is a valid Ada
+        view conversion of a class-wide operand, so `emitTypeAssert`
+        rejects an interface target (`x.(I)` is a does-it-implement check,
+        not a down-conversion), a named-scalar/builtin target (`Integer
+        (X)` on a class-wide operand is not a legal conversion), and a
+        non-named target — each a loud error, deferred to a later item —
+        rather than emit invalid Ada.
+        *Code-review fixes (2026-08-21, PR #43):* a type assertion whose
+        *operand* is a method-less interface (`func f(x Any)` with `type
+        Any interface{}`) is now also rejected — it is valid Go (every
+        type satisfies the empty interface) but no concrete type *derives*
+        an empty interface (5b), so `T (X)` would be an illegal conversion
+        gnat rejects; `emitTypeAssert` catches it via the operand's
+        `localTypes` type (`emptyInterfaceNames`). The comma-ok wiring is
+        6b's, not this item's — the doc comment is corrected and the
+        current generic-guard rejection is pinned by a test; and the
+        `transExpr(operand)` error path is now covered.
+        *Deferred (SPARK):* the `T (X)` view conversion raises
+        `Constraint_Error` on a tag mismatch — an exception, which the
+        `-mode=spark` verifiable subset excludes (Pure Goal 4). A
+        type assertion is inherently fallible, so its SPARK story (a
+        checked-conversion or a comma-ok-only rule under spark mode) is an
+        open question for the profile/verification work, as with 5b's
+        dynamic dispatch.
+
+  - [ ] **(6b) comma-ok assertion `v, ok := x.(T)`**
+        *Files:* `compiler/internal/emit`, golden tests.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run Assert`
+        *Done when:* `v, ok := x.(T)` lowers to a membership test
+        (`OK := X in T'Class`) plus a guarded view conversion at statement
+        position, so ok reports the match without raising. (`transAssign`
+        already flips `TypeAssert.CommaOK` for the 2-LHS shape; emit's
+        statement-position lowering — mirroring the comma-ok chan receive
+        — is the work.)
+
+  - [ ] **(6c) type switch `switch x := y.(type) { ... }`**
+        *Files:* `compiler/internal/{ir,translate,emit}`, golden tests.
+        *Verify:* `cd compiler && go test ./internal/emit/... -run Assert`
+        *Done when:* a type switch lowers to a chain of membership tests
+        (`if X in T1'Class then … elsif X in T2'Class then … else …`),
+        with the switch variable viewed as each case's type inside its
+        arm.
 
 - [ ] **`iface_dispatch` example**
       *Files:* `examples/iface_dispatch/main.go`, `examples/iface_dispatch/expected_output.txt`

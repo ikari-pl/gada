@@ -710,4 +710,11 @@ func TestTypeAssertTranslate(t *testing.T) {
 	}); err == nil {
 		t.Fatal("expected error for a nil asserted type")
 	}
+	// An untranslatable operand expression -> transExpr error propagates.
+	if _, err := transTypeAssert(&ast.TypeAssertExpr{
+		X:    &ast.FuncLit{},
+		Type: &ast.Ident{Name: "Dog"},
+	}); err == nil {
+		t.Fatal("expected error for an untranslatable assertion operand")
+	}
 }

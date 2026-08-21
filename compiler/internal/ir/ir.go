@@ -443,11 +443,13 @@ func (*ChanRecv) NodeKind() string { return "ChanRecv" }
 // interface-typed operand); Type is the asserted type. In the single
 // form `v := x.(T)` (CommaOK false) it lowers to an Ada view conversion
 // `T (X)`, which raises on a tag mismatch — Go panics; the runtime
-// approximation is a raised exception. In the comma-ok form
-// `v, ok := x.(T)` (CommaOK true, set by transAssign for the
-// 2-LHS-1-RHS shape) it lowers to a membership test plus a guarded
-// conversion. The type-switch guard `x.(type)` is a distinct node, not
-// this one.
+// approximation is a raised exception. The comma-ok form
+// `v, ok := x.(T)` (CommaOK true) lowers to a membership test plus a
+// guarded conversion — item 6b, which both flips this flag in
+// transAssign (only ChanRecv is flipped today) and teaches emitVarDecl's
+// 2-LHS interceptor to route it. Until then a comma-ok assertion is
+// rejected by the generic multi-value-`:=` guard. The type-switch guard
+// `x.(type)` is a distinct construct, not this node.
 type TypeAssert struct {
 	X       Expr
 	Type    Type

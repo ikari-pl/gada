@@ -749,6 +749,23 @@ enumeration; output matches the expected fixture.
         (X)` on a class-wide operand is not a legal conversion), and a
         non-named target — each a loud error, deferred to a later item —
         rather than emit invalid Ada.
+        *Code-review fixes (2026-08-21, PR #43):* a type assertion whose
+        *operand* is a method-less interface (`func f(x Any)` with `type
+        Any interface{}`) is now also rejected — it is valid Go (every
+        type satisfies the empty interface) but no concrete type *derives*
+        an empty interface (5b), so `T (X)` would be an illegal conversion
+        gnat rejects; `emitTypeAssert` catches it via the operand's
+        `localTypes` type (`emptyInterfaceNames`). The comma-ok wiring is
+        6b's, not this item's — the doc comment is corrected and the
+        current generic-guard rejection is pinned by a test; and the
+        `transExpr(operand)` error path is now covered.
+        *Deferred (SPARK):* the `T (X)` view conversion raises
+        `Constraint_Error` on a tag mismatch — an exception, which the
+        `-mode=spark` verifiable subset excludes (Pure Goal 4). A
+        type assertion is inherently fallible, so its SPARK story (a
+        checked-conversion or a comma-ok-only rule under spark mode) is an
+        open question for the profile/verification work, as with 5b's
+        dynamic dispatch.
 
   - [ ] **(6b) comma-ok assertion `v, ok := x.(T)`**
         *Files:* `compiler/internal/emit`, golden tests.

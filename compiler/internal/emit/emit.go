@@ -159,6 +159,7 @@ type emitter struct {
 	structByName        map[string]*ir.StructType // file-wide type name → its struct definition, so emitStructLit can consult the declared field set: an Ada record aggregate must supply a value for every component (RM 4.3.1), so a literal that omits fields, names a non-struct type, or has a single positional field needs the declared fields to lower correctly (or to be rejected loudly). Populated alongside funcByName.
 	interfaceNames      map[string]bool           // file-wide set of interface type names, so typeName renders a NamedType referring to an interface as the class-wide `Name'Class` view (which dispatches) rather than a plain type name. Populated alongside structByName.
 	dispatchMethodNames map[string]bool           // file-wide set of interface method names — the only methods with an emitted subprogram (5b-i abstract op + 5c overriding body) and hence the only callable ones. A method-call selector whose name is absent would emit a dangling `X.M`, so emitCallStmt rejects it. Populated alongside interfaceNames.
+	emptyInterfaceNames map[string]bool           // file-wide set of method-less interface names (Go's `any`, or a named `interface{}`). No concrete type derives an empty interface (5b), so a type assertion `x.(T)` whose operand is one has no legal Ada view conversion; emitTypeAssert rejects it. Populated alongside interfaceNames.
 	pendingRecvs        []pendingChanRecv         // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
 	err                 error
 }
@@ -193,6 +194,7 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		structByName:        map[string]*ir.StructType{},
 		interfaceNames:      map[string]bool{},
 		dispatchMethodNames: map[string]bool{},
+		emptyInterfaceNames: map[string]bool{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
@@ -228,6 +230,9 @@ func (e *emitter) collectSliceElems() {
 				e.structByName[td.Name] = u
 			case *ir.InterfaceType:
 				e.interfaceNames[td.Name] = true
+				if len(u.Methods) == 0 {
+					e.emptyInterfaceNames[td.Name] = true
+				}
 				for _, m := range u.Methods {
 					e.dispatchMethodNames[m.Name] = true
 				}
@@ -2798,6 +2803,18 @@ func (e *emitter) emitTypeAssert(a *ir.TypeAssert) string {
 	if _, isStruct := e.structByName[nt.Name]; !isStruct {
 		e.fail(fmt.Errorf("emit: type assertion x.(%s): only a concrete struct target is supported yet (item 6a); interface, named-scalar, and builtin targets ride later items", nt.Name))
 		return ""
+	}
+	// A method-less interface operand is valid Go — every type satisfies
+	// it — but no concrete type *derives* an empty interface (5b), so the
+	// operand's class-wide view contains no struct and `T (X)` is an
+	// illegal Ada conversion. Reject when the operand's static type
+	// (known for an identifier via localTypes) is such an interface,
+	// rather than emit a conversion gnat would reject.
+	if id, ok := a.X.(*ir.Ident); ok {
+		if ot, ok := e.localTypes[id.Name].(*ir.NamedType); ok && e.emptyInterfaceNames[ot.Name] {
+			e.fail(fmt.Errorf("emit: type assertion x.(%s) on a method-less interface (%s) operand has no legal Ada conversion (no concrete type derives an empty interface); not supported yet", nt.Name, ot.Name))
+			return ""
+		}
 	}
 	return adaIdent(nt.Name) + " (" + e.emitExpr(a.X) + ")"
 }

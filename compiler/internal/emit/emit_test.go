@@ -1614,13 +1614,23 @@ func TestEmitTypeAssert(t *testing.T) {
 		&ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{
 			{Name: "Legs", Type: &ir.IntType{}},
 		}}},
-		&ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{}},
+		// Speaker has a method; Any is method-less (the empty interface).
+		&ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{{Name: "Speak"}}}},
+		&ir.TypeDecl{Name: "Any", Underlying: &ir.InterfaceType{}},
 	}}
 
 	// Happy path: a concrete struct target renders the view conversion.
 	e := newEmitter("p", file)
 	if got := e.emitExpr(&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}}); got != "Dog (S)" {
 		t.Fatalf("emitTypeAssert = %q, want %q", got, "Dog (S)")
+	}
+
+	// A method-less-interface operand has no legal conversion — rejected.
+	eop := newEmitter("p", file)
+	eop.localTypes = map[string]ir.Type{"x": &ir.NamedType{Name: "Any"}}
+	eop.emitExpr(&ir.TypeAssert{X: idn("x"), Type: &ir.NamedType{Name: "Dog"}})
+	if eop.err == nil {
+		t.Fatal("expected error for assertion on a method-less-interface operand")
 	}
 
 	// Every rejected shape: comma-ok (no expression value), an interface
@@ -1638,6 +1648,27 @@ func TestEmitTypeAssert(t *testing.T) {
 		if ei.err == nil {
 			t.Fatalf("reject case %d: expected error, got none", i)
 		}
+	}
+
+	// End to end, `v, ok := x.(T)` is rejected today (transAssign does not
+	// yet flip TypeAssert.CommaOK, so it hits emit's generic multi-value
+	// `:=` guard). Item 6b lowers it; pin the rejection so a future
+	// change cannot silently mis-emit it.
+	pkg := wrapPkg(
+		&ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Legs", Type: &ir.IntType{}}}}},
+		&ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			&ir.Assign{Define: true,
+				LHS: []ir.Expr{idn("v"), idn("ok")},
+				RHS: []ir.Expr{&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}}}},
+		}},
+	)
+	// Add Speaker so the param type resolves.
+	pkg.Files[0].Decls = append([]ir.Decl{
+		&ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{{Name: "Speak"}}}},
+	}, pkg.Files[0].Decls...)
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err == nil {
+		t.Fatalf("expected comma-ok assertion to be rejected, got:\n%s", buf.String())
 	}
 }
 

@@ -62,6 +62,7 @@ func TestNodeKind(t *testing.T) {
 		{"MakeChan", &MakeChan{}, "MakeChan"},
 		{"ChanSend", &ChanSend{}, "ChanSend"},
 		{"ChanRecv", &ChanRecv{}, "ChanRecv"},
+		{"TypeAssert", &TypeAssert{}, "TypeAssert"},
 		{"SelectStmt", &SelectStmt{}, "SelectStmt"},
 		{"TypeDecl", &TypeDecl{}, "TypeDecl"},
 		{"StructType", &StructType{}, "StructType"},
@@ -115,6 +116,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Expr = &StructLit{}
 	var _ Expr = &MakeChan{}
 	var _ Expr = &ChanRecv{}
+	var _ Expr = &TypeAssert{}
 
 	var _ Type = &IntType{}
 	var _ Type = &StringType{}
@@ -1303,5 +1305,20 @@ func roundTrip(t *testing.T, pkg *Package) {
 	if !reflect.DeepEqual(pkg, &got) {
 		t.Fatalf("round-trip mismatch\noriginal: %#v\nrestored: %#v\nJSON:\n%s",
 			pkg, &got, bs)
+	}
+}
+
+// TestTypeAssertMissing locks TypeAssert.UnmarshalJSON's guards: both
+// the asserted value and the asserted type are required at the
+// JSON -> IR boundary.
+func TestTypeAssertMissing(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{
+		`{"kind":"TypeAssert","type":{"kind":"NamedType","name":"Point"}}`,
+		`{"kind":"TypeAssert","x":{"kind":"Ident","name":"s"}}`,
+	} {
+		if _, err := unmarshalExpr(json.RawMessage(raw)); err == nil {
+			t.Fatalf("expected error for malformed TypeAssert: %s", raw)
+		}
 	}
 }

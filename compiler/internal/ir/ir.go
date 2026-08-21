@@ -439,6 +439,24 @@ type ChanRecv struct {
 func (*ChanRecv) irExpr()          {}
 func (*ChanRecv) NodeKind() string { return "ChanRecv" }
 
+// TypeAssert is a Go type assertion `x.(T)`. X is the asserted value (an
+// interface-typed operand); Type is the asserted type. In the single
+// form `v := x.(T)` (CommaOK false) it lowers to an Ada view conversion
+// `T (X)`, which raises on a tag mismatch — Go panics; the runtime
+// approximation is a raised exception. In the comma-ok form
+// `v, ok := x.(T)` (CommaOK true, set by transAssign for the
+// 2-LHS-1-RHS shape) it lowers to a membership test plus a guarded
+// conversion. The type-switch guard `x.(type)` is a distinct node, not
+// this one.
+type TypeAssert struct {
+	X       Expr
+	Type    Type
+	CommaOK bool
+}
+
+func (*TypeAssert) irExpr()          {}
+func (*TypeAssert) NodeKind() string { return "TypeAssert" }
+
 // SelectCaseKind discriminates the three case shapes of a Go
 // `select` statement. Timeout_Op (the `<-time.After(d)` shape) is
 // deliberately omitted from v1: the Selector runtime exposes it,
@@ -818,6 +836,12 @@ func unmarshalExpr(raw json.RawMessage) (Expr, error) {
 		return &n, nil
 	case "ChanRecv":
 		var n ChanRecv
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "TypeAssert":
+		var n TypeAssert
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -2106,6 +2130,44 @@ func (e *ChanRecv) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	e.Chan = c
+	e.CommaOK = aux.CommaOK
+	return nil
+}
+
+func (e *TypeAssert) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind    string `json:"kind"`
+		X       Expr   `json:"x"`
+		Type    Type   `json:"type"`
+		CommaOK bool   `json:"commaOk"`
+	}{"TypeAssert", e.X, e.Type, e.CommaOK})
+}
+
+func (e *TypeAssert) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		X       json.RawMessage `json:"x"`
+		Type    json.RawMessage `json:"type"`
+		CommaOK bool            `json:"commaOk"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.X) == 0 || string(aux.X) == "null" {
+		return fmt.Errorf("ir: TypeAssert missing x")
+	}
+	if len(aux.Type) == 0 || string(aux.Type) == "null" {
+		return fmt.Errorf("ir: TypeAssert missing type")
+	}
+	x, err := unmarshalExpr(aux.X)
+	if err != nil {
+		return err
+	}
+	t, err := unmarshalType(aux.Type)
+	if err != nil {
+		return err
+	}
+	e.X = x
+	e.Type = t
 	e.CommaOK = aux.CommaOK
 	return nil
 }

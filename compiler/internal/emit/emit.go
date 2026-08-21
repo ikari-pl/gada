@@ -1918,7 +1918,7 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 		e.emitChanRecvDecl(a, cr)
 		return
 	}
-	typ, err := inferDeclType(a.RHS[0])
+	typ, err := e.inferDeclType(a.RHS[0])
 	if err != nil {
 		e.fail(err)
 		return
@@ -1984,7 +1984,7 @@ func (e *emitter) emitChanRecvDecl(a *ir.Assign, cr *ir.ChanRecv) {
 // literal (whose element type is on the node, so no *types.Info
 // plumbing is needed). Anything else still defers — full RHS-typing
 // arrives with the type-info plumbing in a later phase.
-func inferDeclType(x ir.Expr) (string, error) {
+func (e *emitter) inferDeclType(x ir.Expr) (string, error) {
 	switch x := x.(type) {
 	case *ir.Lit:
 		switch x.Kind {
@@ -2019,6 +2019,9 @@ func inferDeclType(x ir.Expr) (string, error) {
 	case *ir.StructLit:
 		// The literal names its own record type; no *types.Info needed.
 		return adaIdent(x.TypeName), nil
+	case *ir.TypeAssert:
+		// `v := x.(T)` binds v to the asserted type T.
+		return e.typeName(x.Type)
 	}
 	return "", fmt.Errorf("emit: := requires a literal or composite RHS, got %T", x)
 }
@@ -2547,6 +2550,8 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		return e.emitStructLit(x)
 	case *ir.MakeChan:
 		return e.emitMakeChan(x)
+	case *ir.TypeAssert:
+		return e.emitTypeAssert(x)
 	case *ir.IndexExpr:
 		return e.emitIndexExpr(x)
 	case *ir.SliceExpr:
@@ -2764,6 +2769,27 @@ func zeroValueFor(t ir.Type) (string, error) {
 		return zeroLiteralOf(t), nil
 	}
 	return "", fmt.Errorf("emit: no zero value for struct field %w", validStructFieldType(t))
+}
+
+// emitTypeAssert renders a single Go type assertion `x.(T)` as the Ada
+// view conversion `T (X)`. Converting a class-wide operand to a specific
+// type in its class checks the tag (RM 4.6) and raises Constraint_Error
+// on a mismatch — Go instead panics, so the raised exception is the
+// runtime approximation (a faithful Gada.Core panic rides a later item).
+// The comma-ok form `v, ok := x.(T)` (CommaOK) has no expression value —
+// it lowers to a membership test plus a guarded conversion at statement
+// position (item 6b), so it must not reach here.
+func (e *emitter) emitTypeAssert(a *ir.TypeAssert) string {
+	if a.CommaOK {
+		e.fail(fmt.Errorf("emit: comma-ok type assertion `v, ok := x.(T)` is not supported yet (item 6b); only the single-value form `x.(T)` is"))
+		return ""
+	}
+	tn, err := e.typeName(a.Type)
+	if err != nil {
+		e.fail(err)
+		return ""
+	}
+	return tn + " (" + e.emitExpr(a.X) + ")"
 }
 
 // emitSliceExpr dispatches `s[lo:hi]` (and the elided forms) to

@@ -99,6 +99,8 @@ func TestCorpus(t *testing.T) {
 		"dispatch_call.go",
 		// Phase 4 — struct-typed parameter (item 5d, typeName struct arm).
 		"struct_param.go",
+		// Phase 4 — single-value type assertion (item 6a).
+		"type_assert.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -685,5 +687,27 @@ func TestUnsupportedBuiltinTypes(t *testing.T) {
 	nt, ok := got.(*ir.NamedType)
 	if !ok || nt.Name != "Stringer" {
 		t.Fatalf("user type = %#v, want *ir.NamedType{Name:\"Stringer\"}", got)
+	}
+}
+
+// TestTypeAssertTranslate covers transTypeAssert beyond the corpus happy
+// path: an unsupported asserted type propagates the transType error, and
+// the defensive `x.(type)` guard (Type nil, unreachable via the Go
+// parser, which only permits it inside a type switch) is rejected.
+func TestTypeAssertTranslate(t *testing.T) {
+	t.Parallel()
+	// Unsupported asserted type -> transType error.
+	if _, err := transTypeAssert(&ast.TypeAssertExpr{
+		X:    &ast.Ident{Name: "s"},
+		Type: &ast.Ident{Name: "complex128"},
+	}); err == nil {
+		t.Fatal("expected error asserting to an unsupported type")
+	}
+	// Nil type (type-switch guard shape) -> rejected.
+	if _, err := transTypeAssert(&ast.TypeAssertExpr{
+		X:    &ast.Ident{Name: "s"},
+		Type: nil,
+	}); err == nil {
+		t.Fatal("expected error for a nil asserted type")
 	}
 }

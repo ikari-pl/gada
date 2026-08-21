@@ -83,6 +83,8 @@ var corpusFixtures = []string{
 	"dispatch_call",
 	// Phase 4 — struct-typed parameter (item 5d, typeName struct arm).
 	"struct_param",
+	// Phase 4 — single-value type assertion (item 6a).
+	"type_assert",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -1602,6 +1604,39 @@ func TestMethodCallRejectsNonInterface(t *testing.T) {
 // interface name renders the class-wide `Name'Class` view (which
 // dispatches), a struct name the plain record type, and a name that
 // resolves to neither is a loud error.
+// TestEmitTypeAssert covers emitTypeAssert's branches beyond the corpus
+// happy path: a comma-ok assertion has no expression form (it lowers at
+// statement position, item 6b) and is rejected, and an unresolvable
+// asserted type propagates the typeName error.
+func TestEmitTypeAssert(t *testing.T) {
+	t.Parallel()
+	file := &ir.File{Decls: []ir.Decl{
+		&ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{
+			{Name: "Legs", Type: &ir.IntType{}},
+		}}},
+	}}
+
+	// Happy path: single assertion renders the view conversion.
+	e := newEmitter("p", file)
+	if got := e.emitExpr(&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}}); got != "Dog (S)" {
+		t.Fatalf("emitTypeAssert = %q, want %q", got, "Dog (S)")
+	}
+
+	// Comma-ok has no expression value — rejected.
+	e2 := newEmitter("p", file)
+	e2.emitExpr(&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}, CommaOK: true})
+	if e2.err == nil {
+		t.Fatal("expected error for comma-ok type assertion at expression position")
+	}
+
+	// An unresolvable asserted type propagates the typeName error.
+	e3 := newEmitter("p", file)
+	e3.emitExpr(&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Nope"}})
+	if e3.err == nil {
+		t.Fatal("expected error for assertion to an undeclared type")
+	}
+}
+
 func TestTypeNameNamed(t *testing.T) {
 	t.Parallel()
 	e := newEmitter("p", &ir.File{Decls: []ir.Decl{

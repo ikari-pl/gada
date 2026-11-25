@@ -209,7 +209,7 @@ package body Bufio_Suite is
       AUnit.Test_Cases.Test_Case'Class) is
       S : Scanner := New_Scanner (Buf_Src (Long_Xs (5000) & LF));
    begin
-      Assert (Scan (S) and then Length (Text (S)) = 5000,
+      Assert (Scan (S) and then Text (S)'Length = 5000,
               "long line reassembled from prefixes");
       Assert (not Scan (S), "then EOF");
       declare

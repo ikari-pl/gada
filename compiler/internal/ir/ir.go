@@ -524,6 +524,29 @@ type SelectStmt struct {
 func (*SelectStmt) irStmt()          {}
 func (*SelectStmt) NodeKind() string { return "SelectStmt" }
 
+// TypeSwitch is a Go type switch `switch v := x.(type) { case T: ...;
+// default: ... }` (Phase 4 item 6c). X is the class-wide operand being
+// switched on; Var is the name bound to the operand *viewed as the
+// case's type* inside each typed arm (empty when the switch has no init
+// binding, `switch x.(type)`). Cases holds one entry per `case` clause
+// in source order; a case with Type == nil is the `default` arm, whose
+// Var keeps the operand's own (interface) type.
+type TypeSwitch struct {
+	X     Expr
+	Var   string
+	Cases []*TypeSwitchCase
+}
+
+func (*TypeSwitch) irStmt()          {}
+func (*TypeSwitch) NodeKind() string { return "TypeSwitch" }
+
+// TypeSwitchCase is one arm of a TypeSwitch. Type is the asserted type
+// for the arm (nil = default); Body is the arm's statement list.
+type TypeSwitchCase struct {
+	Type Type
+	Body []Stmt
+}
+
 // BuiltinCall is a call to a Go predeclared function. Distinguished
 // from Call (which carries an arbitrary Fun expression) so the
 // emitter can dispatch by name without re-deriving builtin-ness.
@@ -783,6 +806,12 @@ func unmarshalStmt(raw json.RawMessage) (Stmt, error) {
 		return &n, nil
 	case "SelectStmt":
 		var n SelectStmt
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "TypeSwitch":
+		var n TypeSwitch
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -2232,6 +2261,82 @@ func (sc *SelectCase) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	sc.Body = body
+	return nil
+}
+
+func (s *TypeSwitch) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind  string            `json:"kind"`
+		X     Expr              `json:"x"`
+		Var   string            `json:"var"`
+		Cases []*TypeSwitchCase `json:"cases"`
+	}{"TypeSwitch", s.X, s.Var, s.Cases})
+}
+
+func (s *TypeSwitch) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		X     json.RawMessage   `json:"x"`
+		Var   string            `json:"var"`
+		Cases []json.RawMessage `json:"cases"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.X) == 0 || string(aux.X) == "null" {
+		return fmt.Errorf("ir: TypeSwitch missing x")
+	}
+	x, err := unmarshalExpr(aux.X)
+	if err != nil {
+		return err
+	}
+	s.X = x
+	s.Var = aux.Var
+	if aux.Cases == nil {
+		s.Cases = nil
+		return nil
+	}
+	cases := make([]*TypeSwitchCase, 0, len(aux.Cases))
+	for i, raw := range aux.Cases {
+		c := &TypeSwitchCase{}
+		if err := c.UnmarshalJSON(raw); err != nil {
+			return fmt.Errorf("ir: TypeSwitch.Cases[%d]: %w", i, err)
+		}
+		cases = append(cases, c)
+	}
+	s.Cases = cases
+	return nil
+}
+
+func (c *TypeSwitchCase) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Type Type   `json:"type"`
+		Body []Stmt `json:"body"`
+	}{c.Type, c.Body})
+}
+
+func (c *TypeSwitchCase) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Type json.RawMessage   `json:"type"`
+		Body []json.RawMessage `json:"body"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	// A nil Type marks the default arm; it must round-trip as nil.
+	if len(aux.Type) == 0 || string(aux.Type) == "null" {
+		c.Type = nil
+	} else {
+		t, err := unmarshalType(aux.Type)
+		if err != nil {
+			return err
+		}
+		c.Type = t
+	}
+	body, err := unmarshalStmtList(aux.Body)
+	if err != nil {
+		return err
+	}
+	c.Body = body
 	return nil
 }
 

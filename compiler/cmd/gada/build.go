@@ -29,6 +29,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"text/template"
 
@@ -87,10 +88,15 @@ func buildPackage(pkgPath string, stdout, stderr io.Writer) error {
 		return failStage("resolve", err)
 	}
 
-	// Stage: translate (load + IR conversion).
+	// Stage: translate (load + IR conversion). NeedDeps|NeedImports are
+	// required alongside NeedTypes: with x/tools v0.27 + Go 1.27 the
+	// export-data path no longer type-loads dependencies unless the deps
+	// themselves are in the load set — omitting them surfaces as
+	// "internal error: package \"fmt\" without types".
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo,
+			packages.NeedTypes | packages.NeedTypesInfo |
+			packages.NeedDeps | packages.NeedImports,
 		Dir: abs,
 	}
 	loaded, err := packages.Load(cfg, ".")
@@ -135,17 +141,29 @@ func buildPackage(pkgPath string, stdout, stderr io.Writer) error {
 		}
 	}
 
-	mainAdb := filepath.Join(tmp, "main.adb")
-	out, err := os.Create(mainAdb)
+	files, err := emit.PackageFiles(irPkg)
 	if err != nil {
 		return failStage("emit", err)
 	}
-	if err := emit.Package(irPkg, out); err != nil {
-		_ = out.Close()
-		return failStage("emit", err)
+	// Deterministic write order; all units land in the same source dir,
+	// so order is cosmetic.
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
 	}
-	if err := out.Close(); err != nil {
-		return failStage("emit", err)
+	sort.Strings(names)
+	for _, name := range names {
+		out, err := os.Create(filepath.Join(tmp, name))
+		if err != nil {
+			return failStage("emit", err)
+		}
+		if _, err := out.WriteString(files[name]); err != nil {
+			_ = out.Close()
+			return failStage("emit", err)
+		}
+		if err := out.Close(); err != nil {
+			return failStage("emit", err)
+		}
 	}
 
 	gprPath := filepath.Join(tmp, "main.gpr")

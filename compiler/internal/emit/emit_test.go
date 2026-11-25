@@ -85,6 +85,10 @@ var corpusFixtures = []string{
 	"struct_param",
 	// Phase 4 — single-value type assertion (item 6a).
 	"type_assert",
+	// Phase 4 — comma-ok type assertion (item 6b).
+	"type_assert_commaok",
+	// Phase 4 — type switch (item 6c).
+	"type_switch",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -150,6 +154,78 @@ func TestCorpusComplete(t *testing.T) {
 			t.Errorf("missing testdata/%s.golden.adb", name)
 		}
 	}
+}
+
+// TestEmitMainUnitsIface pins the three-unit layout emitted for a
+// package main that declares an interface type (Ada forbids abstract /
+// overriding subprograms nested in a procedure body, so types and
+// operations must live in a package spec/body — this is what makes
+// examples/iface_dispatch compile under gnat):
+//   - main_types.ads: package spec with the interface type + abstract
+//     op spec, the tagged record + overriding spec, instantiations,
+//     plain-function specs.
+//   - main_types.adb: package body with the subprogram bodies and the
+//     reflect-metadata elaboration.
+//   - main.adb: with/use Main_Types + the thin procedure Main.
+func TestEmitMainUnitsIface(t *testing.T) {
+	t.Parallel()
+	files, err := PackageFiles(loadFixtureIR(t, "iface_main"))
+	if err != nil {
+		t.Fatalf("PackageFiles: %v", err)
+	}
+	ads, ok := files["main_types.ads"]
+	if !ok {
+		t.Fatalf("missing main_types.ads; files: %v", keys(files))
+	}
+	adb, ok := files["main_types.adb"]
+	if !ok {
+		t.Fatalf("missing main_types.adb; files: %v", keys(files))
+	}
+	main := files["main.adb"]
+	for _, want := range []string{
+		"package Main_Types is",
+		"type Meter is interface;",
+		"is abstract;",
+		"type Gauge is new Meter with record",
+		"overriding function Value (G : Gauge) return Integer;",
+		"end Main_Types;",
+	} {
+		if !strings.Contains(ads, want) {
+			t.Fatalf("main_types.ads missing %q, got:\n%s", want, ads)
+		}
+	}
+	for _, want := range []string{
+		"package body Main_Types is",
+		"overriding function Value (G : Gauge) return Integer is",
+		"Gada.Reflect.Types.Add_Method",
+		"Gada.Reflect.Registry.Register_Type",
+		"end Main_Types;",
+	} {
+		if !strings.Contains(adb, want) {
+			t.Fatalf("main_types.adb missing %q, got:\n%s", want, adb)
+		}
+	}
+	for _, want := range []string{"with Main_Types;", "use Main_Types;", "procedure Main is"} {
+		if !strings.Contains(main, want) {
+			t.Fatalf("main.adb missing %q, got:\n%s", want, main)
+		}
+	}
+	// The spec must not contain bodies; the main unit must not contain
+	// the type declarations.
+	if strings.Contains(ads, "is abstract;\n   begin") || strings.Contains(ads, "return Integer is\n") {
+		t.Fatalf("main_types.ads unexpectedly contains a body:\n%s", ads)
+	}
+	if strings.Contains(main, "type Meter is interface") {
+		t.Fatalf("main.adb still nests the interface type:\n%s", main)
+	}
+}
+
+func keys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func loadFixtureIR(t *testing.T, name string) *ir.Package {
@@ -1650,25 +1726,325 @@ func TestEmitTypeAssert(t *testing.T) {
 		}
 	}
 
-	// End to end, `v, ok := x.(T)` is rejected today (transAssign does not
-	// yet flip TypeAssert.CommaOK, so it hits emit's generic multi-value
-	// `:=` guard). Item 6b lowers it; pin the rejection so a future
-	// change cannot silently mis-emit it.
-	pkg := wrapPkg(
-		&ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Legs", Type: &ir.IntType{}}}}},
+	// End to end via statement position is covered by
+	// TestEmitTypeAssertCommaOk; expression position with CommaOK stays
+	// rejected (pinned by the reject list above).
+}
+
+// TestEmitTypeAssertCommaOk covers item 6b: the comma-ok assertion
+// `v, ok := x.(T)` lowers at statement position (declarative-region
+// `V : T := <zero>; OK : Boolean;` plus a body-entry `OK := X in
+// T'Class; if OK then V := T (X); end if;`), and its invalid shapes
+// (non-ident second LHS, interface target, method-less-interface
+// operand, non-comma-ok node at 2-LHS) are loud errors.
+func TestEmitTypeAssertCommaOk(t *testing.T) {
+	t.Parallel()
+	dog := &ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Legs", Type: &ir.IntType{}}}}}
+	speaker := &ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{{Name: "Speak"}}}}
+	anyT := &ir.TypeDecl{Name: "Any", Underlying: &ir.InterfaceType{}}
+
+	commaOKAssign := func(x ir.Expr, target ir.Type, lhs ...ir.Expr) *ir.Assign {
+		return &ir.Assign{Define: true, LHS: lhs,
+			RHS: []ir.Expr{&ir.TypeAssert{X: x, Type: target, CommaOK: true}}}
+	}
+
+	// Happy path: full package emit of `v, ok := s.(Dog)` inside a
+	// function taking a Speaker param.
+	pkg := wrapPkg(speaker, dog,
 		&ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
-			&ir.Assign{Define: true,
-				LHS: []ir.Expr{idn("v"), idn("ok")},
-				RHS: []ir.Expr{&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}}}},
+			commaOKAssign(idn("s"), &ir.NamedType{Name: "Dog"}, idn("v"), idn("ok")),
+			&ir.Return{Results: []ir.Expr{idn("v")}},
 		}},
 	)
-	// Add Speaker so the param type resolves.
-	pkg.Files[0].Decls = append([]ir.Decl{
-		&ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{{Name: "Speak"}}}},
-	}, pkg.Files[0].Decls...)
 	var buf bytes.Buffer
-	if err := Package(pkg, &buf); err == nil {
-		t.Fatalf("expected comma-ok assertion to be rejected, got:\n%s", buf.String())
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("comma-ok assertion emit failed: %v\n%s", err, buf.String())
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"V : Dog := Dog'(Legs => 0);",
+		"Ok : Boolean;",
+		"Ok := S in Dog'Class;",
+		"if Ok then",
+		"V := Dog (S);",
+		"end if;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("comma-ok output missing %q, got:\n%s", want, got)
+		}
+	}
+
+	// A fieldless struct target zero-initialises as `T'(null record)`.
+	pkgEmpty := wrapPkg(speaker,
+		&ir.TypeDecl{Name: "Empty", Underlying: &ir.StructType{}},
+		&ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			commaOKAssign(idn("s"), &ir.NamedType{Name: "Empty"}, idn("v"), idn("ok")),
+		}},
+	)
+	var bufEmpty bytes.Buffer
+	if err := Package(pkgEmpty, &bufEmpty); err != nil {
+		t.Fatalf("fieldless-target comma-ok emit failed: %v\n%s", err, bufEmpty.String())
+	}
+	if !strings.Contains(bufEmpty.String(), "V : Empty := Empty'(null record);") {
+		t.Fatalf("fieldless zero missing, got:\n%s", bufEmpty.String())
+	}
+
+	// Loud rejections at statement position.
+	bad := []struct {
+		name string
+		fn   *ir.Function
+	}{
+		{"first lhs not an ident", &ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			commaOKAssign(idn("s"), &ir.NamedType{Name: "Dog"}, &ir.Lit{Kind: ir.LitInt, Value: "1"}, idn("ok")),
+		}}},
+		{"second lhs not an ident", &ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			commaOKAssign(idn("s"), &ir.NamedType{Name: "Dog"}, idn("v"), &ir.Lit{Kind: ir.LitInt, Value: "1"}),
+		}}},
+		{"interface target", &ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			commaOKAssign(idn("s"), &ir.NamedType{Name: "Speaker"}, idn("v"), idn("ok")),
+		}}},
+		{"method-less-interface operand", &ir.Function{Name: "f", Params: []*ir.Param{{Name: "x", Type: &ir.NamedType{Name: "Any"}}}, Body: []ir.Stmt{
+			commaOKAssign(idn("x"), &ir.NamedType{Name: "Dog"}, idn("v"), idn("ok")),
+		}}},
+		{"non-comma-ok node at 2-LHS", &ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			&ir.Assign{Define: true, LHS: []ir.Expr{idn("v"), idn("ok")},
+				RHS: []ir.Expr{&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}}}},
+		}}},
+	}
+	for _, tc := range bad {
+		p := wrapPkg(speaker, dog, anyT, tc.fn)
+		var b bytes.Buffer
+		if err := Package(p, &b); err == nil {
+			t.Fatalf("%s: expected emit error, got:\n%s", tc.name, b.String())
+		}
+	}
+}
+
+// TestEmitTypeSwitch covers item 6c beyond the corpus happy path: the
+// bare `switch x.(type)` form (no binding) emits the membership chain
+// without per-arm declare blocks, a default-only switch emits inline,
+// and invalid case targets (interface, scalar) or a method-less-
+// interface operand are loud errors.
+func TestEmitTypeSwitch(t *testing.T) {
+	t.Parallel()
+	speaker := &ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{{Name: "Speak"}}}}
+	anyT := &ir.TypeDecl{Name: "Any", Underlying: &ir.InterfaceType{}}
+	dog := &ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Legs", Type: &ir.IntType{}}}}}
+	cat := &ir.TypeDecl{Name: "Cat", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Lives", Type: &ir.IntType{}}}}}
+	ret0 := &ir.Return{Results: []ir.Expr{litInt("0")}}
+
+	// Bare form: `switch s.(type) { case Dog: return 0; default: return 0 }`.
+	pkg := wrapPkg(speaker, dog,
+		&ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			&ir.TypeSwitch{X: idn("s"), Cases: []*ir.TypeSwitchCase{
+				{Type: &ir.NamedType{Name: "Dog"}, Body: []ir.Stmt{ret0}},
+				{Type: nil, Body: []ir.Stmt{ret0}},
+			}},
+		}},
+	)
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("bare type switch emit failed: %v\n%s", err, buf.String())
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"if S in Dog'Class then",
+		"return 0;",
+		"else",
+		"end if;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("bare type switch output missing %q, got:\n%s", want, got)
+		}
+	}
+	// No binding -> no per-arm declare block.
+	if strings.Contains(got, "declare") && strings.Contains(got, "D : Dog") {
+		t.Fatalf("bare type switch should not bind a view variable, got:\n%s", got)
+	}
+
+	// Default-only switch emits its body inline, no if chain.
+	pkgDef := wrapPkg(speaker, dog,
+		&ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			&ir.TypeSwitch{X: idn("s"), Cases: []*ir.TypeSwitchCase{{Type: nil, Body: []ir.Stmt{ret0}}}},
+		}},
+	)
+	buf.Reset()
+	if err := Package(pkgDef, &buf); err != nil {
+		t.Fatalf("default-only switch emit failed: %v\n%s", err, buf.String())
+	}
+	if strings.Contains(buf.String(), " in Dog'Class") || strings.Contains(buf.String(), "end if;") {
+		t.Fatalf("default-only switch should emit no membership chain, got:\n%s", buf.String())
+	}
+
+	// Bound form: the arm variable is viewed as the case type inside a
+	// per-arm declare block.
+	pkgBind := wrapPkg(speaker, dog, cat,
+		&ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			&ir.TypeSwitch{X: idn("s"), Var: "d", Cases: []*ir.TypeSwitchCase{
+				{Type: &ir.NamedType{Name: "Dog"}, Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.Selector{X: idn("d"), Sel: "Legs"}}}}},
+				{Type: &ir.NamedType{Name: "Cat"}, Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+					&ir.Selector{X: idn("d"), Sel: "Lives"}}}}},
+			}},
+		}},
+	)
+	buf.Reset()
+	if err := Package(pkgBind, &buf); err != nil {
+		t.Fatalf("bound type switch emit failed: %v\n%s", err, buf.String())
+	}
+	got = buf.String()
+	for _, want := range []string{
+		"if S in Dog'Class then",
+		"D : Dog := Dog (S);",
+		"return D.Legs;",
+		"elsif S in Cat'Class then",
+		"D : Cat := Cat (S);",
+		"return D.Lives;",
+		"end if;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("bound type switch output missing %q, got:\n%s", want, got)
+		}
+	}
+
+	// Loud rejections: interface case target, scalar case target, and a
+	// method-less-interface operand.
+	bad := []struct {
+		name  string
+		param ir.Type
+		cases []*ir.TypeSwitchCase
+	}{
+		{"interface case target", &ir.NamedType{Name: "Speaker"}, []*ir.TypeSwitchCase{
+			{Type: &ir.NamedType{Name: "Speaker"}, Body: []ir.Stmt{ret0}},
+		}},
+		{"scalar case target", &ir.NamedType{Name: "Speaker"}, []*ir.TypeSwitchCase{
+			{Type: &ir.IntType{}, Body: []ir.Stmt{ret0}},
+		}},
+		{"method-less-interface operand", &ir.NamedType{Name: "Any"}, []*ir.TypeSwitchCase{
+			{Type: &ir.NamedType{Name: "Dog"}, Body: []ir.Stmt{ret0}},
+		}},
+	}
+	for _, tc := range bad {
+		p := wrapPkg(speaker, anyT, dog, &ir.Function{Name: "f",
+			Params: []*ir.Param{{Name: "s", Type: tc.param}},
+			Body:   []ir.Stmt{&ir.TypeSwitch{X: idn("s"), Cases: tc.cases}}})
+		var b bytes.Buffer
+		if err := Package(p, &b); err == nil {
+			t.Fatalf("%s: expected emit error, got:\n%s", tc.name, b.String())
+		}
+	}
+
+	// A non-identifier operand is rejected loudly: emit renders the
+	// operand once per arm, so a side-effecting operand would be
+	// evaluated multiple times.
+	pNonID := wrapPkg(speaker, dog, &ir.Function{Name: "f",
+		Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}},
+		Body: []ir.Stmt{&ir.TypeSwitch{X: &ir.Lit{Kind: ir.LitInt, Value: "1"}, Cases: []*ir.TypeSwitchCase{
+			{Type: &ir.NamedType{Name: "Dog"}, Body: []ir.Stmt{ret0}},
+		}}}})
+	var bNonID bytes.Buffer
+	if err := Package(pNonID, &bNonID); err == nil {
+		t.Fatalf("non-ident operand: expected emit error, got:\n%s", bNonID.String())
+	}
+}
+
+// TestEmitTypeSwitchDefaultArmVar pins the review fix for the default
+// arm: the bound switch variable is declared at the operand's class-
+// wide type (`D : Speaker'Class := S;`), so uses of it inside `default`
+// compile — Go binds the variable at the switch expression's type there.
+// A blank `_` binding declares nothing.
+func TestEmitTypeSwitchDefaultArmVar(t *testing.T) {
+	t.Parallel()
+	speaker := &ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{{Name: "Speak"}}}}
+	dog := &ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Legs", Type: &ir.IntType{}}}}}
+
+	// default arm calls a method through the bound variable: dispatches
+	// on the class-wide view.
+	pkg := wrapPkg(speaker, dog,
+		&ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			&ir.TypeSwitch{X: idn("s"), Var: "d", Cases: []*ir.TypeSwitchCase{
+				{Type: &ir.NamedType{Name: "Dog"}, Body: []ir.Stmt{
+					&ir.Return{Results: []ir.Expr{&ir.Selector{X: idn("d"), Sel: "Legs"}}},
+				}},
+				{Type: nil, Body: []ir.Stmt{
+					&ir.Call{Fun: &ir.Selector{X: idn("d"), Sel: "Speak"}},
+				}},
+			}},
+		}},
+	)
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("default-arm-var emit failed: %v\n%s", err, buf.String())
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"D : Dog := Dog (S);",
+		"else",
+		"D : Speaker'Class := S;",
+		"D.Speak;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q, got:\n%s", want, got)
+		}
+	}
+
+	// Blank `_` binding: no declaration at all, body emitted bare.
+	pkgBlank := wrapPkg(speaker, dog,
+		&ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			&ir.TypeSwitch{X: idn("s"), Var: "_", Cases: []*ir.TypeSwitchCase{
+				{Type: &ir.NamedType{Name: "Dog"}, Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{litInt("1")}}}},
+			}},
+		}},
+	)
+	buf.Reset()
+	if err := Package(pkgBlank, &buf); err != nil {
+		t.Fatalf("blank-binding emit failed: %v\n%s", err, buf.String())
+	}
+	if strings.Contains(buf.String(), "declare") && strings.Contains(buf.String(), "_ :") {
+		t.Fatalf("blank binding must not declare, got:\n%s", buf.String())
+	}
+}
+
+// TestCommaOKAssertDrainOrder pins the head-of-body queue drain order:
+// all pending comma-ok receives first, then all pending comma-ok
+// assertions, each in source order — before any body statement.
+func TestCommaOKAssertDrainOrder(t *testing.T) {
+	t.Parallel()
+	speaker := &ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{{Name: "Speak"}}}}
+	dog := &ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Legs", Type: &ir.IntType{}}}}}
+	cat := &ir.TypeDecl{Name: "Cat", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Lives", Type: &ir.IntType{}}}}}
+
+	pkg := wrapPkg(speaker, dog, cat,
+		&ir.Function{Name: "f",
+			Params: []*ir.Param{
+				{Name: "c", Type: &ir.ChanType{Elem: &ir.IntType{}}},
+				{Name: "s", Type: &ir.NamedType{Name: "Speaker"}},
+			},
+			Body: []ir.Stmt{
+				// Source order: assert, recv, assert — the drain must
+				// still emit the receive first, then both assertions.
+				&ir.Assign{Define: true, LHS: []ir.Expr{idn("d"), idn("ok1")},
+					RHS: []ir.Expr{&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}, CommaOK: true}}},
+				&ir.Assign{Define: true, LHS: []ir.Expr{idn("v"), idn("ok2")},
+					RHS: []ir.Expr{&ir.ChanRecv{Chan: idn("c"), CommaOK: true}}},
+				&ir.Assign{Define: true, LHS: []ir.Expr{idn("e"), idn("ok3")},
+					RHS: []ir.Expr{&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Cat"}, CommaOK: true}}},
+				&ir.Return{Results: []ir.Expr{idn("v")}},
+			}},
+	)
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("drain-order emit failed: %v\n%s", err, buf.String())
+	}
+	got := buf.String()
+	recv := strings.Index(got, "Receive (C, V, Ok2);")
+	assert1 := strings.Index(got, "Ok1 := S in Dog'Class;")
+	assert2 := strings.Index(got, "Ok3 := S in Cat'Class;")
+	if recv < 0 || assert1 < 0 || assert2 < 0 {
+		t.Fatalf("missing drain statements, got:\n%s", got)
+	}
+	if recv >= assert1 || assert1 >= assert2 {
+		t.Fatalf("drain order = recv@%d assert1@%d assert2@%d, want recv < assert1 < assert2:\n%s", recv, assert1, assert2, got)
 	}
 }
 

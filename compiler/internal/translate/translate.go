@@ -401,6 +401,8 @@ func transStmt(s ast.Stmt) (ir.Stmt, error) {
 		return transGo(s)
 	case *ast.SelectStmt:
 		return transSelect(s)
+	case *ast.TypeSwitchStmt:
+		return transTypeSwitch(s)
 	case *ast.SendStmt:
 		return transSend(s)
 	case *ast.ReturnStmt:
@@ -664,15 +666,18 @@ func transAssign(s *ast.AssignStmt) (*ir.Assign, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Comma-ok receive: `v, ok := <-c` is the only Go-level
-	// 2-LHS-1-RHS shape that a single ChanRecv satisfies. Flip
-	// CommaOK on the receive so emit picks the OK-visible
-	// lowering. Other 2-LHS-1-RHS shapes (multi-return calls,
-	// type assertions) still fall through to emit's existing
-	// rejection.
+	// Comma-ok forms: `v, ok := <-c` and `v, ok := x.(T)` are the
+	// two Go-level 2-LHS-1-RHS shapes that a single ChanRecv /
+	// TypeAssert satisfies. Flip CommaOK on the node so emit picks
+	// the OK-visible lowering (Phase 3 sub-item e; Phase 4 item 6b).
+	// Other 2-LHS-1-RHS shapes (multi-return calls) still fall
+	// through to emit's existing rejection.
 	if len(lhs) == 2 && len(rhs) == 1 {
-		if cr, ok := rhs[0].(*ir.ChanRecv); ok {
-			cr.CommaOK = true
+		switch r := rhs[0].(type) {
+		case *ir.ChanRecv:
+			r.CommaOK = true
+		case *ir.TypeAssert:
+			r.CommaOK = true
 		}
 	}
 	return &ir.Assign{LHS: lhs, Define: s.Tok == token.DEFINE, RHS: rhs}, nil
@@ -858,6 +863,102 @@ func transTypeAssert(e *ast.TypeAssertExpr) (*ir.TypeAssert, error) {
 		return nil, err
 	}
 	return &ir.TypeAssert{X: x, Type: t}, nil
+}
+
+// transTypeSwitch lowers a Go type switch (item 6c):
+//
+//	switch v := x.(type) { case T: ...; case U: ...; default: ... }
+//
+// The guard is an *ast.TypeAssertExpr with Type == nil. In go/ast the
+// guard lives in TypeSwitchStmt.Assign — an *ast.AssignStmt for the
+// binding form (`v := x.(type)`, single identifier LHS) or an
+// *ast.ExprStmt for the bare `switch x.(type)` form (Var stays empty).
+// A non-nil Init (`switch v := f(); v.(type)`) is rejected: it needs
+// *types.Info to type the intermediate. Each case clause must list at
+// most one type — `case A, B:` binds the variable at the operand's
+// interface type and rides a later item; an empty list is `default`.
+func transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
+	if s.Init != nil {
+		return nil, fmt.Errorf("translate: type switch with an init statement (`switch v := f(); v.(type)`) not supported yet (item 6c)")
+	}
+	var guard *ast.TypeAssertExpr
+	var varName string
+	switch a := s.Assign.(type) {
+	case *ast.AssignStmt:
+		if a.Tok != token.DEFINE || len(a.Lhs) != 1 || len(a.Rhs) != 1 {
+			return nil, fmt.Errorf("translate: type switch assign must be `v := x.(type)`")
+		}
+		ta, ok := a.Rhs[0].(*ast.TypeAssertExpr)
+		if !ok || ta.Type != nil {
+			return nil, fmt.Errorf("translate: type switch assign RHS must be a `x.(type)` guard")
+		}
+		id, ok := a.Lhs[0].(*ast.Ident)
+		if !ok {
+			return nil, fmt.Errorf("translate: type switch binding LHS must be a plain identifier")
+		}
+		// `switch _ := x.(type)` discards the binding, exactly like the
+		// range-stmt blank: Var stays empty so emit declares nothing.
+		if id.Name != "_" {
+			varName = id.Name
+		}
+		guard = ta
+	case *ast.ExprStmt:
+		ta, ok := a.X.(*ast.TypeAssertExpr)
+		if !ok || ta.Type != nil {
+			return nil, fmt.Errorf("translate: type switch tag must be `x.(type)`")
+		}
+		guard = ta
+	default:
+		return nil, fmt.Errorf("translate: type switch without a `x.(type)` guard (got %T)", s.Assign)
+	}
+	// The operand must be a plain identifier: emit renders it once per
+	// arm (membership test + view conversion), so a side-effecting
+	// operand would be evaluated multiple times. Reject loudly now
+	// rather than miscompile when call expressions land.
+	if _, ok := guard.X.(*ast.Ident); !ok {
+		return nil, fmt.Errorf("translate: type switch operand must be a plain identifier (got %T); item 6c", guard.X)
+	}
+	x, err := transExpr(guard.X)
+	if err != nil {
+		return nil, err
+	}
+	ts := &ir.TypeSwitch{X: x, Var: varName}
+	seenDefault := false
+	for _, stmt := range s.Body.List {
+		cc, ok := stmt.(*ast.CaseClause)
+		if !ok {
+			return nil, fmt.Errorf("translate: type switch body must contain only case clauses (got %T)", stmt)
+		}
+		tc := &ir.TypeSwitchCase{}
+		switch len(cc.List) {
+		case 0:
+			// default arm: Type stays nil. go/parser accepts duplicate
+			// defaults (only the type-checker rejects them), so guard
+			// here to keep emit from printing two `else` branches.
+			if seenDefault {
+				return nil, fmt.Errorf("translate: duplicate `default` arm in type switch")
+			}
+			seenDefault = true
+		case 1:
+			if id, ok := cc.List[0].(*ast.Ident); ok && id.Name == "nil" {
+				return nil, fmt.Errorf("translate: `case nil:` in a type switch is not supported yet (item 6c)")
+			}
+			t, err := transType(cc.List[0])
+			if err != nil {
+				return nil, err
+			}
+			tc.Type = t
+		default:
+			return nil, fmt.Errorf("translate: multi-type case `case A, B:` not supported yet (item 6c covers single-type cases and default)")
+		}
+		body, err := transStmtList(cc.Body)
+		if err != nil {
+			return nil, err
+		}
+		tc.Body = body
+		ts.Cases = append(ts.Cases, tc)
+	}
+	return ts, nil
 }
 
 func transCall(c *ast.CallExpr) (*ir.Call, error) {

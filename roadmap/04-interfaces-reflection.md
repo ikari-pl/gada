@@ -2,7 +2,7 @@
 
 [← Phase 3](03-concurrency.md) · [Index](README.md) · Next: [Phase 5 →](05-stdlib-wave1.md)
 
-**Status:** `IN_PROGRESS` (opened 2026-05-30)
+**Status:** `DONE` (opened 2026-05-30, completed 2026-11-25)
 **Prerequisites:** [Phase 2](02-core-runtime.md) `DONE` ([Phase 3](03-concurrency.md) not strictly required)
 **Goal:** Implement Go interface dispatch (structural at compile time,
 nominal at runtime) and the `reflect` package's common surface
@@ -713,9 +713,9 @@ enumeration; output matches the expected fixture.
         automatically, so `describe(Sink'(…))` should already compile once
         argument emission for it lands).
 
-- [ ] **Compiler emission — type assertions and type switches**
+- [x] **Compiler emission — type assertions and type switches**
       *Files:* `compiler/internal/{ir,translate,emit}`, golden tests
-      *Verify:* `cd compiler && go test ./internal/emit/... -run Assert`
+      *Verify:* `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Assert|TypeSwitch'`
       *Done when:* `x.(T)`, `x.(T, ok)`, `switch x := y.(type) { ... }` all emit correctly.
 
   Decomposed 2026-08-21: three forms, each greenfield (no IR node, no
@@ -767,28 +767,120 @@ enumeration; output matches the expected fixture.
         open question for the profile/verification work, as with 5b's
         dynamic dispatch.
 
-  - [ ] **(6b) comma-ok assertion `v, ok := x.(T)`**
+  - [x] **(6b) comma-ok assertion `v, ok := x.(T)`**
         *Files:* `compiler/internal/emit`, golden tests.
         *Verify:* `cd compiler && go test ./internal/emit/... -run Assert`
         *Done when:* `v, ok := x.(T)` lowers to a membership test
         (`OK := X in T'Class`) plus a guarded view conversion at statement
         position, so ok reports the match without raising. (`transAssign`
-        already flips `TypeAssert.CommaOK` for the 2-LHS shape; emit's
+        flips `TypeAssert.CommaOK` for the 2-LHS shape; emit's
         statement-position lowering — mirroring the comma-ok chan receive
         — is the work.)
+        *Done 2026-11-25:* the roadmap note above was stale — `transAssign`
+        flipped CommaOK only for `*ir.ChanRecv`, so the `*ir.TypeAssert`
+        arm is new here. Emit mirrors the comma-ok chan receive: `emitVarDecl`
+        routes a 2-LHS-1-RHS `TypeAssert{CommaOK}` to `emitTypeAssertDecl`,
+        which validates both LHS idents + the target via the shared
+        `typeAssertTarget` (factored out of `emitTypeAssert`, so 6a/6b enforce
+        one rule set: concrete-struct target only, method-less-interface
+        operand rejected), emits `V : T := <zero of T>;` (new `structZeroLit`:
+        `T'(null record)` fieldless, else per-field `zeroValueFor` fill — Go
+        binds the zero value on a failed assertion) and `OK : Boolean;`, and
+        queues a `pendingTypeAssert` drained at body entry by
+        `emitSubprogram` right after `pendingRecvs`:
+        `OK := X in T'Class; if OK then V := T (X); end if;` — no exception
+        on a mismatch, `ok` reports it. `populateLocals` binds `v`→asserted
+        type and `ok`→bool (and `inferRHSType` gained the single-value
+        TypeAssert arm). Fixture `type_assert_commaok`
+        (`d, ok := s.(Dog); if ok { return d.Legs }; return 0` →
+        `D : Dog := Dog'(Legs => 0); Ok : Boolean; … Ok := S in Dog'Class;
+        if Ok then D := Dog (S); end if; …`). `TestEmitTypeAssertCommaOk`
+        pins the lowering + reject arms (non-ident LHS, interface target,
+        empty-interface operand, non-comma-ok node at 2-LHS, fieldless
+        zero); `TestTransAssignCommaOKAssertion` pins the translate flip.
+        emit/ 95.97%, translate/ 96.43%, runtime/ 100%; vet + lint + gate
+        clean (`go test -race ./internal/...` green; the `cmd/gada`
+        "package fmt without types" failure is pre-existing on the base
+        commit in this environment, unrelated).
+        *Code-review fixes (2026-11-25):* the operand is rendered twice
+        (membership test + guarded conversion), so `emitTypeAssertDecl`
+        now rejects a non-identifier operand loudly instead of relying on
+        a comment; the package-`main` emission path now drains
+        `pendingRecvs`/`pendingAsserts` like `emitSubprogram` did (it
+        previously dropped them silently); drain order (all receives,
+        then all assertions, source order within each) is pinned by
+        `TestCommaOKAssertDrainOrder`.
 
-  - [ ] **(6c) type switch `switch x := y.(type) { ... }`**
+  - [x] **(6c) type switch `switch x := y.(type) { ... }`**
         *Files:* `compiler/internal/{ir,translate,emit}`, golden tests.
-        *Verify:* `cd compiler && go test ./internal/emit/... -run Assert`
+        *Verify:* `cd compiler && go test ./internal/emit/... -run 'Assert|TypeSwitch'`
         *Done when:* a type switch lowers to a chain of membership tests
         (`if X in T1'Class then … elsif X in T2'Class then … else …`),
         with the switch variable viewed as each case's type inside its
         arm.
+        *Done 2026-11-25:* new `*ir.TypeSwitch{X, Var, Cases}` +
+        `*ir.TypeSwitchCase{Type (nil = default), Body}` (kind-tagged
+        JSON round-trip, default's nil Type preserved). `transTypeSwitch`
+        accepts the go/ast binding form (`Assign` = `v := x.(type)`) and
+        the bare `switch x.(type)` form; rejects an Init statement,
+        multi-type `case A, B:`, and non-guard assigns. emit lowers to
+        `if X in T1'Class then … elsif X in T2'Class then … else … end if;`,
+        each typed arm wrapping its body in `declare V : T := T (X); begin
+        … end;` (safe: the membership test proved the tag) with
+        `localTypes` bound to the case type for the arm's scope; the
+        default arm keeps the operand's type. Case targets reuse
+        `typeAssertTarget` (now `(x, t)`-shaped, shared with 6a/6b), so
+        interface/scalar targets and method-less-interface operands are
+        loud errors. Walker arms added to walkStmt / collectDefers /
+        collectGoStmts / bodyUsesPanicOrRecover. Fixture `type_switch`
+        (Dog/Cat over Speaker with default). `TestEmitTypeSwitch` (bare
+        form, default-only inline, bound-form chain, reject arms),
+        `TestTransTypeSwitch`, `TestRoundTripTypeSwitch`;
+        `.golangci.yml` revive allowlist gained TypeSwitch/TypeSwitchCase.
+        emit/ 95.94%, translate/ 95.42%, runtime/ 100%; vet + lint +
+        gate clean, `go test -race ./internal/...` green.
+        *Code-review fixes (2026-11-25):* the default arm now declares
+        the bound variable at the operand's class-wide type
+        (`D : Speaker'Class := S;`) — previously any use of the switch
+        variable in `default` emitted an undeclared identifier; a blank
+        `_` binding declares nothing; non-identifier operands are
+        rejected (translate and emit) since the operand is rendered once
+        per arm; `case nil:` and duplicate `default:` get their own loud
+        rejects. Pinned by `TestEmitTypeSwitchDefaultArmVar` (default-arm
+        method dispatch) + new reject arms in `TestEmitTypeSwitch` /
+        `TestTransTypeSwitch`.
 
-- [ ] **`iface_dispatch` example**
+- [x] **`iface_dispatch` example**
       *Files:* `examples/iface_dispatch/main.go`, `examples/iface_dispatch/expected_output.txt`
       *Verify:* `make example HELLO=iface_dispatch`
       *Done when:* example exercises 3+ types implementing 2 interfaces with reflection-based method enumeration; output matches expected.
+      *Done 2026-11-25:* Dog/Cat/Robot each derive both `Speaker` and
+      `Mover` (`is new Speaker and Mover`); `announce`/`report` dispatch
+      through class-wide params and `kind` runs the 6c type switch. The
+      emitted package init enumerates every type's methods in
+      Gada.Reflect (Add_Method per method) and registers both
+      satisfaction edges per type. `expected_output.txt` is the
+      byte-for-byte output of stock `go run .`; `gada build` passes
+      resolve+translate+emit in this sandbox and stops only at gprbuild
+      (no Ada toolchain installed here). *Code-review fix (2026-11-25):*
+      the example is now gated two ways — a CI step
+      (`make example HELLO=iface_dispatch` in `.github/workflows/ci.yml`,
+      runs end to end under the Alire toolchain) and a gprbuild-free
+      driver test (`TestBuildPackage_IfaceDispatchExample`) asserting the
+      emitted `main.adb` carries 8 `Add_Method` + 6 `Register` calls and
+      the membership chain. Along the way, `cmd/gada`'s packages.Load mode
+      gained NeedDeps|NeedImports (x/tools v0.27 + Go 1.27 no longer
+      type-loads deps otherwise — the pre-existing "package fmt without
+      types" failure; `go test ./cmd/...` is green again). compiler/
+      coverage is now 95.00%.
+      *CI fix (2026-11-25):* the first PR run failed the examples job —
+      gnat rejects abstract/overriding subprograms nested in a procedure
+      body, so a `package main` with interface types must emit a package
+      spec/body (`main_types.ads`/`main_types.adb`) plus a thin `main.adb`
+      (`with Main_Types;`). emit gained `PackageFiles` (multi-unit output)
+      and `emitMainUnits`; the driver writes all units. Pinned by
+      `TestEmitMainUnitsIface` (spec/body/main split) and the updated
+      `TestBuildPackage_IfaceDispatchExample`.
 
 > **Note on json_roundtrip:** A reflection-end-to-end exit example
 > using `encoding/json` is appropriate but depends on Phase 7's

@@ -345,6 +345,68 @@ func TestBuildPackage_HappyPathStubbed(t *testing.T) {
 	}
 }
 
+// TestBuildPackage_IfaceDispatchExample runs the driver over
+// examples/iface_dispatch (the Phase 4 exit example) with a stubbed
+// gprbuild, and asserts the emitted main.adb carries the reflection-
+// based method enumeration the roadmap's done-when asks for: one
+// Add_Method per method per type (8 total) and one Register
+// satisfaction edge per type-interface pair (3 types x 2 interfaces =
+// 6), plus the type-switch membership chain. This pins the example at
+// the emit level without needing a real Ada toolchain.
+func TestBuildPackage_IfaceDispatchExample(t *testing.T) {
+	pkg, err := filepath.Abs(filepath.Join("..", "..", "..", "examples", "iface_dispatch"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(pkg, "iface_dispatch")
+	t.Cleanup(func() { _ = os.Remove(binary) })
+
+	stubGprbuild(t, func(gprPath string, _, _ io.Writer) error {
+		execDir := readGpr(t, gprPath)
+		dir := filepath.Dir(gprPath)
+		// Interface-bearing package main emits three units: the types +
+		// subprograms live in main_types.ads/.adb, main.adb is thin.
+		spec, err := os.ReadFile(filepath.Join(dir, "main_types.ads"))
+		if err != nil {
+			return err
+		}
+		body, err := os.ReadFile(filepath.Join(dir, "main_types.adb"))
+		if err != nil {
+			return err
+		}
+		main, err := os.ReadFile(filepath.Join(dir, "main.adb"))
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(spec), "is abstract;") {
+			t.Errorf("main_types.ads missing abstract op spec:\n%s", spec)
+		}
+		adb := string(body)
+		if got := strings.Count(adb, "Gada.Reflect.Types.Add_Method"); got != 8 {
+			t.Errorf("Add_Method count = %d, want 8 (2 interfaces + 3 types x 2 methods):\n%s", got, adb)
+		}
+		if got := strings.Count(adb, "Gada.Reflect.Interfaces.Register"); got != 6 {
+			t.Errorf("Register count = %d, want 6 (3 types x 2 interfaces):\n%s", got, adb)
+		}
+		if !strings.Contains(adb, "if S in Dog'Class then") {
+			t.Errorf("emitted main_types.adb missing the type-switch membership chain:\n%s", adb)
+		}
+		if !strings.Contains(adb, "S.Speak;") {
+			t.Errorf("emitted main_types.adb missing the dispatching call:\n%s", adb)
+		}
+		if !strings.Contains(string(main), "with Main_Types;") || strings.Contains(string(main), "type Speaker is interface") {
+			t.Errorf("main.adb should be thin (with Main_Types, no nested types):\n%s", main)
+		}
+		return os.WriteFile(filepath.Join(execDir, "main"), []byte("#!/bin/sh\n"), 0o755)
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := runBuild([]string{pkg}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runBuild exit = %d\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 // TestBuildPackage_GprbuildFailure: a gprbuild stub that returns an
 // error must surface as a stage-tagged "gprbuild:" error.
 func TestBuildPackage_GprbuildFailure(t *testing.T) {

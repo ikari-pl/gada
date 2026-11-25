@@ -70,18 +70,36 @@ var ProjectTemplate string
 // translator currently produces one *ir.File per Go source file, so
 // this contract holds end-to-end.
 func Package(p *ir.Package, w io.Writer) error {
+	files, err := PackageFiles(p)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, files["main.adb"])
+	return err
+}
+
+// PackageFiles emits every compilation unit for p, keyed by file name.
+// The main unit is always "main.adb" (what the project template's
+// `for Main use` points at); a `package main` file declaring interface
+// types additionally yields "main_types.ads" / "main_types.adb", because
+// Ada only permits abstract/dispatching subprograms in a package
+// spec/body — never nested inside `procedure Main`.
+func PackageFiles(p *ir.Package) (map[string]string, error) {
 	if p == nil {
-		return fmt.Errorf("emit: nil package")
+		return nil, fmt.Errorf("emit: nil package")
 	}
 	if len(p.Files) != 1 {
-		return fmt.Errorf("emit: expected exactly one file, got %d", len(p.Files))
+		return nil, fmt.Errorf("emit: expected exactly one file, got %d", len(p.Files))
 	}
 	e := newEmitter(p.Name, p.Files[0])
 	if err := e.run(); err != nil {
-		return err
+		return nil, err
 	}
-	_, err := io.WriteString(w, e.buf.String())
-	return err
+	files := map[string]string{"main.adb": e.buf.String()}
+	for name, content := range e.aux {
+		files[name] = content
+	}
+	return files, nil
 }
 
 // emitter accumulates Ada source into buf with a current indent
@@ -117,7 +135,8 @@ type emitter struct {
 	pkgName string
 	file    *ir.File
 
-	buf    strings.Builder
+	buf    *strings.Builder
+	aux    map[string]string // extra compilation units (main_types.ads/.adb) for interface-bearing package main; main.adb always lands in buf
 	indent int
 
 	needsCoreIO         bool
@@ -161,6 +180,7 @@ type emitter struct {
 	dispatchMethodNames map[string]bool           // file-wide set of interface method names — the only methods with an emitted subprogram (5b-i abstract op + 5c overriding body) and hence the only callable ones. A method-call selector whose name is absent would emit a dangling `X.M`, so emitCallStmt rejects it. Populated alongside interfaceNames.
 	emptyInterfaceNames map[string]bool           // file-wide set of method-less interface names (Go's `any`, or a named `interface{}`). No concrete type derives an empty interface (5b), so a type assertion `x.(T)` whose operand is one has no legal Ada view conversion; emitTypeAssert rejects it. Populated alongside interfaceNames.
 	pendingRecvs        []pendingChanRecv         // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
+	pendingAsserts      []pendingTypeAssert       // per-subprogram queue of `v, ok := x.(T)` (comma-ok, item 6b) defines whose body-side membership-test + guarded-conversion block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order (same "RHS evaluates at the := point" rule). Reset at every emitSubprogram call.
 	err                 error
 }
 
@@ -180,10 +200,25 @@ type pendingChanRecv struct {
 	Pkg     string
 }
 
+// pendingTypeAssert pairs a `v, ok := x.(T)` (CommaOK, item 6b) LHS
+// name with its operand and the pre-validated Ada struct type name of
+// the asserted target. The declarative region has already emitted
+// `V : T := <zero>; OK : Boolean;`; emitTypeAssertBlock drains the
+// body-side `OK := X in T'Class; if OK then V := T (X); end if;` at
+// the top of the subprogram body, in source order.
+type pendingTypeAssert struct {
+	LHSName string
+	OKName  string
+	X       ir.Expr
+	Target  string
+}
+
 func newEmitter(pkg string, f *ir.File) *emitter {
 	e := &emitter{
 		pkgName:             pkg,
 		file:                f,
+		buf:                 &strings.Builder{},
+		aux:                 map[string]string{},
 		sliceElems:          map[string]ir.Type{},
 		mapPairs:            map[string]*ir.MapType{},
 		chanElems:           map[string]ir.Type{},
@@ -418,6 +453,11 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 	case *ir.RangeStmt:
 		e.walkExpr(s.X)
 		e.walkStmts(s.Body)
+	case *ir.TypeSwitch:
+		e.walkExpr(s.X)
+		for _, c := range s.Cases {
+			e.walkStmts(c.Body)
+		}
 	case *ir.DeferStmt:
 		e.needsCoreDefer = true
 		e.walkStmt(s.Call)
@@ -535,52 +575,72 @@ func (e *emitter) walkExpr(x ir.Expr) {
 	}
 }
 
-func (e *emitter) run() error {
+// collectWiths returns the with-clause lines for the file, in emission
+// order. run() prints them for the single-unit shapes; emitMainUnits
+// reuses them per emitted unit.
+func (e *emitter) collectWiths() []string {
+	var withs []string
+	add := func(s string) { withs = append(withs, s) }
 	if e.needsCoreIO {
-		e.println("with Gada.Core.IO; use Gada.Core.IO;")
+		add("with Gada.Core.IO; use Gada.Core.IO;")
 	}
 	if len(e.sliceElemOrder) > 0 {
-		e.println("with Gada.Core.Slices;")
+		add("with Gada.Core.Slices;")
 	}
 	if len(e.mapPairOrder) > 0 {
-		e.println("with Gada.Core.Maps;")
-		e.println("with Gada.Core.Hash;")
+		add("with Gada.Core.Maps;")
+		add("with Gada.Core.Hash;")
 	}
 	if len(e.chanElemOrder) > 0 {
-		e.println("with Gada.Async.Channels.Bounded;")
+		add("with Gada.Async.Channels.Bounded;")
 	}
 	if len(e.selectorElemOrder) > 0 {
-		e.println("with Gada.Async.Selector;")
+		add("with Gada.Async.Selector;")
 	}
 	if e.needsCoreDefer {
-		e.println("with Gada.Core.Defer;")
+		add("with Gada.Core.Defer;")
 	}
 	if e.needsCorePanic {
-		e.println("with Gada.Core.Panic;")
+		add("with Gada.Core.Panic;")
 	}
 	if e.needsAsyncScheduler {
-		e.println("with Gada.Async.Scheduler;")
+		add("with Gada.Async.Scheduler;")
 	}
 	if e.needsReflect {
-		e.println("with Gada.Reflect.Types;")
-		e.println("with Gada.Reflect.Registry;")
+		add("with Gada.Reflect.Types;")
+		add("with Gada.Reflect.Registry;")
 	}
 	if e.needsIfaceReg {
-		e.println("with Gada.Reflect.Interfaces;")
+		add("with Gada.Reflect.Interfaces;")
 	}
 	if e.needsGoArgs {
 		// `go f(x, y)` lowers to a per-spawn heap closure: an Unchecked_
 		// Conversion each way between the closure-access type and the
 		// scheduler's opaque System.Address payload, plus an Unchecked_
 		// Deallocation so the worker reclaims the block after unpacking.
-		e.println("with Ada.Unchecked_Conversion;")
-		e.println("with Ada.Unchecked_Deallocation;")
-		e.println("with System;")
+		add("with Ada.Unchecked_Conversion;")
+		add("with Ada.Unchecked_Deallocation;")
+		add("with System;")
 	}
-	if e.needsCoreIO || len(e.sliceElemOrder) > 0 || len(e.mapPairOrder) > 0 ||
-		len(e.chanElemOrder) > 0 || len(e.selectorElemOrder) > 0 ||
-		e.needsCoreDefer || e.needsCorePanic || e.needsAsyncScheduler ||
-		e.needsGoArgs || e.needsReflect {
+	return withs
+}
+
+func (e *emitter) run() error {
+	withs := e.collectWiths()
+	// A `package main` file that declares interface types cannot nest
+	// them in `procedure Main` — Ada only allows abstract/dispatching
+	// subprograms in a package spec/body, not in a subprogram body — so
+	// emit three units: a spec (types + abstract op specs + overriding
+	// specs + plain-function specs), a body (subprogram bodies +
+	// metadata elaboration), and the Main procedure itself.
+	if e.pkgName == "main" && e.fileHasInterfaces() {
+		e.emitMainUnits(withs)
+		return e.err
+	}
+	for _, w := range withs {
+		e.println(w)
+	}
+	if len(withs) > 0 {
 		e.println("")
 	}
 	if e.pkgName == "main" {
@@ -859,12 +919,21 @@ func (e *emitter) findMain() *ir.Function {
 	return nil
 }
 
-// emitMainProcedure handles every Go `package main` file: it produces
-// `procedure Main is <nested-subs + hoisted-decls> begin <main-body>
-// end Main;`. With no nested subprograms and no hoisted declarations
-// the layout collapses to the tight `procedure Main is begin ... end
-// Main;` form.
-func (e *emitter) emitMainProcedure() {
+// mainLayout is the gathered shape of a Go `package main` file: the
+// main function, its sibling subprograms (plain functions plus
+// overriding method bodies), and main's own split body.
+type mainLayout struct {
+	main                *ir.Function
+	others              []*ir.Function
+	decls               []*ir.Assign
+	body                []ir.Stmt
+	defers              []*ir.DeferStmt
+	gos                 []*ir.GoStmt
+	usesPanic           bool
+	defersInsideWrapper bool
+}
+
+func (e *emitter) gatherMain() mainLayout {
 	main := e.findMain()
 	overridingMain := overridingMethods(e.file.Decls)
 	var others []*ir.Function
@@ -876,7 +945,7 @@ func (e *emitter) emitMainProcedure() {
 		fn, ok := d.(*ir.Function)
 		if !ok {
 			e.fail(fmt.Errorf("emit: top-level %T not supported in Phase 1", d))
-			return
+			return mainLayout{}
 		}
 		if fn.Receiver != nil {
 			// An overriding method emits its body as a sibling subprogram
@@ -890,32 +959,185 @@ func (e *emitter) emitMainProcedure() {
 			others = append(others, fn)
 		}
 	}
-
-	var mainDecls []*ir.Assign
-	var mainBody []ir.Stmt
-	var mainDefers []*ir.DeferStmt
-	var mainGos []*ir.GoStmt
-	var mainUsesPanic bool
+	var l mainLayout
+	l.main = main
+	l.others = others
 	if main != nil {
-		mainDecls, mainBody = splitDecls(main.Body)
-		mainDefers = collectDefers(main.Body)
-		mainGos = collectGoStmts(main.Body)
-		mainUsesPanic = bodyUsesPanicOrRecover(main.Body)
+		l.decls, l.body = splitDecls(main.Body)
+		l.defers = collectDefers(main.Body)
+		l.gos = collectGoStmts(main.Body)
+		l.usesPanic = bodyUsesPanicOrRecover(main.Body)
 	}
 	// Same layering rule as emitSubprogram: when a function combines
 	// `defer` with `panic`/`recover`, the Defer_Block declarations must
 	// live inside the begin..end the exception handler wraps so they
 	// finalise (and `recover()` pops the panic) before the handler
 	// matches.
-	mainDefersInsideWrapper := len(mainDefers) > 0 && mainUsesPanic
+	l.defersInsideWrapper = len(l.defers) > 0 && l.usesPanic
+	return l
+}
+
+// emitMainProcedure handles every Go `package main` file without
+// interface declarations: it produces `procedure Main is <nested-subs
+// + hoisted-decls> begin <main-body> end Main;`. With no nested
+// subprograms and no hoisted declarations the layout collapses to the
+// tight `procedure Main is begin ... end Main;` form.
+func (e *emitter) emitMainProcedure() {
+	l := e.gatherMain()
+	if e.err != nil {
+		return
+	}
+	e.emitMainProc(l, true)
+}
+
+// emitMainUnits handles a `package main` file that declares interface
+// types. Ada forbids abstract/dispatching subprograms nested in a
+// subprogram body (gnat: "not dispatching (must be defined in a package
+// spec)"), so the types and their operations cannot live in
+// `procedure Main`'s declarative part. Instead three units are emitted:
+//   - main_types.ads — `package Main_Types` spec: type declarations
+//     (interfaces + abstract op specs, tagged records + overriding
+//     specs), generic instantiations, and plain-function specs.
+//   - main_types.adb — package body: the subprogram bodies, plus the
+//     reflect-metadata elaboration (a package body has an elaboration
+//     part, so registration runs before Main).
+//   - main.adb (e.buf) — `with Main_Types; use Main_Types;` +
+//     `procedure Main` holding main's own declarations and body.
+func (e *emitter) emitMainUnits(withs []string) {
+	l := e.gatherMain()
+	if e.err != nil {
+		return
+	}
+	const typesPkg = "Main_Types"
+	// GNAT file-name rule: unit Main_Types lives in main_types.ads/.adb.
+	const specFile = "main_types.ads"
+	const bodyFile = "main_types.adb"
+
+	e.emitAux(specFile, withs, func() {
+		e.println("package " + typesPkg + " is")
+		e.println("")
+		e.indent++
+		if err := e.emitTypeDecls(); err != nil {
+			e.fail(err)
+			return
+		}
+		// Generic instantiations live in the spec so both the body and
+		// Main (which withs this unit) can see them.
+		needSep := e.fileHasTypeDecls()
+		emitGroup := func(has bool, sepBefore *bool, fn func()) {
+			if !has {
+				return
+			}
+			if *sepBefore {
+				e.println("")
+			}
+			fn()
+			*sepBefore = true
+		}
+		sep := needSep
+		emitGroup(len(e.sliceElemOrder) > 0, &sep, e.emitSliceInstantiations)
+		emitGroup(len(e.mapPairOrder) > 0, &sep, e.emitMapInstantiations)
+		emitGroup(len(e.chanElemOrder) > 0, &sep, e.emitChannelInstantiations)
+		emitGroup(len(e.selectorElemOrder) > 0, &sep, e.emitSelectorInstantiations)
+		emitGroup(e.needsCorePanic, &sep, e.emitPanicInstantiation)
+		// Plain functions get a spec here; overriding methods already
+		// have their overriding specs in the type declarations above.
+		for _, fn := range l.others {
+			if fn.Receiver != nil {
+				continue
+			}
+			if sep {
+				e.println("")
+			}
+			header, _, ok := e.subpHeader(fn)
+			if !ok {
+				return
+			}
+			e.println(strings.TrimSuffix(header, " is") + ";")
+			sep = true
+		}
+		e.indent--
+		e.println("")
+		e.println("end " + typesPkg + ";")
+	})
+
+	e.emitAux(bodyFile, withs, func() {
+		e.println("package body " + typesPkg + " is")
+		e.println("")
+		e.indent++
+		for i, fn := range l.others {
+			if i > 0 {
+				e.println("")
+			}
+			e.emitSubprogram(fn)
+		}
+		e.indent--
+		e.println("")
+		e.println("begin")
+		e.indent++
+		// Register reflect metadata for every defined type in the
+		// package elaboration, before Main runs.
+		if e.needsReflect {
+			meta, err := collectTypeMeta(e.file.Decls)
+			if err != nil {
+				e.fail(err)
+				return
+			}
+			e.emitTypeMetadata(meta.entries())
+			e.emitInterfaceSatisfaction(meta, satisfiedPairs(e.file.Decls))
+		}
+		e.indent--
+		e.println("end " + typesPkg + ";")
+	})
+
+	for _, w := range withs {
+		e.println(w)
+	}
+	e.println("with " + typesPkg + ";")
+	e.println("use " + typesPkg + ";")
+	if len(withs) > 0 {
+		e.println("")
+	}
+	e.emitMainProc(l, false)
+}
+
+// emitAux emits one auxiliary compilation unit into e.aux under name,
+// starting from a fresh buffer with the file's with-clauses.
+func (e *emitter) emitAux(name string, withs []string, fn func()) {
+	savedBuf, savedIndent := e.buf, e.indent
+	e.buf = &strings.Builder{}
+	e.indent = 0
+	for _, w := range withs {
+		e.println(w)
+	}
+	e.println("")
+	fn()
+	e.aux[name] = e.buf.String()
+	e.buf, e.indent = savedBuf, savedIndent
+}
+
+// emitMainProc emits `procedure Main is … begin … end Main;`. When
+// nestedTypes is true (no interface declarations in the file), type
+// declarations, generic instantiations, and sibling subprograms are
+// nested in Main's declarative part; when false (interface-bearing
+// main, handled by emitMainUnits), they live in the Main_Types units
+// and only main's own declarations remain here.
+func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
+	main := l.main
+	others := l.others
+	mainDecls, mainBody := l.decls, l.body
+	mainDefers, mainGos := l.defers, l.gos
+	mainUsesPanic := l.usesPanic
+	mainDefersInsideWrapper := l.defersInsideWrapper
 
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0
 	hasChans := len(e.chanElemOrder) > 0
 	hasSelectors := len(e.selectorElemOrder) > 0
 	hasPanic := e.needsCorePanic
-	hasTypes := e.fileHasTypeDecls()
-	hasDeclSection := hasTypes || hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0
+	hasTypes := nestedTypes && e.fileHasTypeDecls()
+	hasInst := nestedTypes && (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic)
+	hasDeclSection := hasTypes || hasInst || (nestedTypes && len(others) > 0) || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0
 
 	e.println("procedure Main is")
 	if hasDeclSection {
@@ -929,49 +1151,55 @@ func (e *emitter) emitMainProcedure() {
 			return
 		}
 	}
-	if hasTypes && (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0) {
+	if hasTypes && (hasInst || (nestedTypes && len(others) > 0) || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0) {
 		e.println("")
 	}
-	if hasSlices {
+	if nestedTypes && hasSlices {
 		e.emitSliceInstantiations()
 	}
-	if hasSlices && hasMaps {
+	if nestedTypes && hasSlices && hasMaps {
 		e.println("")
 	}
-	if hasMaps {
+	if nestedTypes && hasMaps {
 		e.emitMapInstantiations()
 	}
-	if (hasSlices || hasMaps) && hasChans {
+	if nestedTypes && (hasSlices || hasMaps) && hasChans {
 		e.println("")
 	}
-	if hasChans {
+	if nestedTypes && hasChans {
 		e.emitChannelInstantiations()
 	}
-	if (hasSlices || hasMaps || hasChans) && hasSelectors {
+	if nestedTypes && (hasSlices || hasMaps || hasChans) && hasSelectors {
 		e.println("")
 	}
-	if hasSelectors {
+	if nestedTypes && hasSelectors {
 		e.emitSelectorInstantiations()
 	}
-	if (hasSlices || hasMaps || hasChans || hasSelectors) && hasPanic {
+	if nestedTypes && (hasSlices || hasMaps || hasChans || hasSelectors) && hasPanic {
 		e.println("")
 	}
-	if hasPanic {
+	if nestedTypes && hasPanic {
 		e.emitPanicInstantiation()
 	}
-	if (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
+	if nestedTypes && (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
 		e.println("")
 	}
-	for i, fn := range others {
-		if i > 0 {
-			e.println("")
+	if nestedTypes {
+		for i, fn := range others {
+			if i > 0 {
+				e.println("")
+			}
+			e.emitSubprogram(fn)
 		}
-		e.emitSubprogram(fn)
 	}
-	if len(others) > 0 && len(mainDecls) > 0 {
+	if nestedTypes && len(others) > 0 && len(mainDecls) > 0 {
 		e.println("")
 	}
 	if main != nil {
+		// Reset per-main state so leftover queues from a previous
+		// subprogram never bleed in (mirrors emitSubprogram).
+		e.pendingRecvs = nil
+		e.pendingAsserts = nil
 		e.populateLocals(main)
 	}
 	for _, a := range mainDecls {
@@ -994,8 +1222,10 @@ func (e *emitter) emitMainProcedure() {
 
 	// Register reflect metadata for every defined type before any user
 	// code runs (a procedure body has no separate elaboration part, so
-	// the prologue of Main is the module-init point).
-	if e.needsReflect {
+	// the prologue of Main is the module-init point). In the
+	// interface-bearing layout the registration lives in Main_Types'
+	// elaboration instead (emitMainUnits), so skip it here.
+	if e.needsReflect && nestedTypes {
 		meta, err := collectTypeMeta(e.file.Decls)
 		if err != nil {
 			e.fail(err)
@@ -1026,7 +1256,17 @@ func (e *emitter) emitMainProcedure() {
 		e.indent++
 	}
 
-	emittedAny := false
+	// Drain pending head-of-main `v := <-c` / `v, ok := x.(T)` defines in
+	// source order (all receives, then all assertions — same queues and
+	// order as emitSubprogram) before any main body statement, matching
+	// Go's "RHS evaluates at the := point" semantics.
+	emittedAny := len(e.pendingRecvs) > 0 || len(e.pendingAsserts) > 0
+	for _, pr := range e.pendingRecvs {
+		e.emitChanRecvBlock(pr)
+	}
+	for _, pa := range e.pendingAsserts {
+		e.emitTypeAssertBlock(pa)
+	}
 	if len(mainBody) > 0 {
 		for _, s := range mainBody {
 			if _, isDefer := s.(*ir.DeferStmt); !isDefer {
@@ -1214,6 +1454,19 @@ func (e *emitter) populateLocals(fn *ir.Function) {
 		if !ok || !a.Define {
 			break
 		}
+		// Comma-ok assertion `v, ok := x.(T)` (item 6b): v binds the
+		// asserted type, ok binds bool.
+		if len(a.LHS) == 2 && len(a.RHS) == 1 {
+			if ta, ok := a.RHS[0].(*ir.TypeAssert); ok && ta.CommaOK {
+				if id, ok := a.LHS[0].(*ir.Ident); ok && ta.Type != nil {
+					e.localTypes[id.Name] = ta.Type
+				}
+				if id, ok := a.LHS[1].(*ir.Ident); ok {
+					e.localTypes[id.Name] = &ir.BoolType{}
+				}
+			}
+			continue
+		}
 		if len(a.LHS) != 1 || len(a.RHS) != 1 {
 			continue
 		}
@@ -1250,6 +1503,13 @@ func inferRHSType(x ir.Expr) (ir.Type, bool) {
 		return &ir.SliceType{Elem: x.Elem}, true
 	case *ir.MapLit:
 		return &ir.MapType{Key: x.Key, Value: x.Value}, true
+	case *ir.TypeAssert:
+		// `v := x.(T)` (single-value, item 6a) binds v to the asserted
+		// type T. The comma-ok form never lands here: populateLocals
+		// routes 2-LHS defines to its own arm.
+		if !x.CommaOK && x.Type != nil {
+			return x.Type, true
+		}
 	}
 	return nil, false
 }
@@ -1275,8 +1535,10 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 		return
 	}
 	// Reset per-subprogram state before populateLocals so leftover
-	// pending receives from a previous subprogram never bleed in.
+	// pending receives/assertions from a previous subprogram never
+	// bleed in.
 	e.pendingRecvs = nil
+	e.pendingAsserts = nil
 	e.populateLocals(fn)
 	header, name, ok := e.subpHeader(fn)
 	if !ok {
@@ -1338,9 +1600,16 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	// "RHS evaluates at the := point" semantics hold; the inner
 	// declare scope keeps Discard_OK from colliding across multiple
 	// receive sites and from leaking into the surrounding scope.
-	emittedAny := len(e.pendingRecvs) > 0
+	emittedAny := len(e.pendingRecvs) > 0 || len(e.pendingAsserts) > 0
 	for _, pr := range e.pendingRecvs {
 		e.emitChanRecvBlock(pr)
+	}
+	// Drain pending comma-ok type assertions in source order, right
+	// after the receives: each lowers to `OK := X in T'Class; if OK
+	// then V := T (X); end if;` at body level, before any subsequent
+	// body statement (Go's "RHS evaluates at the := point" semantics).
+	for _, pa := range e.pendingAsserts {
+		e.emitTypeAssertBlock(pa)
 	}
 	if len(body) > 0 {
 		for _, s := range body {
@@ -1429,6 +1698,10 @@ func collectDefers(body []ir.Stmt) []*ir.DeferStmt {
 				walk(s.Body)
 			case *ir.RangeStmt:
 				walk(s.Body)
+			case *ir.TypeSwitch:
+				for _, c := range s.Cases {
+					walk(c.Body)
+				}
 			}
 		}
 	}
@@ -1457,6 +1730,10 @@ func collectGoStmts(body []ir.Stmt) []*ir.GoStmt {
 				walk(s.Body)
 			case *ir.RangeStmt:
 				walk(s.Body)
+			case *ir.TypeSwitch:
+				for _, c := range s.Cases {
+					walk(c.Body)
+				}
 			}
 		}
 	}
@@ -1559,6 +1836,13 @@ func bodyUsesPanicOrRecover(body []ir.Stmt) bool {
 			walkExpr(s.X)
 			for _, t := range s.Body {
 				walkStmt(t)
+			}
+		case *ir.TypeSwitch:
+			walkExpr(s.X)
+			for _, c := range s.Cases {
+				for _, t := range c.Body {
+					walkStmt(t)
+				}
 			}
 		case *ir.DeferStmt:
 			walkStmt(s.Call)
@@ -1888,15 +2172,24 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 	if e.err != nil {
 		return
 	}
-	// Comma-ok receive (`v, ok := <-c`, sub-item e) is the only
-	// 2-LHS-1-RHS shape emit accepts at the head of a function body.
-	// Detect it before the single-LHS guard fires below, then dispatch
-	// to the shared ChanRecv path; everything else with multi-LHS still
-	// hits the rejection.
+	// Comma-ok receive (`v, ok := <-c`, sub-item e) and comma-ok type
+	// assertion (`v, ok := x.(T)`, item 6b) are the two 2-LHS-1-RHS
+	// shapes emit accepts at the head of a function body. Detect them
+	// before the single-LHS guard fires below, then dispatch to their
+	// decl paths; everything else with multi-LHS still hits the
+	// rejection.
 	if len(a.LHS) == 2 && len(a.RHS) == 1 {
-		if cr, isRecv := a.RHS[0].(*ir.ChanRecv); isRecv && cr.CommaOK {
-			e.emitChanRecvDecl(a, cr)
-			return
+		switch r := a.RHS[0].(type) {
+		case *ir.ChanRecv:
+			if r.CommaOK {
+				e.emitChanRecvDecl(a, r)
+				return
+			}
+		case *ir.TypeAssert:
+			if r.CommaOK {
+				e.emitTypeAssertDecl(a, r)
+				return
+			}
 		}
 	}
 	if len(a.LHS) != 1 || len(a.RHS) != 1 {
@@ -1982,6 +2275,251 @@ func (e *emitter) emitChanRecvDecl(a *ir.Assign, cr *ir.ChanRecv) {
 		Chan:    cr.Chan,
 		Pkg:     pkg,
 	})
+}
+
+// emitTypeAssertDecl is the declarative-region emit for the comma-ok
+// form `v, ok := x.(T)` (item 6b). It validates both LHS identifiers and
+// the assertion target (same rules as the single-value form), emits
+// `V : T := <zero of T>;` — Go binds the zero value of T when the
+// assertion fails, so V is zero-initialised here and the body-side
+// block only overwrites it on a match — plus `OK : Boolean;`, and
+// queues a pendingTypeAssert for emitSubprogram to drain at body entry.
+func (e *emitter) emitTypeAssertDecl(a *ir.Assign, ta *ir.TypeAssert) {
+	vID, ok := a.LHS[0].(*ir.Ident)
+	if !ok {
+		e.fail(fmt.Errorf("emit: := lhs must be a plain identifier"))
+		return
+	}
+	okID, ok := a.LHS[1].(*ir.Ident)
+	if !ok {
+		e.fail(fmt.Errorf("emit: comma-ok := second lhs must be a plain identifier"))
+		return
+	}
+	// The operand is rendered twice (membership test + guarded
+	// conversion), so it must be side-effect-free — enforce a plain
+	// identifier rather than miscompile once call expressions land.
+	if _, ok := ta.X.(*ir.Ident); !ok {
+		e.fail(fmt.Errorf("emit: comma-ok assertion operand must be a plain identifier (got %T); it is rendered twice", ta.X))
+		return
+	}
+	name, st, err := e.typeAssertTarget(ta.X, ta.Type)
+	if err != nil {
+		e.fail(err)
+		return
+	}
+	zero, err := e.structZeroLit(name, st)
+	if err != nil {
+		e.fail(err)
+		return
+	}
+	e.println(adaIdent(vID.Name) + " : " + name + " := " + zero + ";")
+	e.println(adaIdent(okID.Name) + " : Boolean;")
+	e.pendingAsserts = append(e.pendingAsserts, pendingTypeAssert{
+		LHSName: vID.Name,
+		OKName:  okID.Name,
+		X:       ta.X,
+		Target:  name,
+	})
+}
+
+// structZeroLit renders the Go zero value of a struct as an Ada
+// aggregate: `T'(null record)` when fieldless, otherwise every
+// declared component at its zero value (the same fill emitStructLit
+// applies to omitted keyed-literal fields, item 5a-iii).
+func (e *emitter) structZeroLit(name string, st *ir.StructType) (string, error) {
+	if len(st.Fields) == 0 {
+		return name + "'(null record)", nil
+	}
+	parts := make([]string, 0, len(st.Fields))
+	for _, f := range st.Fields {
+		z, err := zeroValueFor(f.Type)
+		if err != nil {
+			return "", fmt.Errorf("emit: cannot zero struct %s field %q: %w", name, f.Name, err)
+		}
+		parts = append(parts, adaIdent(f.Name)+" => "+z)
+	}
+	return name + "'(" + strings.Join(parts, ", ") + ")", nil
+}
+
+// emitTypeAssertBlock lowers one queued `v, ok := x.(T)` at body entry:
+// the membership test `OK := X in T'Class` (True iff the operand's tag
+// is in T's class, RM 4.5.2 — no exception raised) followed by the
+// guarded view conversion `if OK then V := T (X); end if;`. V was
+// declared with its zero value, so a failed assertion leaves the zero,
+// matching Go. The operand is rendered twice, so emitTypeAssertDecl
+// only accepts a plain identifier operand.
+func (e *emitter) emitTypeAssertBlock(pa pendingTypeAssert) {
+	x := e.emitExpr(pa.X)
+	ok := adaIdent(pa.OKName)
+	e.println(ok + " := " + x + " in " + pa.Target + "'Class;")
+	e.println("if " + ok + " then")
+	e.indent++
+	e.println(adaIdent(pa.LHSName) + " := " + pa.Target + " (" + x + ");")
+	e.indent--
+	e.println("end if;")
+}
+
+// emitTypeSwitch lowers a Go type switch `switch v := x.(type) { … }`
+// (item 6c) to an Ada if/elsif/else chain of class-wide membership
+// tests: `if X in T1'Class then … elsif X in T2'Class then … else …`.
+// Inside a typed arm the switch variable is viewed as the case's type
+// via a per-arm `declare V : T := T (X); begin … end;` block — safe
+// because the membership test already proved the tag is in T'Class, so
+// the view conversion cannot raise. In the default arm the variable is
+// declared at the operand's own (class-wide) type, matching Go, where
+// the switch variable keeps the switch expression's type there. The
+// operand must be a plain identifier — it is rendered once per arm, so
+// a side-effecting operand would be evaluated multiple times; reject
+// anything else loudly. Case target validation reuses typeAssertTarget,
+// so an interface/scalar target or a method-less-interface operand is a
+// loud error, never invalid Ada.
+func (e *emitter) emitTypeSwitch(s *ir.TypeSwitch) {
+	// A blank binding (`switch _ := x.(type)`) discards the variable;
+	// translate already normalises it to "", but hand-built IR may not.
+	v := s.Var
+	if v == "_" {
+		v = ""
+	}
+	switchV := &ir.TypeSwitch{X: s.X, Var: v, Cases: s.Cases}
+	if _, ok := s.X.(*ir.Ident); !ok {
+		e.fail(fmt.Errorf("emit: type switch operand must be a plain identifier (got %T); it is rendered once per arm", s.X))
+		return
+	}
+	x := e.emitExpr(s.X)
+	// Validate every typed arm up front so no partial chain is emitted
+	// before a bad case fails.
+	names := make([]string, len(s.Cases))
+	for i, c := range s.Cases {
+		if c.Type == nil {
+			continue
+		}
+		name, _, err := e.typeAssertTarget(s.X, c.Type)
+		if err != nil {
+			e.fail(err)
+			return
+		}
+		names[i] = name
+	}
+	typed := 0
+	for _, c := range switchV.Cases {
+		if c.Type != nil {
+			typed++
+		}
+	}
+	if typed == 0 {
+		// No typed arms: the switch degenerates to its default body (or
+		// nothing). Emit inline at the current position.
+		for _, c := range switchV.Cases {
+			if c.Type == nil {
+				e.emitTypeSwitchArm(switchV, c, "")
+			}
+		}
+		if len(switchV.Cases) == 0 {
+			e.println("null;")
+		}
+		return
+	}
+	first := true
+	for i, c := range switchV.Cases {
+		if c.Type == nil {
+			continue
+		}
+		kw := "elsif"
+		if first {
+			kw = "if"
+			first = false
+		}
+		e.println(kw + " " + x + " in " + names[i] + "'Class then")
+		e.indent++
+		e.emitTypeSwitchArm(switchV, c, names[i])
+		e.indent--
+	}
+	for _, c := range switchV.Cases {
+		if c.Type != nil {
+			continue
+		}
+		e.println("else")
+		e.indent++
+		e.emitTypeSwitchArm(switchV, c, "")
+		e.indent--
+	}
+	e.println("end if;")
+}
+
+// emitTypeSwitchArm emits one type-switch arm's body at the current
+// indent. When the switch binds a variable (Var non-empty), the body
+// runs inside a per-arm `declare … begin … end;` block so V is scoped to
+// the arm: at the case's type via the view conversion (`V : T := T (X)`)
+// in a typed arm, or at the operand's own class-wide type in the default
+// arm (`V : Speaker'Class := S` — Go binds the switch variable at the
+// switch expression's type there, and a class-wide declaration is what
+// makes uses of V in the default arm compile). An empty body still
+// emits `null;` — Ada requires a statement between begin and end.
+func (e *emitter) emitTypeSwitchArm(s *ir.TypeSwitch, c *ir.TypeSwitchCase, target string) {
+	if s.Var == "" {
+		e.emitStmtListOrNull(c.Body)
+		return
+	}
+	// The variable's type in this arm: the case's type for a typed arm,
+	// the operand's own type for default. emitTypeSwitch already
+	// rejected a non-Ident operand, so the default lookup is safe; an
+	// unknown operand type is still a loud error (never invalid Ada).
+	armType := c.Type
+	if target == "" {
+		id := s.X.(*ir.Ident)
+		t, ok := e.localTypes[id.Name]
+		if !ok {
+			e.fail(fmt.Errorf("emit: type switch default arm cannot resolve operand %s's type", id.Name))
+			return
+		}
+		armType = t
+	}
+	tname, err := e.typeName(armType)
+	if err != nil {
+		e.fail(err)
+		return
+	}
+	// Bind the switch variable for the arm's scope, restoring any
+	// outer binding afterwards (mirrors the range-loop name binding).
+	prev, had := e.localTypes[s.Var]
+	e.localTypes[s.Var] = armType
+	defer func() {
+		if had {
+			e.localTypes[s.Var] = prev
+		} else {
+			delete(e.localTypes, s.Var)
+		}
+	}()
+
+	x := e.emitExpr(s.X)
+	decl := adaIdent(s.Var) + " : " + tname + " := "
+	if target != "" {
+		decl += target + " (" + x + ")"
+	} else {
+		decl += x
+	}
+	e.println("declare")
+	e.indent++
+	e.println(decl + ";")
+	e.indent--
+	e.println("begin")
+	e.indent++
+	e.emitStmtListOrNull(c.Body)
+	e.indent--
+	e.println("end;")
+}
+
+// emitStmtListOrNull emits stmts at the current indent, or a `null;` when
+// the list is empty (Ada requires at least one statement in a begin..end
+// block, which empty switch arms would otherwise produce).
+func (e *emitter) emitStmtListOrNull(stmts []ir.Stmt) {
+	if len(stmts) == 0 {
+		e.println("null;")
+		return
+	}
+	for _, st := range stmts {
+		e.emitStmt(st)
+	}
 }
 
 // inferDeclType maps a `:=` RHS to its Ada type name. Phase 1
@@ -2087,6 +2625,8 @@ func (e *emitter) emitStmt(s ir.Stmt) {
 		e.emitChanSend(s)
 	case *ir.SelectStmt:
 		e.emitSelectStmt(s)
+	case *ir.TypeSwitch:
+		e.emitTypeSwitch(s)
 	default:
 		e.fail(fmt.Errorf("emit: unsupported stmt %T", s))
 	}
@@ -2776,6 +3316,40 @@ func zeroValueFor(t ir.Type) (string, error) {
 	return "", fmt.Errorf("emit: no zero value for struct field %w", validStructFieldType(t))
 }
 
+// typeAssertTarget validates a type assertion's target and operand,
+// returning the Ada name of the concrete struct type being asserted to
+// plus its declaration. Shared by the single-value form (emitTypeAssert),
+// the comma-ok form (emitTypeAssertDecl), and each typed arm of a type
+// switch (emitTypeSwitch) so all three enforce one rule set. Only a
+// concrete struct target is a valid Ada view conversion of a
+// class-wide operand: an interface target (`x.(I)` — a
+// does-it-implement check, not a down-conversion), and scalar/builtin
+// targets (`x.(int)`, `x.(Celsius)` — `Integer (X)` on a class-wide
+// operand is not a legal conversion) need different machinery and ride
+// later items; they are rejected loudly rather than emit invalid Ada.
+// A method-less interface operand is valid Go — every type satisfies
+// it — but no concrete type *derives* an empty interface (5b), so the
+// operand's class-wide view contains no struct and `T (X)` is an
+// illegal Ada conversion; that shape is rejected when the operand's
+// static type (known for an identifier via localTypes) is such an
+// interface.
+func (e *emitter) typeAssertTarget(x ir.Expr, t ir.Type) (string, *ir.StructType, error) {
+	nt, ok := t.(*ir.NamedType)
+	if !ok {
+		return "", nil, fmt.Errorf("emit: type assertion to a non-named type is not supported yet (item 6a covers a concrete struct target)")
+	}
+	st, isStruct := e.structByName[nt.Name]
+	if !isStruct {
+		return "", nil, fmt.Errorf("emit: type assertion x.(%s): only a concrete struct target is supported yet (item 6a); interface, named-scalar, and builtin targets ride later items", nt.Name)
+	}
+	if id, ok := x.(*ir.Ident); ok {
+		if ot, ok := e.localTypes[id.Name].(*ir.NamedType); ok && e.emptyInterfaceNames[ot.Name] {
+			return "", nil, fmt.Errorf("emit: type assertion x.(%s) on a method-less interface (%s) operand has no legal Ada conversion (no concrete type derives an empty interface); not supported yet", nt.Name, ot.Name)
+		}
+	}
+	return adaIdent(nt.Name), st, nil
+}
+
 // emitTypeAssert renders a single Go type assertion `x.(T)` as the Ada
 // view conversion `T (X)`. Converting a class-wide operand to a specific
 // type in its class checks the tag (RM 4.6) and raises Constraint_Error
@@ -2783,40 +3357,19 @@ func zeroValueFor(t ir.Type) (string, error) {
 // runtime approximation (a faithful Gada.Core panic rides a later item).
 // The comma-ok form `v, ok := x.(T)` (CommaOK) has no expression value —
 // it lowers to a membership test plus a guarded conversion at statement
-// position (item 6b), so it must not reach here.
+// position via emitTypeAssertDecl/emitTypeAssertBlock (item 6b), so it
+// must not reach here.
 func (e *emitter) emitTypeAssert(a *ir.TypeAssert) string {
 	if a.CommaOK {
-		e.fail(fmt.Errorf("emit: comma-ok type assertion `v, ok := x.(T)` is not supported yet (item 6b); only the single-value form `x.(T)` is"))
+		e.fail(fmt.Errorf("emit: comma-ok type assertion `v, ok := x.(T)` has no expression value; it lowers at statement position (item 6b) and must not reach emitExpr"))
 		return ""
 	}
-	// Only a concrete struct target is a valid Ada view conversion of a
-	// class-wide operand. An interface target (`x.(I)` — a
-	// does-it-implement check, not a down-conversion), and scalar/builtin
-	// targets (`x.(int)`, `x.(Celsius)` — `Integer (X)` on a class-wide
-	// operand is not a legal conversion) need different machinery and
-	// ride a later item; reject them loudly rather than emit invalid Ada.
-	nt, ok := a.Type.(*ir.NamedType)
-	if !ok {
-		e.fail(fmt.Errorf("emit: type assertion to a non-named type is not supported yet (item 6a covers a concrete struct target)"))
+	name, _, err := e.typeAssertTarget(a.X, a.Type)
+	if err != nil {
+		e.fail(err)
 		return ""
 	}
-	if _, isStruct := e.structByName[nt.Name]; !isStruct {
-		e.fail(fmt.Errorf("emit: type assertion x.(%s): only a concrete struct target is supported yet (item 6a); interface, named-scalar, and builtin targets ride later items", nt.Name))
-		return ""
-	}
-	// A method-less interface operand is valid Go — every type satisfies
-	// it — but no concrete type *derives* an empty interface (5b), so the
-	// operand's class-wide view contains no struct and `T (X)` is an
-	// illegal Ada conversion. Reject when the operand's static type
-	// (known for an identifier via localTypes) is such an interface,
-	// rather than emit a conversion gnat would reject.
-	if id, ok := a.X.(*ir.Ident); ok {
-		if ot, ok := e.localTypes[id.Name].(*ir.NamedType); ok && e.emptyInterfaceNames[ot.Name] {
-			e.fail(fmt.Errorf("emit: type assertion x.(%s) on a method-less interface (%s) operand has no legal Ada conversion (no concrete type derives an empty interface); not supported yet", nt.Name, ot.Name))
-			return ""
-		}
-	}
-	return adaIdent(nt.Name) + " (" + e.emitExpr(a.X) + ")"
+	return name + " (" + e.emitExpr(a.X) + ")"
 }
 
 // emitSliceExpr dispatches `s[lo:hi]` (and the elided forms) to

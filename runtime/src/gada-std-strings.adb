@@ -175,12 +175,12 @@ package body Gada.Std.Strings is
    begin
       if S'Length = 0 then
          --  Go: Split("", sep) = [""] — one empty field, not empty.
-         Acc := Append (Acc, Null_Unbounded_String);
+         Append (Acc, Null_Unbounded_String);
          return;
       end if;
       if Sep'Length = 0 then
          for I in S'Range loop
-            Acc := Append (Acc, To_Unbounded_String (S (I .. I)));
+            Append (Acc, To_Unbounded_String (S (I .. I)));
          end loop;
          return;
       end if;
@@ -191,7 +191,7 @@ package body Gada.Std.Strings is
          while Start <= S'Last loop
             I := Index (S (Start .. S'Last), Sep);
             if I < 0 then
-               Acc := Append (Acc, To_Unbounded_String (S (Start .. S'Last)));
+               Append (Acc, To_Unbounded_String (S (Start .. S'Last)));
                return;
             end if;
             --  I is relative to S(Start..); absolute position:
@@ -236,15 +236,15 @@ package body Gada.Std.Strings is
          --  per-byte split, capped at N fields (last holds the rest)
          for I in S'Range loop
             if N > 0 and then Len (Acc) = N - 1 then
-               Acc := Append (Acc, To_Unbounded_String (S (I .. S'Last)));
+               Append (Acc, To_Unbounded_String (S (I .. S'Last)));
                return Acc;
             end if;
-            Acc := Append (Acc, To_Unbounded_String (S (I .. I)));
+            Append (Acc, To_Unbounded_String (S (I .. I)));
          end loop;
          return Acc;
       end if;
       if S'Length = 0 then
-         Acc := Append (Acc, Null_Unbounded_String);
+         Append (Acc, Null_Unbounded_String);
          return Acc;
       end if;
       declare
@@ -262,12 +262,12 @@ package body Gada.Std.Strings is
          S'Last)));
                   return Acc;
                end if;
-               Acc := Append (Acc, To_Unbounded_String (S (Start .. Pos - 1)));
+               Append (Acc, To_Unbounded_String (S (Start .. Pos - 1)));
                Start := Pos + Sep'Length;
             end;
          end loop;
          if Start <= S'Last then
-            Acc := Append (Acc, To_Unbounded_String (S (Start .. S'Last)));
+            Append (Acc, To_Unbounded_String (S (Start .. S'Last)));
          end if;
          return Acc;
       end;
@@ -295,7 +295,7 @@ package body Gada.Std.Strings is
       while I <= S'Last + 1 loop
          if I > S'Last or else F (S (I)) then
             if I > Start then
-               Acc := Append (Acc, To_Unbounded_String (S (Start .. I - 1)));
+               Append (Acc, To_Unbounded_String (S (Start .. I - 1)));
             end if;
             Start := I + 1;
          end if;

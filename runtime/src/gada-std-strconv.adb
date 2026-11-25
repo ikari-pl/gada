@@ -866,10 +866,15 @@ package body Gada.Std.Strconv is
    end Unquote;
 
    overriding function Message (E : Num_Error) return String is
-     ("strconv." & To_String (E.Func_Name) & ": parsing "
-      & Quote (To_String (E.Num_Text)) & ": "
-      & (if E.Err_Value = null then ""
-         else Errors.Message (E.Err_Value.all)));
+   begin
+      --  Regular body (not an expression function): gcov/lcov record
+      --  expression-function bodies inconsistently ("function hit but no
+      --  contained lines"), which breaks the coverage gate.
+      return "strconv." & To_String (E.Func_Name) & ": parsing "
+        & Quote (To_String (E.Num_Text)) & ": "
+        & (if E.Err_Value = null then ""
+           else Errors.Message (E.Err_Value.all));
+   end Message;
 
 begin
    --  Go: var ErrSyntax = errors.New("invalid syntax"), etc.

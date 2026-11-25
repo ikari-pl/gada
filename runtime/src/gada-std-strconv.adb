@@ -505,6 +505,14 @@ package body Gada.Std.Strconv is
    function Err (E : Num_Error) return Errors.Error_Access is
      (E.Err_Value);
 
+   --  True for negative zero (sign bit set, value zero).
+   function Is_Neg_Zero (F : Long_Float) return Boolean is
+      function To_U64 is new Ada.Unchecked_Conversion (Long_Float, U64);
+   begin
+      return F = 0.0
+        and then (To_U64 (F) and 16#8000_0000_0000_0000#) /= 0;
+   end Is_Neg_Zero;
+
    function Itoa (I : Integer) return String is
      (Ada.Strings.Fixed.Trim (Integer'Image (I), Ada.Strings.Left));
 
@@ -578,7 +586,7 @@ package body Gada.Std.Strconv is
       elsif F < Long_Float'First then
          return "-Inf";
       end if;
-      if F = 0.0 and then Long_Float'Signed_Zeros (F) then
+      if F = 0.0 and then Is_Neg_Zero (F) then
          Neg := True;
       end if;
       Exact_Digits (F, B, Len, DP);
@@ -831,10 +839,6 @@ package body Gada.Std.Strconv is
       & Quote (To_String (E.Num_Text)) & ": "
       & (if E.Err_Value = null then ""
          else Errors.Message (E.Err_Value.all)));
-
-   overriding function Unwrap (E : Errors.Error_Access)
-      return Errors.Error_Access is
-     (Num_Error (E.all).Err_Value);
 
 begin
    --  Go: var ErrSyntax = errors.New("invalid syntax"), etc.

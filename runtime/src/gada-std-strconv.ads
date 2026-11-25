@@ -40,6 +40,9 @@ package Gada.Std.Strconv is
      (Func, Num : String; Err : Gada.Std.Errors.Error_Access)
       return Gada.Std.Errors.Error_Access;
 
+   --  Note: NumError.Unwrap() error is inherited unchanged — the
+   --  sentinel is stored as the Error's Cause, so errors.Is/As walk it.
+
    --  NumError field accessors (Go's e.Func / e.Num / e.Err).
    function Func (E : Num_Error) return String;
    function Num  (E : Num_Error) return String;
@@ -48,10 +51,6 @@ package Gada.Std.Strconv is
    --  Go: func (e *NumError) Error() string —
    --  "strconv." + Func + ": parsing " + Quote(Num) + ": " + Err.Error()
    overriding function Message (E : Num_Error) return String;
-
-   --  Go: func (e *NumError) Unwrap() error { return e.Err }
-   overriding function Unwrap (E : Gada.Std.Errors.Error_Access)
-      return Gada.Std.Errors.Error_Access;
 
    --  Go: func Itoa(i int) string
    function Itoa (I : Integer) return String;

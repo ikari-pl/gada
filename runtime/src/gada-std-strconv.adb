@@ -1,11 +1,17 @@
 --  Body of Gada.Std.Strconv — see spec for the Go-semantics contract.
 --
 --  Ada 2022 idioms used: expression functions for the one-liners,
---  conditional expressions, `for C of S` array iteration, and numeric
+--  conditional expressions, `for C of S` array iteration, numeric
 --  literals with underscores.
+--
+--  Float formatting does not use Ada.*_Text_IO's Put (its string form is
+--  not available for Long_Float): every finite binary64 is an exact
+--  finite decimal (m × 2^e), so we compute the exact decimal digits with
+--  a small bignum (digit array) and round half-to-even ourselves. That
+--  gives Go-exact output, including shortest round-trip ('g', prec < 0)
+--  and denormals.
 
 with Ada.Characters.Handling;
-with Ada.Long_Float_Text_IO;
 with Ada.Strings;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
@@ -17,6 +23,8 @@ package body Gada.Std.Strconv is
 
    package Errors renames Gada.Std.Errors;
 
+   use type Errors.Error_Access;
+
    --  IEEE-754 binary64 special values, built from their bit patterns
    --  (the portable spelling — Ada has no standard NaN/Inf literals).
    type U64 is new Interfaces.Unsigned_64;
@@ -27,8 +35,8 @@ package body Gada.Std.Strconv is
 
    Hex_Digits : constant String := "0123456789abcdef";
 
-   --  Named constants for the delimiter characters (the four-
-   --  apostrophe literal is spelled by code point).
+   --  Named constants for the delimiter characters (the four-apostrophe
+   --  character literal is spelled by code point).
    DQUOTE : constant Character := Character'Val (34);
    SQUOTE : constant Character := Character'Val (39);
    BSLASH : constant Character := Character'Val (92);
@@ -109,9 +117,9 @@ package body Gada.Std.Strconv is
          when 'r' => Append (Value, Character'Val (13)); I := I + 2;
          when 't' => Append (Value, Character'Val (9));  I := I + 2;
          when 'v' => Append (Value, Character'Val (11)); I := I + 2;
-         when BSLASH => Append (Value, BSLASH);                I := I + 2;
-         when DQUOTE => Append (Value, DQUOTE);                I := I + 2;
-         when SQUOTE => Append (Value, SQUOTE);               I := I + 2;
+         when BSLASH => Append (Value, BSLASH);          I := I + 2;
+         when DQUOTE => Append (Value, DQUOTE);          I := I + 2;
+         when SQUOTE => Append (Value, SQUOTE);          I := I + 2;
          when 'x' =>
             declare
                V : constant Integer := Hex_N (S, I + 2, 2);
@@ -176,114 +184,235 @@ package body Gada.Std.Strconv is
       return True;
    end Equal_Ignore_Case;
 
-   --  'e'-formatting of F with Aft digits after the point (GNAT emits an
-   --  uppercase E; case-adjusted for Go's 'e' when Upper is False).
-   function Format_Sci (F : Long_Float; Aft : Natural; Upper : Boolean)
-      return String is
-      Buf : String (1 .. 128);
+   ---------------------------------------------------------------
+   --  Exact decimal representation of a finite Long_Float
+   ---------------------------------------------------------------
+
+   --  M × 5^1126 has at most ~803 decimal digits; leave headroom.
+   Max_Big : constant := 1100;
+
+   --  Decimal digits, least significant first.
+   type Big_Num is array (1 .. Max_Big) of Natural range 0 .. 9;
+
+   procedure Mul_Small (B : in out Big_Num; Len : in out Natural;
+                        M : Natural) is
+      Carry : Natural := 0;
    begin
-      Ada.Long_Float_Text_IO.Put (Buf, F, Fore => 1, Aft => Aft, Exp => 2);
+      for I in 1 .. Len loop
+         declare
+            V : constant Natural := B (I) * M + Carry;
+         begin
+            B (I) := V mod 10;
+            Carry := V / 10;
+         end;
+      end loop;
+      while Carry > 0 loop
+         Len := Len + 1;
+         B (Len) := Carry mod 10;
+         Carry := Carry / 10;
+      end loop;
+   end Mul_Small;
+
+   --  Exact decimal digits of |F|: B (1..Len) LSB-first, and DP with
+   --  |F| = (digits) × 10^(DP - Len).  F must be finite and nonzero.
+   procedure Exact_Digits (F : Long_Float; B : out Big_Num;
+                           Len : out Natural; DP : out Integer) is
+      M : Long_Long_Integer :=
+        Long_Long_Integer (Long_Float'Fraction (F) * 2.0**53);
+      E : constant Integer := Long_Float'Exponent (F) - 53;
+   begin
+      if M = 0 then
+         B (1) := 0;
+         Len := 1;
+         DP := 1;
+         return;
+      end if;
+      Len := 0;
+      while M > 0 loop
+         Len := Len + 1;
+         B (Len) := Natural (M mod 10);
+         M := M / 10;
+      end loop;
+      if E >= 0 then
+         for I in 1 .. E loop
+            Mul_Small (B, Len, 2);
+         end loop;
+         DP := Len;
+      else
+         for I in 1 .. (-E) loop
+            Mul_Small (B, Len, 5);
+         end loop;
+         DP := Len + E;
+      end if;
+   end Exact_Digits;
+
+   --  Rounds the exact digits to N significant digits (round half to
+   --  even on the exact remainder). R is LSB-first, value =
+   --  (R digits) × 10^(RDP - RN).
+   procedure Round_To (B : Big_Num; Len : Natural; DP : Integer;
+                       N : Natural; R : out Big_Num; RN : out Natural;
+                       RDP : out Integer) is
+   begin
+      if Len <= N then
+         RN := Len;
+         R (1 .. Len) := B (1 .. Len);
+         RDP := DP;
+         return;
+      end if;
+      RN := N;
+      for I in 1 .. N loop
+         R (I) := B (Len - N + I);
+      end loop;
+      RDP := DP;
       declare
-         S : constant String :=
-           Ada.Strings.Fixed.Trim (Buf, Ada.Strings.Right);
-         R : String (S'Range) := S;
+         Top    : constant Natural := B (Len - N);
+         Lower  : Boolean := False;
       begin
-         if not Upper then
-            for I in R'Range loop
-               if R (I) = 'E' then
-                  R (I) := 'e';
+         for I in 1 .. Len - N - 1 loop
+            if B (I) /= 0 then
+               Lower := True;
+            end if;
+         end loop;
+         --  Round up if the dropped part exceeds half, or is exactly
+         --  half and the kept LSB is odd (round half to even).
+         if Top > 5
+           or else (Top = 5 and then (Lower or else R (N) mod 2 = 1))
+         then
+            declare
+               Carry : Natural := 1;
+            begin
+               for I in 1 .. RN loop
+                  declare
+                     V : constant Natural := R (I) + Carry;
+                  begin
+                     R (I) := V mod 10;
+                     Carry := V / 10;
+                  end;
+                  exit when Carry = 0;
+               end loop;
+               if Carry > 0 then
+                  --  999…9 rounds up to 1000…0: shift right, bump DP.
+                  for I in reverse 1 .. RN loop
+                     R (I + 1) := R (I);
+                  end loop;
+                  R (1) := Carry;
+                  RN := RN + 1;
+                  RDP := RDP + 1;
                end if;
+            end;
+         end if;
+      end;
+   end Round_To;
+
+   procedure Append_Digit (S : in out Unbounded_String; D : Natural) is
+   begin
+      Append (S, Character'Val (Character'Pos ('0') + D));
+   end Append_Digit;
+
+   --  Scientific form d.ddde±dd of rounded digits R (LSB-first, value =
+   --  digits × 10^(RDP-RN)), with exactly Aft digits after the point.
+   function Fmt_E (Neg : Boolean; R : Big_Num; RN : Natural;
+                   RDP : Integer; Aft : Natural; Upper : Boolean)
+      return String is
+      S   : Unbounded_String;
+      Exp : constant Integer := RDP - 1;
+   begin
+      if Neg then
+         Append (S, '-');
+      end if;
+      Append_Digit (S, R (RN));           --  leading digit
+      if Aft > 0 then
+         Append (S, '.');
+         for K in 1 .. Aft loop
+            if RN - K >= 1 then
+               Append_Digit (S, R (RN - K));
+            else
+               Append (S, '0');
+            end if;
+         end loop;
+      end if;
+      Append (S, (if Upper then 'E' else 'e'));
+      if Exp < 0 then
+         Append (S, '-');
+      else
+         Append (S, '+');
+      end if;
+      declare
+         A : constant Natural := (if Exp < 0 then -Exp else Exp);
+      begin
+         if A < 10 then
+            Append (S, '0');
+         end if;
+         Append (S, Ada.Strings.Fixed.Trim (Integer'Image (A),
+                                            Ada.Strings.Left));
+      end;
+      return To_String (S);
+   end Fmt_E;
+
+   --  Fixed form of rounded digits R with exactly Aft digits after the
+   --  point (padded with zeros; never truncated — callers round first).
+   function Fmt_F (Neg : Boolean; R : Big_Num; RN : Natural;
+                   RDP : Integer; Aft : Natural) return String is
+      S : Unbounded_String;
+   begin
+      if Neg then
+         Append (S, '-');
+      end if;
+      if RDP <= 0 then
+         Append (S, "0.");
+         for K in 1 .. (-RDP) loop
+            Append (S, '0');
+         end loop;
+         for I in reverse 1 .. RN loop
+            Append_Digit (S, R (I));
+         end loop;
+         for K in 1 .. Aft - RN + RDP loop  --  may be a null range
+            Append (S, '0');
+         end loop;
+      elsif RDP >= RN then
+         for I in reverse 1 .. RN loop
+            Append_Digit (S, R (I));
+         end loop;
+         for K in 1 .. (RDP - RN) loop
+            Append (S, '0');
+         end loop;
+         if Aft > 0 then
+            Append (S, '.');
+            for K in 1 .. Aft loop
+               Append (S, '0');
             end loop;
          end if;
-         return R;
-      end;
-   end Format_Sci;
+      else
+         for I in reverse (RDP + 1) .. RN loop
+            Append_Digit (S, R (I));
+         end loop;
+         Append (S, '.');
+         for I in reverse 1 .. RDP loop
+            Append_Digit (S, R (I));
+         end loop;
+         for K in 1 .. Aft - (RN - RDP) loop
+            Append (S, '0');
+         end loop;
+      end if;
+      return To_String (S);
+   end Fmt_F;
 
-   --  Decimal exponent (power of ten of the leading digit) of an 'e'-
-   --  formatted string, e.g. "3.14E+05" → 5.
-   function Exp10_Of (Sci : String) return Integer is
+   --  Smallest number of significant digits (1..17) whose decimal
+   --  representation round-trips to F — Go's shortest for prec < 0.
+   function Shortest_K (Neg : Boolean; F : Long_Float; B : Big_Num;
+                        Len : Natural; DP : Integer) return Natural is
+      R   : Big_Num;
+      RN  : Natural;
+      RDP : Integer;
    begin
-      for I in Sci'Range loop
-         if Sci (I) = 'E' or else Sci (I) = 'e' then
-            return Integer'Value (Sci (I + 1 .. Sci'Last));
+      for K in 1 .. 17 loop
+         Round_To (B, Len, DP, K, R, RN, RDP);
+         if Long_Float'Value (Fmt_E (Neg, R, RN, RDP, K - 1, True)) = F then
+            return K;
          end if;
       end loop;
-      return 0;
-   end Exp10_Of;
-
-   --  Smallest number of significant digits (1 .. 18) whose 'e'-form
-   --  round-trips to F — Go's shortest representation for prec < 0.
-   function Shortest_Digits (F : Long_Float) return Natural is
-      Buf : String (1 .. 128);
-   begin
-      for Aft in 0 .. 17 loop
-         Ada.Long_Float_Text_IO.Put (Buf, F, Fore => 1, Aft => Aft, Exp => 2);
-         declare
-            S : constant String :=
-              Ada.Strings.Fixed.Trim (Buf, Ada.Strings.Right);
-         begin
-            if Long_Float'Value (S) = F then
-               return Aft + 1;
-            end if;
-         end;
-      end loop;
-      return 18;
-   end Shortest_Digits;
-
-   function Format_Fixed (F : Long_Float; Aft : Natural) return String is
-      Buf : String (1 .. 1024);
-   begin
-      Ada.Long_Float_Text_IO.Put (Buf, F, Fore => 1, Aft => Aft, Exp => 0);
-      return Ada.Strings.Fixed.Trim (Buf, Ada.Strings.Right);
-   end Format_Fixed;
-
-   --  Go's 'g'/'G': use 'e' when the decimal exponent is < -4 or >= the
-   --  effective precision (6 for shortest, else prec), otherwise 'f'.
-   function Format_General (F : Long_Float; Prec : Integer;
-                            Upper : Boolean) return String is
-      Shortest : constant Boolean := Prec < 0;
-      K        : constant Natural :=
-        (if Shortest then Shortest_Digits (F)
-         elsif Prec = 0 then 1
-         else Prec);
-      Sci      : constant String := Format_Sci (F, K - 1, Upper);
-      Exp10    : constant Integer := Exp10_Of (Sci);
-      --  Significant digits of the mantissa, trailing zeros stripped
-      --  (mantissa is "d.dddd…": one digit before the point, K - 1 after).
-      Epos     : Integer := Sci'Last + 1;
-      Tz       : Natural := 0;
-      Nd       : Natural;
-   begin
-      for I in Sci'Range loop
-         if Sci (I) = 'E' or else Sci (I) = 'e' then
-            Epos := I;
-            exit;
-         end if;
-      end loop;
-      for I in reverse Sci'First + 2 .. Epos - 1 loop
-         exit when Sci (I) /= '0';
-         Tz := Tz + 1;
-      end loop;
-      Nd := Natural'Max (1, K - Tz);
-      declare
-         Eprec : Natural := K;
-      begin
-         if Shortest then
-            Eprec := 6;
-         elsif Eprec > Nd and then Nd >= Exp10 + 1 then
-            Eprec := Nd;
-         end if;
-         if Exp10 < -4 or else Exp10 >= Eprec then
-            --  'e' branch: Go trims to min(prec, ndigits) digits.
-            return Format_Sci (F, Natural'Min (K, Nd) - 1, Upper);
-         end if;
-         declare
-            N_Dig : constant Natural := (if Shortest then Nd else Eprec);
-         begin
-            return Format_Fixed (F, Natural'Max (0, N_Dig - 1 - Exp10));
-         end;
-      end;
-   end Format_General;
+      return 17;
+   end Shortest_K;
 
    --  Go's syntax check for a decimal float (v1: no underscores, no
    --  hex floats): [sign] digits [. digits] [(e|E) [sign] digits],
@@ -358,10 +487,14 @@ package body Gada.Std.Strconv is
    function New_Num_Error
      (Func, Num : String; Err : Errors.Error_Access)
       return Errors.Error_Access is
-     (new Num_Error'(Errors.Base_Error ("", Err) with
-                     Func_Name => To_Unbounded_String (Func),
-                     Num_Text  => To_Unbounded_String (Num),
-                     Err_Value => Err));
+      Base : Errors.Error;
+   begin
+      Errors.Make_Base (Base, "", Err);
+      return new Num_Error'(Base with
+                            Func_Name => To_Unbounded_String (Func),
+                            Num_Text  => To_Unbounded_String (Num),
+                            Err_Value => Err);
+   end New_Num_Error;
 
    function Func (E : Num_Error) return String is
      (To_String (E.Func_Name));
@@ -430,6 +563,13 @@ package body Gada.Std.Strconv is
 
    function Format_Float (F : Long_Float; Fmt : Character := 'g';
                           Prec : Integer := -1) return String is
+      Neg : Boolean := F < 0.0;
+      B   : Big_Num;
+      Len : Natural;
+      DP  : Integer;
+      R   : Big_Num;
+      RN  : Natural;
+      RDP : Integer;
    begin
       if F /= F then
          return "NaN";
@@ -438,28 +578,70 @@ package body Gada.Std.Strconv is
       elsif F < Long_Float'First then
          return "-Inf";
       end if;
+      if F = 0.0 and then Long_Float'Signed_Zeros (F) then
+         Neg := True;
+      end if;
+      Exact_Digits (F, B, Len, DP);
       case Fmt is
          when 'f' | 'F' =>
             if Prec < 0 then
                declare
-                  K     : constant Natural := Shortest_Digits (F);
-                  Exp10 : constant Integer :=
-                    Exp10_Of (Format_Sci (F, K - 1, True));
+                  K : constant Natural :=
+                    Shortest_K (Neg, F, B, Len, DP);
                begin
-                  return Format_Fixed (F, Natural'Max (0, K - 1 - Exp10));
+                  Round_To (B, Len, DP, K, R, RN, RDP);
+                  return Fmt_F (Neg, R, RN, RDP,
+                                Natural'Max (0, K - RDP));
                end;
             end if;
-            return Format_Fixed (F, Prec);
-         when 'e' =>
-            return Format_Sci
-              (F, (if Prec < 0 then Shortest_Digits (F) - 1 else Prec),
-               False);
-         when 'E' =>
-            return Format_Sci
-              (F, (if Prec < 0 then Shortest_Digits (F) - 1 else Prec),
-               True);
+            Round_To (B, Len, DP, Natural'Max (1, DP + Prec), R, RN, RDP);
+            return Fmt_F (Neg, R, RN, RDP, Prec);
+         when 'e' | 'E' =>
+            declare
+               K : constant Natural :=
+                 (if Prec < 0 then Shortest_K (Neg, F, B, Len, DP)
+                  else Natural'Max (1, Prec + 1));
+            begin
+               Round_To (B, Len, DP, K, R, RN, RDP);
+               return Fmt_E (Neg, R, RN, RDP, K - 1, Fmt = 'E');
+            end;
          when others =>  --  'g'/'G' (and anything else, like Go's default)
-            return Format_General (F, Prec, Fmt = 'G');
+            declare
+               Shortest : constant Boolean := Prec < 0;
+               K        : constant Natural :=
+                 (if Shortest then Shortest_K (Neg, F, B, Len, DP)
+                  elsif Prec = 0 then 1
+                  else Prec);
+               Exp10    : Integer;
+               Eprec    : Natural;
+               Nd       : Natural;
+            begin
+               Round_To (B, Len, DP, K, R, RN, RDP);
+               Exp10 := RDP - 1;
+               --  Significant digits, trailing zeros stripped (R is
+               --  LSB-first, so trailing zeros sit at low indices).
+               Nd := RN;
+               while Nd > 1 and then R (RN - Nd + 1) = 0 loop
+                  Nd := Nd - 1;
+               end loop;
+               Eprec := K;
+               if Shortest then
+                  Eprec := 6;
+               elsif Eprec > Nd and then Nd >= Exp10 + 1 then
+                  Eprec := Nd;
+               end if;
+               if Exp10 < -4 or else Exp10 >= Eprec then
+                  return Fmt_E (Neg, R, RN, RDP,
+                                Natural'Min (K, Nd) - 1, Fmt = 'G');
+               end if;
+               declare
+                  Digits : constant Natural :=
+                    (if Shortest then Nd else Eprec);
+               begin
+                  return Fmt_F (Neg, R, RN, RDP,
+                                Natural'Max (0, Digits - 1 - Exp10));
+               end;
+            end;
       end case;
    end Format_Float;
 
@@ -536,10 +718,10 @@ package body Gada.Std.Strconv is
       Append (B, DQUOTE);
       for C of S loop
          case C is
-            when '"' =>
-               Append (B, "\""");
-            when '\' =>
-               Append (B, "\\");
+            when DQUOTE =>
+               Append (B, '\' & DQUOTE);  --  \"
+            when BSLASH =>
+               Append (B, BSLASH & BSLASH);     --  \\
             when Character'Val (7) =>
                Append (B, "\a");
             when Character'Val (8) =>
@@ -611,7 +793,7 @@ package body Gada.Std.Strconv is
          begin
             if Inner'Length = 1 then
                Value := To_Unbounded_String (Inner);
-            elsif Inner'Length >= 2 and then Inner (Inner'First) = '\'
+            elsif Inner'Length >= 2 and then Inner (Inner'First) = BSLASH
               and then Decode_Escape (Inner, I, Value)
               and then I = Inner'Last + 1
             then
@@ -622,7 +804,7 @@ package body Gada.Std.Strconv is
          end;
          return;
       end if;
-      if S (S'First) /= '"' or else S (S'Last) /= '"' then
+      if S (S'First) /= DQUOTE or else S (S'Last) /= DQUOTE then
          Syntax;
          return;
       end if;
@@ -631,7 +813,7 @@ package body Gada.Std.Strconv is
          I     : Integer := Inner'First;
       begin
          while I <= Inner'Last loop
-            if Inner (I) = '\' then
+            if Inner (I) = BSLASH then
                if not Decode_Escape (Inner, I, Value) then
                   Syntax;
                   return;

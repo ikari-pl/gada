@@ -7,6 +7,8 @@ with Ada.Strings.Unbounded;
 with Gada.Std.Errors;
 with Gada.Std.Strconv; use Gada.Std.Strconv;
 
+use type Gada.Std.Errors.Error_Access;
+
 package body Strconv_Suite is
 
    package Errors renames Gada.Std.Errors;
@@ -27,12 +29,14 @@ package body Strconv_Suite is
       Register_Routine (T, Test_Atoi_Range'Access, "Atoi clamp + ErrRange");
       Register_Routine (T, Test_Format_Float_G'Access, "FormatFloat g/-1");
       Register_Routine (T, Test_Format_Float_F_E'Access, "FormatFloat f/e/E");
-      Register_Routine (T, Test_Parse_Float_Ok'Access, "ParseFloat ok/specials");
+      Register_Routine (T, Test_Parse_Float_Ok'Access,
+                        "ParseFloat ok/specials");
       Register_Routine (T, Test_Parse_Float_Errors'Access, "ParseFloat errors");
       Register_Routine (T, Test_Quote'Access, "Quote escapes");
       Register_Routine (T, Test_Unquote'Access, "Unquote quoted/raw/char");
       Register_Routine (T, Test_Unquote_Errors'Access, "Unquote errors");
-      Register_Routine (T, Test_Num_Error_Is_As'Access, "NumError Is/As/Message");
+      Register_Routine (T, Test_Num_Error_Is_As'Access,
+                        "NumError Is/As/Message");
    end Register_Tests;
 
    procedure Test_Itoa (T : in out AUnit.Test_Cases.Test_Case'Class) is

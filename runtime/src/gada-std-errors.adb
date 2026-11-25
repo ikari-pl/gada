@@ -15,8 +15,10 @@ package body Gada.Std.Errors is
      return Error_Access is
      (new Error'(Message => To_Unbounded_String (Message), Cause => Cause));
 
-   function Base_Error (Msg : String; Cause : Error_Access) return Error is
-     (Message => To_Unbounded_String (Msg), Cause => Cause);
+   procedure Make_Base (E : out Error; Msg : String; Cause : Error_Access) is
+   begin
+      E := (Message => To_Unbounded_String (Msg), Cause => Cause);
+   end Make_Base;
 
    function Message (E : Error) return String is
      (To_String (E.Message));

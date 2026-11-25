@@ -38,11 +38,13 @@ package Gada.Std.Errors is
    function With_Cause (Message : String; Cause : Error_Access)
      return Error_Access;
 
-   --  Constructs the root Error *value* (not an access) — the ancestor
-   --  part for extension aggregates in derived types defined in other
-   --  packages (Error's components are private to this package, so they
-   --  cannot aggregate the parent directly).
-   function Base_Error (Msg : String; Cause : Error_Access) return Error;
+   --  Initializes a root Error value — the ancestor part for extension
+   --  aggregates in derived types defined in other packages (Error's
+   --  components are private to this package, so they cannot aggregate
+   --  the parent directly). A procedure, not a function: a derived type
+   --  inheriting a function that returns the parent type would have to
+   --  override it.
+   procedure Make_Base (E : out Error; Msg : String; Cause : Error_Access);
 
    --  Go's err.Error() method, as a primitive operation so both
    --  specific and class-wide calls dispatch. Named Message because

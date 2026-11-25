@@ -767,7 +767,7 @@ enumeration; output matches the expected fixture.
         open question for the profile/verification work, as with 5b's
         dynamic dispatch.
 
-  - [ ] **(6b) comma-ok assertion `v, ok := x.(T)`**
+  - [x] **(6b) comma-ok assertion `v, ok := x.(T)`**
         *Files:* `compiler/internal/emit`, golden tests.
         *Verify:* `cd compiler && go test ./internal/emit/... -run Assert`
         *Done when:* `v, ok := x.(T)` lowers to a membership test
@@ -776,6 +776,32 @@ enumeration; output matches the expected fixture.
         already flips `TypeAssert.CommaOK` for the 2-LHS shape; emit's
         statement-position lowering — mirroring the comma-ok chan receive
         — is the work.)
+        *Done 2026-11-25:* the roadmap note above was stale — `transAssign`
+        flipped CommaOK only for `*ir.ChanRecv`, so the `*ir.TypeAssert`
+        arm is new here. Emit mirrors the comma-ok chan receive: `emitVarDecl`
+        routes a 2-LHS-1-RHS `TypeAssert{CommaOK}` to `emitTypeAssertDecl`,
+        which validates both LHS idents + the target via the shared
+        `typeAssertTarget` (factored out of `emitTypeAssert`, so 6a/6b enforce
+        one rule set: concrete-struct target only, method-less-interface
+        operand rejected), emits `V : T := <zero of T>;` (new `structZeroLit`:
+        `T'(null record)` fieldless, else per-field `zeroValueFor` fill — Go
+        binds the zero value on a failed assertion) and `OK : Boolean;`, and
+        queues a `pendingTypeAssert` drained at body entry by
+        `emitSubprogram` right after `pendingRecvs`:
+        `OK := X in T'Class; if OK then V := T (X); end if;` — no exception
+        on a mismatch, `ok` reports it. `populateLocals` binds `v`→asserted
+        type and `ok`→bool (and `inferRHSType` gained the single-value
+        TypeAssert arm). Fixture `type_assert_commaok`
+        (`d, ok := s.(Dog); if ok { return d.Legs }; return 0` →
+        `D : Dog := Dog'(Legs => 0); Ok : Boolean; … Ok := S in Dog'Class;
+        if Ok then D := Dog (S); end if; …`). `TestEmitTypeAssertCommaOk`
+        pins the lowering + reject arms (non-ident LHS, interface target,
+        empty-interface operand, non-comma-ok node at 2-LHS, fieldless
+        zero); `TestTransAssignCommaOKAssertion` pins the translate flip.
+        emit/ 95.97%, translate/ 96.43%, runtime/ 100%; vet + lint + gate
+        clean (`go test -race ./internal/...` green; the `cmd/gada`
+        "package fmt without types" failure is pre-existing on the base
+        commit in this environment, unrelated).
 
   - [ ] **(6c) type switch `switch x := y.(type) { ... }`**
         *Files:* `compiler/internal/{ir,translate,emit}`, golden tests.

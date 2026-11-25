@@ -101,6 +101,8 @@ func TestCorpus(t *testing.T) {
 		"struct_param.go",
 		// Phase 4 — single-value type assertion (item 6a).
 		"type_assert.go",
+		// Phase 4 — comma-ok type assertion (item 6b).
+		"type_assert_commaok.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -716,5 +718,41 @@ func TestTypeAssertTranslate(t *testing.T) {
 		Type: &ast.Ident{Name: "Dog"},
 	}); err == nil {
 		t.Fatal("expected error for an untranslatable assertion operand")
+	}
+}
+
+// TestTransAssignCommaOKAssertion pins item 6b's translate half:
+// transAssign flips CommaOK on a TypeAssert sitting in the 2-LHS-1-RHS
+// `v, ok := x.(T)` shape (so emit picks the statement-position
+// lowering), while a 1-LHS `v := x.(T)` stays CommaOK false.
+func TestTransAssignCommaOKAssertion(t *testing.T) {
+	t.Parallel()
+	assert := &ast.TypeAssertExpr{X: &ast.Ident{Name: "s"}, Type: &ast.Ident{Name: "Dog"}}
+	a, err := transAssign(&ast.AssignStmt{
+		Tok: token.DEFINE,
+		Lhs: []ast.Expr{&ast.Ident{Name: "v"}, &ast.Ident{Name: "ok"}},
+		Rhs: []ast.Expr{assert},
+	})
+	if err != nil {
+		t.Fatalf("transAssign: %v", err)
+	}
+	ta, ok := a.RHS[0].(*ir.TypeAssert)
+	if !ok {
+		t.Fatalf("RHS[0] = %T, want *ir.TypeAssert", a.RHS[0])
+	}
+	if !ta.CommaOK {
+		t.Fatal("2-LHS assertion: CommaOK not flipped, want true")
+	}
+
+	a1, err := transAssign(&ast.AssignStmt{
+		Tok: token.DEFINE,
+		Lhs: []ast.Expr{&ast.Ident{Name: "v"}},
+		Rhs: []ast.Expr{&ast.TypeAssertExpr{X: &ast.Ident{Name: "s"}, Type: &ast.Ident{Name: "Dog"}}},
+	})
+	if err != nil {
+		t.Fatalf("transAssign 1-LHS: %v", err)
+	}
+	if ta1 := a1.RHS[0].(*ir.TypeAssert); ta1.CommaOK {
+		t.Fatal("1-LHS assertion: CommaOK = true, want false")
 	}
 }

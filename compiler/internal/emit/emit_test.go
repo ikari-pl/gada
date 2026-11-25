@@ -85,6 +85,8 @@ var corpusFixtures = []string{
 	"struct_param",
 	// Phase 4 — single-value type assertion (item 6a).
 	"type_assert",
+	// Phase 4 — comma-ok type assertion (item 6b).
+	"type_assert_commaok",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -1650,25 +1652,97 @@ func TestEmitTypeAssert(t *testing.T) {
 		}
 	}
 
-	// End to end, `v, ok := x.(T)` is rejected today (transAssign does not
-	// yet flip TypeAssert.CommaOK, so it hits emit's generic multi-value
-	// `:=` guard). Item 6b lowers it; pin the rejection so a future
-	// change cannot silently mis-emit it.
-	pkg := wrapPkg(
-		&ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Legs", Type: &ir.IntType{}}}}},
+	// End to end via statement position is covered by
+	// TestEmitTypeAssertCommaOk; expression position with CommaOK stays
+	// rejected (pinned by the reject list above).
+}
+
+// TestEmitTypeAssertCommaOk covers item 6b: the comma-ok assertion
+// `v, ok := x.(T)` lowers at statement position (declarative-region
+// `V : T := <zero>; OK : Boolean;` plus a body-entry `OK := X in
+// T'Class; if OK then V := T (X); end if;`), and its invalid shapes
+// (non-ident second LHS, interface target, method-less-interface
+// operand, non-comma-ok node at 2-LHS) are loud errors.
+func TestEmitTypeAssertCommaOk(t *testing.T) {
+	t.Parallel()
+	dog := &ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Legs", Type: &ir.IntType{}}}}}
+	speaker := &ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{{Name: "Speak"}}}}
+	anyT := &ir.TypeDecl{Name: "Any", Underlying: &ir.InterfaceType{}}
+
+	commaOKAssign := func(x ir.Expr, target ir.Type, lhs ...ir.Expr) *ir.Assign {
+		return &ir.Assign{Define: true, LHS: lhs,
+			RHS: []ir.Expr{&ir.TypeAssert{X: x, Type: target, CommaOK: true}}}
+	}
+
+	// Happy path: full package emit of `v, ok := s.(Dog)` inside a
+	// function taking a Speaker param.
+	pkg := wrapPkg(speaker, dog,
 		&ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
-			&ir.Assign{Define: true,
-				LHS: []ir.Expr{idn("v"), idn("ok")},
-				RHS: []ir.Expr{&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}}}},
+			commaOKAssign(idn("s"), &ir.NamedType{Name: "Dog"}, idn("v"), idn("ok")),
+			&ir.Return{Results: []ir.Expr{idn("v")}},
 		}},
 	)
-	// Add Speaker so the param type resolves.
-	pkg.Files[0].Decls = append([]ir.Decl{
-		&ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{{Name: "Speak"}}}},
-	}, pkg.Files[0].Decls...)
 	var buf bytes.Buffer
-	if err := Package(pkg, &buf); err == nil {
-		t.Fatalf("expected comma-ok assertion to be rejected, got:\n%s", buf.String())
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("comma-ok assertion emit failed: %v\n%s", err, buf.String())
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"V : Dog := Dog'(Legs => 0);",
+		"Ok : Boolean;",
+		"Ok := S in Dog'Class;",
+		"if Ok then",
+		"V := Dog (S);",
+		"end if;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("comma-ok output missing %q, got:\n%s", want, got)
+		}
+	}
+
+	// A fieldless struct target zero-initialises as `T'(null record)`.
+	pkgEmpty := wrapPkg(speaker,
+		&ir.TypeDecl{Name: "Empty", Underlying: &ir.StructType{}},
+		&ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			commaOKAssign(idn("s"), &ir.NamedType{Name: "Empty"}, idn("v"), idn("ok")),
+		}},
+	)
+	var bufEmpty bytes.Buffer
+	if err := Package(pkgEmpty, &bufEmpty); err != nil {
+		t.Fatalf("fieldless-target comma-ok emit failed: %v\n%s", err, bufEmpty.String())
+	}
+	if !strings.Contains(bufEmpty.String(), "V : Empty := Empty'(null record);") {
+		t.Fatalf("fieldless zero missing, got:\n%s", bufEmpty.String())
+	}
+
+	// Loud rejections at statement position.
+	bad := []struct {
+		name string
+		fn   *ir.Function
+	}{
+		{"first lhs not an ident", &ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			commaOKAssign(idn("s"), &ir.NamedType{Name: "Dog"}, &ir.Lit{Kind: ir.LitInt, Value: "1"}, idn("ok")),
+		}}},
+		{"second lhs not an ident", &ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			commaOKAssign(idn("s"), &ir.NamedType{Name: "Dog"}, idn("v"), &ir.Lit{Kind: ir.LitInt, Value: "1"}),
+		}}},
+		{"interface target", &ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			commaOKAssign(idn("s"), &ir.NamedType{Name: "Speaker"}, idn("v"), idn("ok")),
+		}}},
+		{"method-less-interface operand", &ir.Function{Name: "f", Params: []*ir.Param{{Name: "x", Type: &ir.NamedType{Name: "Any"}}}, Body: []ir.Stmt{
+			commaOKAssign(idn("x"), &ir.NamedType{Name: "Dog"}, idn("v"), idn("ok")),
+		}}},
+		{"non-comma-ok node at 2-LHS", &ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			&ir.Assign{Define: true, LHS: []ir.Expr{idn("v"), idn("ok")},
+				RHS: []ir.Expr{&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}}}},
+		}}},
+	}
+	for _, tc := range bad {
+		p := wrapPkg(speaker, dog, anyT, tc.fn)
+		var b bytes.Buffer
+		if err := Package(p, &b); err == nil {
+			t.Fatalf("%s: expected emit error, got:\n%s", tc.name, b.String())
+		}
 	}
 }
 

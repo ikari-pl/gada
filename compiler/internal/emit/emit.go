@@ -161,6 +161,7 @@ type emitter struct {
 	dispatchMethodNames map[string]bool           // file-wide set of interface method names — the only methods with an emitted subprogram (5b-i abstract op + 5c overriding body) and hence the only callable ones. A method-call selector whose name is absent would emit a dangling `X.M`, so emitCallStmt rejects it. Populated alongside interfaceNames.
 	emptyInterfaceNames map[string]bool           // file-wide set of method-less interface names (Go's `any`, or a named `interface{}`). No concrete type derives an empty interface (5b), so a type assertion `x.(T)` whose operand is one has no legal Ada view conversion; emitTypeAssert rejects it. Populated alongside interfaceNames.
 	pendingRecvs        []pendingChanRecv         // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
+	pendingAsserts      []pendingTypeAssert       // per-subprogram queue of `v, ok := x.(T)` (comma-ok, item 6b) defines whose body-side membership-test + guarded-conversion block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order (same "RHS evaluates at the := point" rule). Reset at every emitSubprogram call.
 	err                 error
 }
 
@@ -178,6 +179,19 @@ type pendingChanRecv struct {
 	OKName  string
 	Chan    ir.Expr
 	Pkg     string
+}
+
+// pendingTypeAssert pairs a `v, ok := x.(T)` (CommaOK, item 6b) LHS
+// name with its operand and the pre-validated Ada struct type name of
+// the asserted target. The declarative region has already emitted
+// `V : T := <zero>; OK : Boolean;`; emitTypeAssertBlock drains the
+// body-side `OK := X in T'Class; if OK then V := T (X); end if;` at
+// the top of the subprogram body, in source order.
+type pendingTypeAssert struct {
+	LHSName string
+	OKName  string
+	X       ir.Expr
+	Target  string
 }
 
 func newEmitter(pkg string, f *ir.File) *emitter {
@@ -1214,6 +1228,19 @@ func (e *emitter) populateLocals(fn *ir.Function) {
 		if !ok || !a.Define {
 			break
 		}
+		// Comma-ok assertion `v, ok := x.(T)` (item 6b): v binds the
+		// asserted type, ok binds bool.
+		if len(a.LHS) == 2 && len(a.RHS) == 1 {
+			if ta, ok := a.RHS[0].(*ir.TypeAssert); ok && ta.CommaOK {
+				if id, ok := a.LHS[0].(*ir.Ident); ok && ta.Type != nil {
+					e.localTypes[id.Name] = ta.Type
+				}
+				if id, ok := a.LHS[1].(*ir.Ident); ok {
+					e.localTypes[id.Name] = &ir.BoolType{}
+				}
+			}
+			continue
+		}
 		if len(a.LHS) != 1 || len(a.RHS) != 1 {
 			continue
 		}
@@ -1250,6 +1277,13 @@ func inferRHSType(x ir.Expr) (ir.Type, bool) {
 		return &ir.SliceType{Elem: x.Elem}, true
 	case *ir.MapLit:
 		return &ir.MapType{Key: x.Key, Value: x.Value}, true
+	case *ir.TypeAssert:
+		// `v := x.(T)` (single-value, item 6a) binds v to the asserted
+		// type T. The comma-ok form never lands here: populateLocals
+		// routes 2-LHS defines to its own arm.
+		if !x.CommaOK && x.Type != nil {
+			return x.Type, true
+		}
 	}
 	return nil, false
 }
@@ -1275,8 +1309,10 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 		return
 	}
 	// Reset per-subprogram state before populateLocals so leftover
-	// pending receives from a previous subprogram never bleed in.
+	// pending receives/assertions from a previous subprogram never
+	// bleed in.
 	e.pendingRecvs = nil
+	e.pendingAsserts = nil
 	e.populateLocals(fn)
 	header, name, ok := e.subpHeader(fn)
 	if !ok {
@@ -1338,9 +1374,16 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	// "RHS evaluates at the := point" semantics hold; the inner
 	// declare scope keeps Discard_OK from colliding across multiple
 	// receive sites and from leaking into the surrounding scope.
-	emittedAny := len(e.pendingRecvs) > 0
+	emittedAny := len(e.pendingRecvs) > 0 || len(e.pendingAsserts) > 0
 	for _, pr := range e.pendingRecvs {
 		e.emitChanRecvBlock(pr)
+	}
+	// Drain pending comma-ok type assertions in source order, right
+	// after the receives: each lowers to `OK := X in T'Class; if OK
+	// then V := T (X); end if;` at body level, before any subsequent
+	// body statement (Go's "RHS evaluates at the := point" semantics).
+	for _, pa := range e.pendingAsserts {
+		e.emitTypeAssertBlock(pa)
 	}
 	if len(body) > 0 {
 		for _, s := range body {
@@ -1888,15 +1931,24 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 	if e.err != nil {
 		return
 	}
-	// Comma-ok receive (`v, ok := <-c`, sub-item e) is the only
-	// 2-LHS-1-RHS shape emit accepts at the head of a function body.
-	// Detect it before the single-LHS guard fires below, then dispatch
-	// to the shared ChanRecv path; everything else with multi-LHS still
-	// hits the rejection.
+	// Comma-ok receive (`v, ok := <-c`, sub-item e) and comma-ok type
+	// assertion (`v, ok := x.(T)`, item 6b) are the two 2-LHS-1-RHS
+	// shapes emit accepts at the head of a function body. Detect them
+	// before the single-LHS guard fires below, then dispatch to their
+	// decl paths; everything else with multi-LHS still hits the
+	// rejection.
 	if len(a.LHS) == 2 && len(a.RHS) == 1 {
-		if cr, isRecv := a.RHS[0].(*ir.ChanRecv); isRecv && cr.CommaOK {
-			e.emitChanRecvDecl(a, cr)
-			return
+		switch r := a.RHS[0].(type) {
+		case *ir.ChanRecv:
+			if r.CommaOK {
+				e.emitChanRecvDecl(a, r)
+				return
+			}
+		case *ir.TypeAssert:
+			if r.CommaOK {
+				e.emitTypeAssertDecl(a, r)
+				return
+			}
 		}
 	}
 	if len(a.LHS) != 1 || len(a.RHS) != 1 {
@@ -1982,6 +2034,81 @@ func (e *emitter) emitChanRecvDecl(a *ir.Assign, cr *ir.ChanRecv) {
 		Chan:    cr.Chan,
 		Pkg:     pkg,
 	})
+}
+
+// emitTypeAssertDecl is the declarative-region emit for the comma-ok
+// form `v, ok := x.(T)` (item 6b). It validates both LHS identifiers and
+// the assertion target (same rules as the single-value form), emits
+// `V : T := <zero of T>;` — Go binds the zero value of T when the
+// assertion fails, so V is zero-initialised here and the body-side
+// block only overwrites it on a match — plus `OK : Boolean;`, and
+// queues a pendingTypeAssert for emitSubprogram to drain at body entry.
+func (e *emitter) emitTypeAssertDecl(a *ir.Assign, ta *ir.TypeAssert) {
+	vID, ok := a.LHS[0].(*ir.Ident)
+	if !ok {
+		e.fail(fmt.Errorf("emit: := lhs must be a plain identifier"))
+		return
+	}
+	okID, ok := a.LHS[1].(*ir.Ident)
+	if !ok {
+		e.fail(fmt.Errorf("emit: comma-ok := second lhs must be a plain identifier"))
+		return
+	}
+	name, st, err := e.typeAssertTarget(ta)
+	if err != nil {
+		e.fail(err)
+		return
+	}
+	zero, err := e.structZeroLit(name, st)
+	if err != nil {
+		e.fail(err)
+		return
+	}
+	e.println(adaIdent(vID.Name) + " : " + name + " := " + zero + ";")
+	e.println(adaIdent(okID.Name) + " : Boolean;")
+	e.pendingAsserts = append(e.pendingAsserts, pendingTypeAssert{
+		LHSName: vID.Name,
+		OKName:  okID.Name,
+		X:       ta.X,
+		Target:  name,
+	})
+}
+
+// structZeroLit renders the Go zero value of a struct as an Ada
+// aggregate: `T'(null record)` when fieldless, otherwise every
+// declared component at its zero value (the same fill emitStructLit
+// applies to omitted keyed-literal fields, item 5a-iii).
+func (e *emitter) structZeroLit(name string, st *ir.StructType) (string, error) {
+	if len(st.Fields) == 0 {
+		return name + "'(null record)", nil
+	}
+	parts := make([]string, 0, len(st.Fields))
+	for _, f := range st.Fields {
+		z, err := zeroValueFor(f.Type)
+		if err != nil {
+			return "", fmt.Errorf("emit: cannot zero struct %s field %q: %w", name, f.Name, err)
+		}
+		parts = append(parts, adaIdent(f.Name)+" => "+z)
+	}
+	return name + "'(" + strings.Join(parts, ", ") + ")", nil
+}
+
+// emitTypeAssertBlock lowers one queued `v, ok := x.(T)` at body entry:
+// the membership test `OK := X in T'Class` (True iff the operand's tag
+// is in T's class, RM 4.5.2 — no exception raised) followed by the
+// guarded view conversion `if OK then V := T (X); end if;`. V was
+// declared with its zero value, so a failed assertion leaves the zero,
+// matching Go. The operand is rendered twice; only side-effect-free
+// operands (in practice an identifier) are supported at this phase.
+func (e *emitter) emitTypeAssertBlock(pa pendingTypeAssert) {
+	x := e.emitExpr(pa.X)
+	ok := adaIdent(pa.OKName)
+	e.println(ok + " := " + x + " in " + pa.Target + "'Class;")
+	e.println("if " + ok + " then")
+	e.indent++
+	e.println(adaIdent(pa.LHSName) + " := " + pa.Target + " (" + x + ");")
+	e.indent--
+	e.println("end if;")
 }
 
 // inferDeclType maps a `:=` RHS to its Ada type name. Phase 1
@@ -2776,6 +2903,39 @@ func zeroValueFor(t ir.Type) (string, error) {
 	return "", fmt.Errorf("emit: no zero value for struct field %w", validStructFieldType(t))
 }
 
+// typeAssertTarget validates a type assertion's target and operand,
+// returning the Ada name of the concrete struct type being asserted to
+// plus its declaration. Shared by the single-value form (emitTypeAssert)
+// and the comma-ok form (emitTypeAssertDecl) so both enforce one rule
+// set. Only a concrete struct target is a valid Ada view conversion of a
+// class-wide operand: an interface target (`x.(I)` — a
+// does-it-implement check, not a down-conversion), and scalar/builtin
+// targets (`x.(int)`, `x.(Celsius)` — `Integer (X)` on a class-wide
+// operand is not a legal conversion) need different machinery and ride
+// later items; they are rejected loudly rather than emit invalid Ada.
+// A method-less interface operand is valid Go — every type satisfies
+// it — but no concrete type *derives* an empty interface (5b), so the
+// operand's class-wide view contains no struct and `T (X)` is an
+// illegal Ada conversion; that shape is rejected when the operand's
+// static type (known for an identifier via localTypes) is such an
+// interface.
+func (e *emitter) typeAssertTarget(a *ir.TypeAssert) (string, *ir.StructType, error) {
+	nt, ok := a.Type.(*ir.NamedType)
+	if !ok {
+		return "", nil, fmt.Errorf("emit: type assertion to a non-named type is not supported yet (item 6a covers a concrete struct target)")
+	}
+	st, isStruct := e.structByName[nt.Name]
+	if !isStruct {
+		return "", nil, fmt.Errorf("emit: type assertion x.(%s): only a concrete struct target is supported yet (item 6a); interface, named-scalar, and builtin targets ride later items", nt.Name)
+	}
+	if id, ok := a.X.(*ir.Ident); ok {
+		if ot, ok := e.localTypes[id.Name].(*ir.NamedType); ok && e.emptyInterfaceNames[ot.Name] {
+			return "", nil, fmt.Errorf("emit: type assertion x.(%s) on a method-less interface (%s) operand has no legal Ada conversion (no concrete type derives an empty interface); not supported yet", nt.Name, ot.Name)
+		}
+	}
+	return adaIdent(nt.Name), st, nil
+}
+
 // emitTypeAssert renders a single Go type assertion `x.(T)` as the Ada
 // view conversion `T (X)`. Converting a class-wide operand to a specific
 // type in its class checks the tag (RM 4.6) and raises Constraint_Error
@@ -2783,40 +2943,19 @@ func zeroValueFor(t ir.Type) (string, error) {
 // runtime approximation (a faithful Gada.Core panic rides a later item).
 // The comma-ok form `v, ok := x.(T)` (CommaOK) has no expression value —
 // it lowers to a membership test plus a guarded conversion at statement
-// position (item 6b), so it must not reach here.
+// position via emitTypeAssertDecl/emitTypeAssertBlock (item 6b), so it
+// must not reach here.
 func (e *emitter) emitTypeAssert(a *ir.TypeAssert) string {
 	if a.CommaOK {
-		e.fail(fmt.Errorf("emit: comma-ok type assertion `v, ok := x.(T)` is not supported yet (item 6b); only the single-value form `x.(T)` is"))
+		e.fail(fmt.Errorf("emit: comma-ok type assertion `v, ok := x.(T)` has no expression value; it lowers at statement position (item 6b) and must not reach emitExpr"))
 		return ""
 	}
-	// Only a concrete struct target is a valid Ada view conversion of a
-	// class-wide operand. An interface target (`x.(I)` — a
-	// does-it-implement check, not a down-conversion), and scalar/builtin
-	// targets (`x.(int)`, `x.(Celsius)` — `Integer (X)` on a class-wide
-	// operand is not a legal conversion) need different machinery and
-	// ride a later item; reject them loudly rather than emit invalid Ada.
-	nt, ok := a.Type.(*ir.NamedType)
-	if !ok {
-		e.fail(fmt.Errorf("emit: type assertion to a non-named type is not supported yet (item 6a covers a concrete struct target)"))
+	name, _, err := e.typeAssertTarget(a)
+	if err != nil {
+		e.fail(err)
 		return ""
 	}
-	if _, isStruct := e.structByName[nt.Name]; !isStruct {
-		e.fail(fmt.Errorf("emit: type assertion x.(%s): only a concrete struct target is supported yet (item 6a); interface, named-scalar, and builtin targets ride later items", nt.Name))
-		return ""
-	}
-	// A method-less interface operand is valid Go — every type satisfies
-	// it — but no concrete type *derives* an empty interface (5b), so the
-	// operand's class-wide view contains no struct and `T (X)` is an
-	// illegal Ada conversion. Reject when the operand's static type
-	// (known for an identifier via localTypes) is such an interface,
-	// rather than emit a conversion gnat would reject.
-	if id, ok := a.X.(*ir.Ident); ok {
-		if ot, ok := e.localTypes[id.Name].(*ir.NamedType); ok && e.emptyInterfaceNames[ot.Name] {
-			e.fail(fmt.Errorf("emit: type assertion x.(%s) on a method-less interface (%s) operand has no legal Ada conversion (no concrete type derives an empty interface); not supported yet", nt.Name, ot.Name))
-			return ""
-		}
-	}
-	return adaIdent(nt.Name) + " (" + e.emitExpr(a.X) + ")"
+	return name + " (" + e.emitExpr(a.X) + ")"
 }
 
 // emitSliceExpr dispatches `s[lo:hi]` (and the elided forms) to

@@ -15,6 +15,9 @@ package body Gada.Std.Errors is
      return Error_Access is
      (new Error'(Message => To_Unbounded_String (Message), Cause => Cause));
 
+   function Base_Error (Msg : String; Cause : Error_Access) return Error is
+     (Message => To_Unbounded_String (Msg), Cause => Cause);
+
    function Message (E : Error) return String is
      (To_String (E.Message));
 
@@ -35,7 +38,9 @@ package body Gada.Std.Errors is
             if X = Target then
                return True;
             end if;
-            X := X.Cause;
+            --  Dispatching call: derived error types (e.g. strconv's
+            --  Num_Error) override Unwrap to expose their own cause.
+            X := Unwrap (X);
          end loop;
          return False;
       end;
@@ -50,7 +55,7 @@ package body Gada.Std.Errors is
             Target.all := X.all;
             return True;
          end if;
-         X := X.Cause;
+         X := Unwrap (X);
       end loop;
       return False;
    end As;

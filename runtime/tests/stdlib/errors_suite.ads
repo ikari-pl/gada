@@ -14,13 +14,15 @@ package Errors_Suite is
    overriding procedure Register_Tests (T : in out Errors_Test);
    overriding function  Name (T : Errors_Test) return AUnit.Message_String;
 
-   procedure Test_New_Error_Message (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_New_Error_Message (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Unwrap_No_Cause (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Unwrap_Chain (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Is_Sentinel (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Is_Deep_Chain (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Is_Nil_Cases (T : in out AUnit.Test_Cases.Test_Case'Class);
-   procedure Test_Is_Distinct_Values (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Is_Distinct_Values (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
    procedure Test_As_Head_Match (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_As_Chain_Match (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_As_Tag_Mismatch (T : in out AUnit.Test_Cases.Test_Case'Class);

@@ -169,7 +169,8 @@ package body Gada.Std.Strings is
 
    --  Split core: appends each field to Acc. Empty Sep splits into
    --  single bytes (v1: bytes, not runes).
-   procedure Split_Into (Acc : in out String_Slice; S, Sep : String; After : Boolean) is
+   procedure Split_Into
+     (Acc : in out String_Slice; S, Sep : String; After : Boolean) is
       use String_Slices;
    begin
       if S'Length = 0 then
@@ -454,7 +455,8 @@ package body Gada.Std.Strings is
       use String_Slices;
    begin
       if Len (Oldnew) mod 2 /= 0 then
-         raise Constraint_Error with "strings.New_Replacer: odd number of strings";
+         raise Constraint_Error
+           with "strings.New_Replacer: odd number of strings";
       end if;
       declare
          N     : constant Positive := Len (Oldnew) / 2;

@@ -35,7 +35,8 @@ package Gada.Std.Errors is
 
    --  errors.WithCause — a GADA extension (Go builds these with
    --  fmt.Errorf("%w")): a fresh error whose Unwrap returns Cause.
-   function With_Cause (Message : String; Cause : Error_Access) return Error_Access;
+   function With_Cause (Message : String; Cause : Error_Access)
+     return Error_Access;
 
    --  Go's err.Error() method, as a primitive operation so both
    --  specific and class-wide calls dispatch.
@@ -57,7 +58,8 @@ package Gada.Std.Errors is
    --  target.all and the result is true. Returns false when the chain
    --  is exhausted (Go panics on a non-pointer target; our `not null`
    --  access formal makes that a caller-side constraint instead).
-   function As (Err : Error_Access; Target : not null access Error'Class) return Boolean;
+   function As (Err : Error_Access; Target : not null access Error'Class)
+     return Boolean;
 
 private
 

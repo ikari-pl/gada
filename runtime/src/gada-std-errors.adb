@@ -10,7 +10,8 @@ package body Gada.Std.Errors is
    function New_K (Message : String) return Error_Access is
      (new Error'(Message => To_Unbounded_String (Message), Cause => null));
 
-   function With_Cause (Message : String; Cause : Error_Access) return Error_Access is
+   function With_Cause (Message : String; Cause : Error_Access)
+     return Error_Access is
      (new Error'(Message => To_Unbounded_String (Message), Cause => Cause));
 
    function Error (E : Error) return String is
@@ -39,7 +40,8 @@ package body Gada.Std.Errors is
       end;
    end Is_K;
 
-   function As (Err : Error_Access; Target : not null access Error'Class) return Boolean is
+   function As (Err : Error_Access; Target : not null access Error'Class)
+     return Boolean is
       X : Error_Access := Err;
    begin
       while X /= null loop

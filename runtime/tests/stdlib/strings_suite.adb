@@ -35,19 +35,23 @@ package body Strings_Suite is
    overriding procedure Register_Tests (T : in out Strings_Test) is
       use AUnit.Test_Cases.Registration;
    begin
-      Register_Routine (T, Test_Contains'Access, "Contains/ContainsAny/ContainsRune");
-      Register_Routine (T, Test_Count_Non_Overlapping'Access, "Count is non-overlapping");
+      Register_Routine (T, Test_Contains'Access,
+      "Contains/ContainsAny/ContainsRune");
+      Register_Routine (T, Test_Count_Non_Overlapping'Access, "Count is
+      non-overlapping");
       Register_Routine (T, Test_Equal_Fold'Access, "EqualFold ASCII");
       Register_Routine (T, Test_Prefix_Suffix'Access, "HasPrefix/HasSuffix");
       Register_Routine (T, Test_Index_Family'Access, "Index family 0-based/-1");
       Register_Routine (T, Test_Last_Index_Family'Access, "LastIndex family");
       Register_Routine (T, Test_Split'Access, "Split");
       Register_Routine (T, Test_Split_N'Access, "SplitN caps");
-      Register_Routine (T, Test_Split_After_And_Empty_Sep'Access, "SplitAfter + empty sep");
+      Register_Routine (T, Test_Split_After_And_Empty_Sep'Access, "SplitAfter +
+      empty sep");
       Register_Routine (T, Test_Join'Access, "Join");
       Register_Routine (T, Test_Fields'Access, "Fields/FieldsFunc");
       Register_Routine (T, Test_Trim_Family'Access, "Trim/TrimLeft/TrimRight");
-      Register_Routine (T, Test_Trim_Space_Prefix_Suffix'Access, "TrimSpace/TrimPrefix/TrimSuffix");
+      Register_Routine (T, Test_Trim_Space_Prefix_Suffix'Access,
+      "TrimSpace/TrimPrefix/TrimSuffix");
       Register_Routine (T, Test_Case_And_Map'Access, "ToUpper/ToLower/Map");
       Register_Routine (T, Test_Repeat'Access, "Repeat incl. count 0");
       Register_Routine (T, Test_Replace'Access, "Replace/ReplaceAll incl. N");
@@ -64,7 +68,8 @@ package body Strings_Suite is
       Assert (not Contains_Rune ("seafood", 'z'), "not ContainsRune");
    end Test_Contains;
 
-   procedure Test_Count_Non_Overlapping (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Count_Non_Overlapping (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
    begin
       Assert (Count ("aaaa", "aa") = 2, "aaaa/aa counts non-overlapping = 2");
       Assert (Count ("abc", "") = 4, "empty substr = len+1");
@@ -100,7 +105,8 @@ package body Strings_Suite is
       Assert (Index_Rune ("chicken", 'n') = 6, "IndexRune");
    end Test_Index_Family;
 
-   procedure Test_Last_Index_Family (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Last_Index_Family (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
    begin
       Assert (Last_Index ("chicken", "ken") = 4, "LastIndex");
       Assert (Last_Index ("go go go", "go") = 6, "LastIndex repeated");
@@ -119,11 +125,13 @@ package body Strings_Suite is
    procedure Test_Split_N (T : in out AUnit.Test_Cases.Test_Case'Class) is
    begin
       Check_Slice (T, Split_N ("a,b,c,d", ",", 2), (1 => "a", 2 => "b,c,d"));
-      Check_Slice (T, Split_N ("a,b,c", ",", -1), (1 => "a", 2 => "b", 3 => "c"));
+      Check_Slice (T, Split_N ("a,b,c", ",", -1), (1 => "a", 2 => "b", 3 =>
+      "c"));
       Check_Slice (T, Split_N ("a,b,c", ",", 0), (1 .. 0 => ""));
    end Test_Split_N;
 
-   procedure Test_Split_After_And_Empty_Sep (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Split_After_And_Empty_Sep (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
    begin
       Check_Slice (T, Split_After ("a,b", ","), (1 => "a,", 2 => "b"));
       Check_Slice (T, Split ("abc", ""), (1 => "a", 2 => "b", 3 => "c"));
@@ -151,7 +159,8 @@ package body Strings_Suite is
       Assert (Trim ("", "x") = "", "Trim empty");
    end Test_Trim_Family;
 
-   procedure Test_Trim_Space_Prefix_Suffix (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Trim_Space_Prefix_Suffix (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
    begin
       Assert (Trim_Space ("  hi\t\n") = "hi", "TrimSpace");
       Assert (Trim_Prefix ("foobar", "foo") = "bar", "TrimPrefix");
@@ -188,8 +197,10 @@ package body Strings_Suite is
    begin
       --  pairs: cat→dog, bird→cat; "cat cat" → "dog dog" (priority:
       --  cat before bird doesn't matter here)
-      Assert (Replace (R, "cat cat bird") = "dog dog cat", "Replacer replaces all");
-      Assert (Replace (New_Replacer (Split ("aa,a", ",")), "aaa") = "aa", "first-listed wins at a position");
+      Assert (Replace (R, "cat cat bird") = "dog dog cat", "Replacer replaces
+      all");
+      Assert (Replace (New_Replacer (Split ("aa,a", ",")), "aaa") = "aa",
+      "first-listed wins at a position");
    end Test_Replacer;
 
 end Strings_Suite;

@@ -105,7 +105,7 @@ package body Gada.Std.Strconv is
          when 'v' => Append (Value, Character'Val (11)); I := I + 2;
          when '\' => Append (Value, '\');                I := I + 2;
          when '"' => Append (Value, '"');                I := I + 2;
-         when '\'' => Append (Value, '\'');              I := I + 2;
+         when '''' => Append (Value, '''');               I := I + 2;
          when 'x' =>
             declare
                V : constant Integer := Hex_N (S, I + 2, 2);
@@ -272,9 +272,9 @@ package body Gada.Std.Strconv is
             return Format_Sci (F, Natural'Min (K, Nd) - 1, Upper);
          end if;
          declare
-            Digits : constant Natural := (if Shortest then Nd else Eprec);
+            N_Dig : constant Natural := (if Shortest then Nd else Eprec);
          begin
-            return Format_Fixed (F, Natural'Max (0, Digits - 1 - Exp10));
+            return Format_Fixed (F, Natural'Max (0, N_Dig - 1 - Exp10));
          end;
       end;
    end Format_General;
@@ -374,7 +374,7 @@ package body Gada.Std.Strconv is
       I        : Integer := S'First;
       Neg      : Boolean := False;
       Acc      : Long_Integer := 0;
-      Digits   : Natural := 0;
+      N_Dig    : Natural := 0;
       Overflow : Boolean := False;
       Limit    : Long_Integer;
    begin
@@ -395,7 +395,7 @@ package body Gada.Std.Strconv is
       Limit := (if Neg then -Long_Integer (Integer'First)
                 else Long_Integer (Integer'Last));
       while I <= S'Last and then S (I) in '0' .. '9' loop
-         Digits := Digits + 1;
+         N_Dig := N_Dig + 1;
          declare
             D : constant Long_Integer :=
               Long_Integer (Character'Pos (S (I)) - Character'Pos ('0'));
@@ -410,7 +410,7 @@ package body Gada.Std.Strconv is
          end;
          I := I + 1;
       end loop;
-      if Digits = 0 or else I <= S'Last then
+      if N_Dig = 0 or else I <= S'Last then
          Err := New_Num_Error ("Atoi", S, Err_Syntax);
          return;
       end if;
@@ -478,18 +478,18 @@ package body Gada.Std.Strconv is
       --  Special values: "nan", "inf", "infinity", any case, with an
       --  optional sign (Go's contract).
       declare
-         Body : constant String :=
+         Core : constant String :=
            (if S (S'First) = '+' or else S (S'First) = '-'
             then S (S'First + 1 .. S'Last)
             else S);
          Neg  : constant Boolean := S (S'First) = '-';
       begin
-         if Equal_Ignore_Case (Body, "nan") then
+         if Equal_Ignore_Case (Core, "nan") then
             Value := NaN_Float;
             return;
          end if;
-         if Equal_Ignore_Case (Body, "inf")
-           or else Equal_Ignore_Case (Body, "infinity")
+         if Equal_Ignore_Case (Core, "inf")
+           or else Equal_Ignore_Case (Core, "infinity")
          then
             Value := (if Neg then -Inf_Float else Inf_Float);
             return;
@@ -595,7 +595,7 @@ package body Gada.Std.Strconv is
       end if;
       if S (S'First) = '\'' then
          --  Char literal: exactly one character or one escape sequence.
-         if S (S'Last) /= '\'' then
+         if S (S'Last) /= '''' then
             Syntax;
             return;
          end if;

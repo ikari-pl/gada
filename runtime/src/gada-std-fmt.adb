@@ -86,8 +86,8 @@ package body Gada.Std.Fmt is
          return "0";
       end if;
       while M > 0 loop
-         Append (B, Digs (1 + Natural (M mod Base)));
-         M := M / Base;
+         Append (B, Digs (1 + Natural (M mod Long_Integer (Base))));
+         M := M / Long_Integer (Base);
       end loop;
       --  B is LSB-first; reverse it.
       declare
@@ -229,7 +229,7 @@ package body Gada.Std.Fmt is
                         return Pad (T, Sp, False);
                      end;
                   when 'q' =>
-                     return Pad (Strings.Quote (S), Sp, False);
+                     return Pad (Strconv.Quote (S), Sp, False);
                   when others =>
                      Bad := True;
                      return "%!" & Sp.Verb & "(BADVERB)";
@@ -248,7 +248,7 @@ package body Gada.Std.Fmt is
                when 'c' | 'v' =>
                   return Pad (String'(1 => X.C), Sp, False);
                when 'q' =>
-                  return Pad (Strings.Quote (String'(1 => X.C)),
+                  return Pad (Strconv.Quote (String'(1 => X.C)),
                               Sp, False);
                when others =>
                   Bad := True;

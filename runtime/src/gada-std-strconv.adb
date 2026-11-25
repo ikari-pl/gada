@@ -383,11 +383,13 @@ package body Gada.Std.Strconv is
             end loop;
          end if;
       else
-         for I in reverse (RDP + 1) .. RN loop
+         --  Integer part: digits R (RN) .. R (RN - RDP + 1), MSB first;
+         --  fraction: R (RN - RDP) .. R (1), MSB first.
+         for I in reverse (RN - RDP + 1) .. RN loop
             Append_Digit (S, R (I));
          end loop;
          Append (S, '.');
-         for I in reverse 1 .. RDP loop
+         for I in reverse 1 .. (RN - RDP) loop
             Append_Digit (S, R (I));
          end loop;
          for K in 1 .. Aft - (RN - RDP) loop

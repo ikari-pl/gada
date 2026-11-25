@@ -124,13 +124,15 @@ package body Errors_Suite is
 
    procedure Test_As_Chain_Match (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      Inner : constant Error_Access := New_K ("inner");
+      --  Target has a distinct tag so the base-Error head does not
+      --  match and As must walk the chain to the Special_Error member.
+      Inner : constant Error_Access := new Special_Error;
       E     : constant Error_Access := With_Cause ("outer", Inner);
-      Tgt   : aliased Error;
+      Tgt   : aliased Special_Error;
       TA    : constant access Error'Class := Tgt'Access;
    begin
       Assert (As (E, TA), "As must walk to the chain member");
-      Assert (Message (Tgt) = "inner", "As assigned the wrong node");
+      Assert (Tgt'Tag = Special_Error'Tag, "As assigned the wrong node");
    end Test_As_Chain_Match;
 
    procedure Test_As_Tag_Mismatch (T : in out

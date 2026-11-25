@@ -141,8 +141,8 @@ package body Strings_Suite is
    begin
       Assert (Last_Index ("chicken", "ken") = 4, "LastIndex");
       Assert (Last_Index ("go go go", "go") = 6, "LastIndex repeated");
-      Assert (Last_Index_Any ("chicken", "aeiou") = 6, "LastIndexAny");
-      Assert (Last_Index_Byte ("chicken", 'c') = 0, "LastIndexByte");
+      Assert (Last_Index_Any ("chicken", "aeiou") = 5, "LastIndexAny");
+      Assert (Last_Index_Byte ("chicken", 'c') = 3, "LastIndexByte");
       Assert (Last_Index ("abc", "xyz") = -1, "LastIndex missing = -1");
    end Test_Last_Index_Family;
 

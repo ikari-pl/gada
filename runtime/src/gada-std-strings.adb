@@ -506,16 +506,18 @@ package body Gada.Std.Strings is
                end;
             end loop;
             if Best_Pos < 0 then
-               Append (B, S (Start .. S'Last));
-               return To_String (B);
-            end if;
+               --  No pair matches at Start: copy one byte and
+               --  advance (Go scans for the leftmost match).
+               Append (B, S (Start .. Start));
+               Start := Start + 1;
+            else
             declare
                Old : constant String := To_String (R.Pairs (Best_I).Old);
             begin
                Append (B, S (Start .. Best_Pos - 1));
                Append (B, To_String (R.Pairs (Best_I).New_Text));
                Start := Best_Pos + Old'Length;
-            end;
+            end if;
          end;
       end loop;
       return To_String (B);

@@ -19,7 +19,7 @@ package body IO_Suite is
       Pos  : Natural := 1;
    end record;
 
-   overriding function Read (R : Mem_Reader; Data : out String;
+   overriding function Read (R : in out Mem_Reader; Data : out String;
                              N : out Natural) return Errors.Error_Access is
       Remaining : constant Natural := Length (R.Data) - R.Pos + 1;
       M         : constant Natural :=
@@ -42,7 +42,7 @@ package body IO_Suite is
       Data : Unbounded_String;
    end record;
 
-   overriding function Write (W : Mem_Writer; Data : String;
+   overriding function Write (W : in out Mem_Writer; Data : String;
                               N : out Natural) return Errors.Error_Access is
    begin
       Append (W.Data, Data);
@@ -53,7 +53,7 @@ package body IO_Suite is
    --  Failing reader: hard error on the first Read.
    type Fail_Reader is new Reader with null record;
 
-   overriding function Read (R : Fail_Reader; Data : out String;
+   overriding function Read (R : in out Fail_Reader; Data : out String;
                              N : out Natural) return Errors.Error_Access is
       pragma Unreferenced (R, Data);
    begin
@@ -64,13 +64,17 @@ package body IO_Suite is
    --  Failing writer: hard error on every Write.
    type Fail_Writer is new Writer with null record;
 
-   overriding function Write (W : Fail_Writer; Data : String;
+   overriding function Write (W : in out Fail_Writer; Data : String;
                               N : out Natural) return Errors.Error_Access is
       pragma Unreferenced (W, Data);
    begin
       N := 0;
       return Errors.New_K ("write failed");
    end Write;
+
+   function Mem_Src (S : String) return Reader_Access is
+     (new Mem_Reader'(Reader with Data => To_Unbounded_String (S),
+                      Pos => 1));
 
    overriding function Name
      (T : IO_Test) return AUnit.Message_String is
@@ -89,51 +93,49 @@ package body IO_Suite is
 
    procedure Test_EOF_Sentinel (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      R : aliased Mem_Reader :=
-        (Data => To_Unbounded_String (""), Pos => 1);
+      Src : constant Reader_Access := Mem_Src ("");
       Buf : String (1 .. 4);
       N   : Natural;
       E   : Errors.Error_Access;
    begin
       Assert (Errors.Is_K (EOF, EOF), "EOF Is itself");
       Assert (EOF /= Errors.No_Error, "EOF is not nil");
-      E := Read (R, Buf, N);
+      E := Read (Src.all, Buf, N);
       Assert (N = 0 and Errors.Is_K (E, EOF), "empty reader returns EOF");
    end Test_EOF_Sentinel;
 
    procedure Test_Copy (T : in out AUnit.Test_Cases.Test_Case'Class) is
-      R : aliased Mem_Reader :=
-        (Data => To_Unbounded_String ("hello world"), Pos => 1);
-      W : aliased Mem_Writer;
-      N : Natural;
-      E : Errors.Error_Access;
+      Src : constant Reader_Access := Mem_Src ("hello world");
+      Dst : constant Writer_Access := new Mem_Writer;
+      N   : Natural;
+      E   : Errors.Error_Access;
    begin
-      Copy (W'Access, R'Access, N, E);
+      Copy (Dst, Src, N, E);
       Assert (E = Errors.No_Error, "Copy err = No_Error");
       Assert (N = 11, "Copy wrote 11 bytes, got" & Integer'Image (N));
-      Assert (To_String (W.Data) = "hello world", "Copy content");
+      Assert (To_String (Mem_Writer (Dst.all).Data) = "hello world",
+              "Copy content");
    end Test_Copy;
 
    procedure Test_Copy_Empty (T : in out AUnit.Test_Cases.Test_Case'Class) is
-      R : aliased Mem_Reader :=
-        (Data => To_Unbounded_String (""), Pos => 1);
-      W : aliased Mem_Writer;
-      N : Natural;
-      E : Errors.Error_Access;
+      Src : constant Reader_Access := Mem_Src ("");
+      Dst : constant Writer_Access := new Mem_Writer;
+      N   : Natural;
+      E   : Errors.Error_Access;
    begin
-      Copy (W'Access, R'Access, N, E);
+      Copy (Dst, Src, N, E);
       Assert (E = Errors.No_Error and N = 0, "Copy of empty: 0, no error");
-      Assert (Length (W.Data) = 0, "nothing written");
+      Assert (Length (Mem_Writer (Dst.all).Data) = 0, "nothing written");
    end Test_Copy_Empty;
 
    procedure Test_Copy_Read_Error (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      R : aliased Fail_Reader;
-      W : aliased Mem_Writer;
-      N : Natural;
-      E : Errors.Error_Access;
+      Src : constant Reader_Access := new Fail_Reader;
+      Dst : constant Writer_Access := new Mem_Writer;
+      N   : Natural;
+      E   : Errors.Error_Access;
    begin
-      Copy (W'Access, R'Access, N, E);
+      Copy (Dst, Src, N, E);
       Assert (E /= Errors.No_Error and not Errors.Is_K (E, EOF),
               "read error propagates");
       Assert (N = 0, "nothing written");
@@ -141,25 +143,23 @@ package body IO_Suite is
 
    procedure Test_Copy_Write_Error (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      R : aliased Mem_Reader :=
-        (Data => To_Unbounded_String ("data"), Pos => 1);
-      W : aliased Fail_Writer;
-      N : Natural;
-      E : Errors.Error_Access;
+      Src : constant Reader_Access := Mem_Src ("data");
+      Dst : constant Writer_Access := new Fail_Writer;
+      N   : Natural;
+      E   : Errors.Error_Access;
    begin
-      Copy (W'Access, R'Access, N, E);
+      Copy (Dst, Src, N, E);
       Assert (E /= Errors.No_Error and not Errors.Is_K (E, EOF),
               "write error propagates");
       Assert (N = 0, "failed write counts 0");
    end Test_Copy_Write_Error;
 
    procedure Test_Read_All (T : in out AUnit.Test_Cases.Test_Case'Class) is
-      R    : aliased Mem_Reader :=
-        (Data => To_Unbounded_String ("all of it"), Pos => 1);
+      Src  : constant Reader_Access := Mem_Src ("all of it");
       Data : Unbounded_String;
       E    : Errors.Error_Access;
    begin
-      Read_All (R'Access, Data, E);
+      Read_All (Src, Data, E);
       Assert (E = Errors.No_Error, "ReadAll err = No_Error (EOF swallowed)");
       Assert (To_String (Data) = "all of it", "ReadAll content");
    end Test_Read_All;

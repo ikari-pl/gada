@@ -15,13 +15,16 @@ package body Bufio_Suite is
 
    use type Errors.Error_Access;
 
+   LF : constant Character := Character'Val (10);
+   CR : constant Character := Character'Val (13);
+
    --  Same in-memory doubles as IO_Suite (each suite is standalone).
    type Mem_Reader is new IO.Reader with record
       Data : Unbounded_String;
       Pos  : Natural := 1;
    end record;
 
-   overriding function Read (R : Mem_Reader; Data : out String;
+   overriding function Read (R : in out Mem_Reader; Data : out String;
                              N : out Natural) return Errors.Error_Access is
       Remaining : constant Natural := Length (R.Data) - R.Pos + 1;
       M         : constant Natural :=
@@ -43,7 +46,7 @@ package body Bufio_Suite is
       Data : Unbounded_String;
    end record;
 
-   overriding function Write (W : Mem_Writer; Data : String;
+   overriding function Write (W : in out Mem_Writer; Data : String;
                               N : out Natural) return Errors.Error_Access is
    begin
       Append (W.Data, Data);
@@ -53,7 +56,7 @@ package body Bufio_Suite is
 
    type Fail_Reader is new IO.Reader with null record;
 
-   overriding function Read (R : Fail_Reader; Data : out String;
+   overriding function Read (R : in out Fail_Reader; Data : out String;
                              N : out Natural) return Errors.Error_Access is
       pragma Unreferenced (R, Data);
    begin
@@ -63,13 +66,17 @@ package body Bufio_Suite is
 
    type Fail_Writer is new IO.Writer with null record;
 
-   overriding function Write (W : Fail_Writer; Data : String;
+   overriding function Write (W : in out Fail_Writer; Data : String;
                               N : out Natural) return Errors.Error_Access is
       pragma Unreferenced (W, Data);
    begin
       N := 0;
       return Errors.New_K ("write failed");
    end Write;
+
+   function Buf_Src (S : String) return IO.Reader_Access is
+     (new Mem_Reader'(IO.Reader with Data => To_Unbounded_String (S),
+                      Pos => 1));
 
    function Long_Xs (N : Natural) return String is
       R : String (1 .. N);
@@ -100,8 +107,7 @@ package body Bufio_Suite is
 
    procedure Test_Reader_Read (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      R   : Reader := New_Reader
-        (new Mem_Reader'(Data => To_Unbounded_String ("hello"), Pos => 1));
+      R   : Reader := New_Reader (Buf_Src ("hello"));
       Buf : String (1 .. 2);
       N   : Natural;
       E   : Errors.Error_Access;
@@ -118,10 +124,7 @@ package body Bufio_Suite is
 
    procedure Test_Read_Line (T : in out AUnit.Test_Cases.Test_Case'Class) is
       R    : Reader := New_Reader
-        (new Mem_Reader'(Data => To_Unbounded_String ("ab" & Character'Val (10)
-                                 & "cd" & Character'Val (13)
-                                 & Character'Val (10) & "ef"),
-                         Pos => 1));
+        (Buf_Src ("ab" & LF & "cd" & CR & LF & "ef"));
       Line : Unbounded_String;
       Pre  : Boolean;
       E    : Errors.Error_Access;
@@ -142,10 +145,7 @@ package body Bufio_Suite is
 
    procedure Test_Read_Line_Long (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      R    : Reader := New_Reader
-        (new Mem_Reader'(Data => To_Unbounded_String
-                           (Long_Xs (5000) & Character'Val (10)),
-                         Pos => 1));
+      R    : Reader := New_Reader (Buf_Src (Long_Xs (5000) & LF));
       Line : Unbounded_String;
       Pre  : Boolean;
       E    : Errors.Error_Access;
@@ -159,9 +159,7 @@ package body Bufio_Suite is
 
    procedure Test_Read_String (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      R : Reader := New_Reader
-        (new Mem_Reader'(Data => To_Unbounded_String ("key:value;rest"),
-                         Pos => 1));
+      R : Reader := New_Reader (Buf_Src ("key:value;rest"));
       S : Unbounded_String;
       E : Errors.Error_Access;
    begin
@@ -198,10 +196,7 @@ package body Bufio_Suite is
 
    procedure Test_Scanner (T : in out AUnit.Test_Cases.Test_Case'Class) is
       S : Scanner := New_Scanner
-        (new Mem_Reader'(Data => To_Unbounded_String
-                           ("one" & Character'Val (10) & "two"
-                            & Character'Val (10) & "three"),
-                         Pos => 1));
+        (Buf_Src ("one" & LF & "two" & LF & "three"));
    begin
       Assert (Scan (S) and Text (S) = "one", "token 1");
       Assert (Scan (S) and Text (S) = "two", "token 2");
@@ -212,10 +207,7 @@ package body Bufio_Suite is
 
    procedure Test_Scanner_Long_And_Error (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      S : Scanner := New_Scanner
-        (new Mem_Reader'(Data => To_Unbounded_String
-                           (Long_Xs (5000) & Character'Val (10)),
-                         Pos => 1));
+      S : Scanner := New_Scanner (Buf_Src (Long_Xs (5000) & LF));
    begin
       Assert (Scan (S) and then Length (Text (S)) = 5000,
               "long line reassembled from prefixes");
@@ -229,28 +221,31 @@ package body Bufio_Suite is
    end Test_Scanner_Long_And_Error;
 
    procedure Test_Writer (T : in out AUnit.Test_Cases.Test_Case'Class) is
-      W : aliased Mem_Writer;
-      B : Writer := New_Writer (W'Access);
-      N : Natural;
-      E : Errors.Error_Access;
+      Dst : constant IO.Writer_Access := new Mem_Writer;
+      B   : Writer := New_Writer (Dst);
+      N   : Natural;
+      E   : Errors.Error_Access;
    begin
       Write_String (B, "abc", N, E);
       Assert (N = 3 and E = Errors.No_Error and Len (B) = 3,
               "buffered write");
-      Assert (Length (W.Data) = 0, "nothing flushed yet");
+      Assert (Length (Mem_Writer (Dst.all).Data) = 0,
+              "nothing flushed yet");
       Flush (B, E);
       Assert (E = Errors.No_Error and Len (B) = 0, "flush clears");
-      Assert (To_String (W.Data) = "abc", "flushed content");
+      Assert (To_String (Mem_Writer (Dst.all).Data) = "abc",
+              "flushed content");
       Flush (B, E);
       Assert (E = Errors.No_Error, "flush of empty buffer is a no-op");
       --  Auto-flush when the buffer fills.
       Write (B, Long_Xs (5000), N, E);
       Assert (N = 5000 and E = Errors.No_Error, "big write ok");
-      Assert (Length (W.Data) = 3 + 5000, "auto-flushed at 4096");
+      Assert (Length (Mem_Writer (Dst.all).Data) = 3 + 5000,
+              "auto-flushed at 4096");
       --  Flush error keeps the data buffered and reports the error.
       declare
-         F  : aliased Fail_Writer;
-         B2 : Writer := New_Writer (F'Access);
+         F  : constant IO.Writer_Access := new Fail_Writer;
+         B2 : Writer := New_Writer (F);
       begin
          Write_String (B2, Long_Xs (5000), N, E);
          Assert (E /= Errors.No_Error and not Errors.Is_K (E, IO.EOF),

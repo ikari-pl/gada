@@ -26,14 +26,14 @@ package Gada.Std.IO is
    type Reader is abstract tagged private;
    type Reader_Access is access all Reader'Class;
 
-   function Read (R : Reader; Data : out String; N : out Natural)
+   function Read (R : in out Reader; Data : out String; N : out Natural)
       return Gada.Std.Errors.Error_Access is abstract;
 
    --  Go: type Writer interface { Write(p []byte) (n int, err error) }
    type Writer is abstract tagged private;
    type Writer_Access is access all Writer'Class;
 
-   function Write (W : Writer; Data : String; N : out Natural)
+   function Write (W : in out Writer; Data : String; N : out Natural)
       return Gada.Std.Errors.Error_Access is abstract;
 
    --  Go: func Copy(dst Writer, src Reader) (written int64, err error)

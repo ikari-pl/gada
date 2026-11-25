@@ -11,13 +11,17 @@ package body Strings_Suite is
    HT : constant Character := Character'Val (9);   --  tab
    LF : constant Character := Character'Val (10);  --  line feed
 
+   --  Named unconstrained array type (anonymous array parameter types
+   --  are not legal Ada).
+   type String_Array is array (Positive range <>) of String;
+
    function Is_Upper (C : Character) return Boolean is
      (C in 'A' .. 'Z');
 
    procedure Check_Slice
      (T    : in out AUnit.Test_Cases.Test_Case'Class;
       Got  : String_Slice;
-      Want : array of String)
+      Want : String_Array)
    is
       use String_Vectors;
    begin

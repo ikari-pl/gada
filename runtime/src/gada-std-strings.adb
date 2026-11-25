@@ -199,11 +199,10 @@ package body Gada.Std.Strings is
                Pos : constant Integer := Start + I;
             begin
                if After then
-                  Acc := Append (Acc, To_Unbounded_String (S (Start .. Pos +
-         Sep'Length - 1)));
+                  Append
+                    (Acc, To_Unbounded_String (S (Start .. Pos + Sep'Length - 1)));
                else
-                  Acc := Append (Acc, To_Unbounded_String (S (Start .. Pos -
-         1)));
+                  Append (Acc, To_Unbounded_String (S (Start .. Pos - 1)));
                end if;
                Start := Pos + Sep'Length;
             end;
@@ -258,8 +257,7 @@ package body Gada.Std.Strings is
                Pos : constant Integer := Start + I;
             begin
                if I < 0 then
-                  Acc := Append (Acc, To_Unbounded_String (S (Start ..
-         S'Last)));
+                  Append (Acc, To_Unbounded_String (S (Start .. S'Last)));
                   return Acc;
                end if;
                Append (Acc, To_Unbounded_String (S (Start .. Pos - 1)));

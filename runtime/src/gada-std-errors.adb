@@ -4,6 +4,7 @@
 --  conditional expressions for the null-guarded ones.
 
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
+with Ada.Tags; use Ada.Tags;
 
 package body Gada.Std.Errors is
 
@@ -14,7 +15,7 @@ package body Gada.Std.Errors is
      return Error_Access is
      (new Error'(Message => To_Unbounded_String (Message), Cause => Cause));
 
-   function Error (E : Error) return String is
+   function Message (E : Error) return String is
      (To_String (E.Message));
 
    function Unwrap (E : Error_Access) return Error_Access is

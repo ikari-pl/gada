@@ -39,8 +39,9 @@ package Gada.Std.Errors is
      return Error_Access;
 
    --  Go's err.Error() method, as a primitive operation so both
-   --  specific and class-wide calls dispatch.
-   function Error (E : Error) return String;
+   --  specific and class-wide calls dispatch. Named Message because
+   --  a subprogram cannot share the type's name (homograph rule).
+   function Message (E : Error) return String;
 
    --  errors.Unwrap(err) — the cause, or No_Error.
    function Unwrap (E : Error_Access) return Error_Access;

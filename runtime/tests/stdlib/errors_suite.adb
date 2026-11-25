@@ -47,8 +47,8 @@ package body Errors_Suite is
       E : constant Error_Access := New_K ("boom");
    begin
       Assert (E /= No_Error, "New_K must not return No_Error");
-      Assert (Error (E.all) = "boom", "Error() must return the message, got: "
-      & Error (E.all));
+      Assert (Message (E.all) = "boom", "Message() must return the message, got: "
+      & Message (E.all));
    end Test_New_Error_Message;
 
    procedure Test_Unwrap_No_Cause (T : in out AUnit.Test_Cases.Test_Case'Class)
@@ -66,8 +66,8 @@ package body Errors_Suite is
       Mid  : constant Error_Access := With_Cause ("mid", Root);
       Top  : constant Error_Access := With_Cause ("top", Mid);
    begin
-      Assert (Error (Unwrap (Top).all) = "mid", "Top unwraps to Mid");
-      Assert (Error (Unwrap (Unwrap (Top)).all) = "root", "Top unwraps twice to
+      Assert (Message (Unwrap (Top).all) = "mid", "Top unwraps to Mid");
+      Assert (Message (Unwrap (Unwrap (Top)).all) = "root", "Top unwraps twice to
       Root");
       Assert (Unwrap (Unwrap (Unwrap (Top))) = No_Error, "chain ends at
       No_Error");
@@ -112,7 +112,7 @@ package body Errors_Suite is
       TA  : constant access Error'Class := Tgt'Access;
    begin
       Assert (As (E, TA), "As must match the head");
-      Assert (Error (Tgt) = "head", "As must assign the matched value");
+      Assert (Message (Tgt) = "head", "As must assign the matched value");
    end Test_As_Head_Match;
 
    procedure Test_As_Chain_Match (T : in out AUnit.Test_Cases.Test_Case'Class)
@@ -123,7 +123,7 @@ package body Errors_Suite is
       TA    : constant access Error'Class := Tgt'Access;
    begin
       Assert (As (E, TA), "As must walk to the chain member");
-      Assert (Error (Tgt) = "inner", "As assigned the wrong node");
+      Assert (Message (Tgt) = "inner", "As assigned the wrong node");
    end Test_As_Chain_Match;
 
    procedure Test_As_Tag_Mismatch (T : in out AUnit.Test_Cases.Test_Case'Class)

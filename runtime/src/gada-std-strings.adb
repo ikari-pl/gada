@@ -517,6 +517,7 @@ package body Gada.Std.Strings is
                Append (B, S (Start .. Best_Pos - 1));
                Append (B, To_String (R.Pairs (Best_I).New_Text));
                Start := Best_Pos + Old'Length;
+            end;
             end if;
          end;
       end loop;

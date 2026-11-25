@@ -304,6 +304,35 @@ package body Gada.Std.Strconv is
       end;
    end Round_To;
 
+   --  Rounds the exact digits at the 10^-Aft position ('f' with an
+   --  explicit precision): keeps DP + Aft digits when that is >= 1,
+   --  otherwise the result is 0 or 10^-Aft (round half to even).
+   procedure Round_At (B : Big_Num; Len : Natural; DP : Integer;
+                       Aft : Natural; R : out Big_Num; RN : out Natural;
+                       RDP : out Integer) is
+   begin
+      if DP + Aft >= 1 then
+         Round_To (B, Len, DP, DP + Aft, R, RN, RDP);
+         return;
+      end if;
+      RDP := 1 - Aft;
+      RN  := 1;
+      declare
+         Lower : Boolean := False;
+      begin
+         for I in 1 .. Len - 1 loop
+            if B (I) /= 0 then
+               Lower := True;
+            end if;
+         end loop;
+         if B (Len) > 5 or else (B (Len) = 5 and then Lower) then
+            R (1) := 1;  --  round up to 10^-Aft (kept 0 is even: ties down)
+         else
+            R (1) := 0;
+         end if;
+      end;
+   end Round_At;
+
    procedure Append_Digit (S : in out Unbounded_String; D : Natural) is
    begin
       Append (S, Character'Val (Character'Pos ('0') + D));
@@ -604,7 +633,7 @@ package body Gada.Std.Strconv is
                                 Natural'Max (0, K - RDP));
                end;
             end if;
-            Round_To (B, Len, DP, Natural'Max (1, DP + Prec), R, RN, RDP);
+            Round_At (B, Len, DP, Prec, R, RN, RDP);
             return Fmt_F (Neg, R, RN, RDP, Prec);
          when 'e' | 'E' =>
             declare

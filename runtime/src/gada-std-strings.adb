@@ -451,6 +451,7 @@ package body Gada.Std.Strings is
             end if;
          end;
       end loop;
+      return To_String (B);
    end Replace;
 
    function Replace_All (S, Old, New_Text : String) return String is

@@ -95,7 +95,7 @@ package body Gada.Std.Bufio is
                if Length (Line) > 0
                  and then Element (Line, Length (Line)) = CR
                then
-                  Delete (Line, Length (Line), 1);
+                  Line := Head (Line, Length (Line) - 1);
                end if;
                return;
             end if;

@@ -8,6 +8,9 @@ with Gada.Std.Strings; use Gada.Std.Strings;
 
 package body Strings_Suite is
 
+   HT : constant Character := Character'Val (9);   --  tab
+   LF : constant Character := Character'Val (10);  --  line feed
+
    function Is_Upper (C : Character) return Boolean is
      (C in 'A' .. 'Z');
 
@@ -19,11 +22,12 @@ package body Strings_Suite is
       use String_Vectors;
    begin
       Assert (Integer (Length (Got)) = Want'Length,
-              "slice length: got" & Integer'Image (Integer (Length (Got)))
+              "slice length: got"
+              & Integer'Image (Integer (Length (Got)))
               & ", want" & Integer'Image (Want'Length));
       for I in 1 .. Integer (Length (Got)) loop
          Assert (Ada.Strings.Unbounded.To_String (Element (Got, I))
-              = Want (Want'First + I - 1),
+                 = Want (Want'First + I - 1),
                  "element" & Integer'Image (I) & ": got '"
                  & Ada.Strings.Unbounded.To_String (Element (Got, I))
                  & "', want '" & Want (Want'First + I - 1) & "'");
@@ -37,27 +41,36 @@ package body Strings_Suite is
    overriding procedure Register_Tests (T : in out Strings_Test) is
       use AUnit.Test_Cases.Registration;
    begin
-      Register_Routine (T, Test_Contains'Access,
-      "Contains/ContainsAny/ContainsRune");
-      Register_Routine (T, Test_Count_Non_Overlapping'Access, "Count is
-      non-overlapping");
-      Register_Routine (T, Test_Equal_Fold'Access, "EqualFold ASCII");
-      Register_Routine (T, Test_Prefix_Suffix'Access, "HasPrefix/HasSuffix");
-      Register_Routine (T, Test_Index_Family'Access, "Index family 0-based/-1");
-      Register_Routine (T, Test_Last_Index_Family'Access, "LastIndex family");
+      Register_Routine
+        (T, Test_Contains'Access, "Contains/ContainsAny/ContainsRune");
+      Register_Routine
+        (T, Test_Count_Non_Overlapping'Access, "Count non-overlapping");
+      Register_Routine
+        (T, Test_Equal_Fold'Access, "EqualFold ASCII");
+      Register_Routine
+        (T, Test_Prefix_Suffix'Access, "HasPrefix/HasSuffix");
+      Register_Routine
+        (T, Test_Index_Family'Access, "Index family 0-based/-1");
+      Register_Routine
+        (T, Test_Last_Index_Family'Access, "LastIndex family");
       Register_Routine (T, Test_Split'Access, "Split");
       Register_Routine (T, Test_Split_N'Access, "SplitN caps");
-      Register_Routine (T, Test_Split_After_And_Empty_Sep'Access, "SplitAfter +
-      empty sep");
+      Register_Routine
+        (T, Test_Split_After_And_Empty_Sep'Access, "SplitAfter + empty sep");
       Register_Routine (T, Test_Join'Access, "Join");
       Register_Routine (T, Test_Fields'Access, "Fields/FieldsFunc");
-      Register_Routine (T, Test_Trim_Family'Access, "Trim/TrimLeft/TrimRight");
-      Register_Routine (T, Test_Trim_Space_Prefix_Suffix'Access,
-      "TrimSpace/TrimPrefix/TrimSuffix");
-      Register_Routine (T, Test_Case_And_Map'Access, "ToUpper/ToLower/Map");
+      Register_Routine
+        (T, Test_Trim_Family'Access, "Trim/TrimLeft/TrimRight");
+      Register_Routine
+        (T, Test_Trim_Space_Prefix_Suffix'Access,
+         "TrimSpace/TrimPrefix/TrimSuffix");
+      Register_Routine
+        (T, Test_Case_And_Map'Access, "ToUpper/ToLower/Map");
       Register_Routine (T, Test_Repeat'Access, "Repeat incl. count 0");
-      Register_Routine (T, Test_Replace'Access, "Replace/ReplaceAll incl. N");
-      Register_Routine (T, Test_Replacer'Access, "Replacer priority order");
+      Register_Routine
+        (T, Test_Replace'Access, "Replace/ReplaceAll incl. N");
+      Register_Routine
+        (T, Test_Replacer'Access, "Replacer priority order");
    end Register_Tests;
 
    procedure Test_Contains (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -86,7 +99,8 @@ package body Strings_Suite is
       Assert (not Equal_Fold ("abc", "abd"), "content mismatch");
    end Test_Equal_Fold;
 
-   procedure Test_Prefix_Suffix (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Prefix_Suffix (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
    begin
       Assert (Has_Prefix ("foobar", "foo"), "prefix");
       Assert (not Has_Prefix ("foobar", "bar"), "not prefix");
@@ -96,7 +110,8 @@ package body Strings_Suite is
       Assert (Has_Suffix ("x", ""), "empty suffix is true");
    end Test_Prefix_Suffix;
 
-   procedure Test_Index_Family (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Index_Family (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
    begin
       Assert (Index ("chicken", "ken") = 4, "Index ken = 4 (0-based)");
       Assert (Index ("chicken", "xyz") = -1, "Index missing = -1");
@@ -127,8 +142,8 @@ package body Strings_Suite is
    procedure Test_Split_N (T : in out AUnit.Test_Cases.Test_Case'Class) is
    begin
       Check_Slice (T, Split_N ("a,b,c,d", ",", 2), (1 => "a", 2 => "b,c,d"));
-      Check_Slice (T, Split_N ("a,b,c", ",", -1), (1 => "a", 2 => "b", 3 =>
-      "c"));
+      Check_Slice (T, Split_N ("a,b,c", ",", -1),
+                   (1 => "a", 2 => "b", 3 => "c"));
       Check_Slice (T, Split_N ("a,b,c", ",", 0), (1 .. 0 => ""));
    end Test_Split_N;
 
@@ -148,12 +163,15 @@ package body Strings_Suite is
 
    procedure Test_Fields (T : in out AUnit.Test_Cases.Test_Case'Class) is
    begin
-      Check_Slice (T, Fields ("  a b\tc\n"), (1 => "a", 2 => "b", 3 => "c"));
+      Check_Slice (T, Fields ("  a b" & HT & "c" & LF),
+                   (1 => "a", 2 => "b", 3 => "c"));
       Check_Slice (T, Fields (""), (1 .. 0 => ""));
-      Check_Slice (T, Fields_Func ("a1b2c", Is_Upper'Access), (1 => "a1b2c"));
+      Check_Slice (T, Fields_Func ("a1b2c", Is_Upper'Access),
+                   (1 => "a1b2c"));
    end Test_Fields;
 
-   procedure Test_Trim_Family (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Trim_Family (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
    begin
       Assert (Trim ("xxhixx", "x") = "hi", "Trim cutset");
       Assert (Trim_Left ("xxhixx", "x") = "hixx", "TrimLeft");
@@ -164,15 +182,18 @@ package body Strings_Suite is
    procedure Test_Trim_Space_Prefix_Suffix (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
    begin
-      Assert (Trim_Space ("  hi\t\n") = "hi", "TrimSpace");
+      Assert (Trim_Space ("  hi" & HT & LF) = "hi", "TrimSpace");
       Assert (Trim_Prefix ("foobar", "foo") = "bar", "TrimPrefix");
       Assert (Trim_Prefix ("foobar", "xxx") = "foobar", "TrimPrefix no-op");
       Assert (Trim_Suffix ("foobar", "bar") = "foo", "TrimSuffix");
    end Test_Trim_Space_Prefix_Suffix;
 
-   procedure Test_Case_And_Map (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Case_And_Map (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
       function Shout (C : Character) return Character is
-        (if C in 'a' .. 'z' then Character'Val (Character'Pos (C) - 32) else C);
+        (if C in 'a' .. 'z'
+         then Character'Val (Character'Pos (C) - 32)
+         else C);
    begin
       Assert (To_Upper ("go") = "GO", "ToUpper");
       Assert (To_Lower ("GO") = "go", "ToLower");
@@ -195,14 +216,14 @@ package body Strings_Suite is
    end Test_Replace;
 
    procedure Test_Replacer (T : in out AUnit.Test_Cases.Test_Case'Class) is
-      R : constant Replacer := New_Replacer (Split ("cat,dog,bird,cat", ","));
+      R : constant Replacer :=
+        New_Replacer (Split ("cat,dog,bird,cat", ","));
    begin
-      --  pairs: cat→dog, bird→cat; "cat cat" → "dog dog" (priority:
-      --  cat before bird doesn't matter here)
-      Assert (Replace (R, "cat cat bird") = "dog dog cat", "Replacer replaces
-      all");
+      --  pairs: cat→dog, bird→cat
+      Assert (Replace (R, "cat cat bird") = "dog dog cat",
+              "Replacer replaces all");
       Assert (Replace (New_Replacer (Split ("aa,a", ",")), "aaa") = "aa",
-      "first-listed wins at a position");
+              "first-listed wins at a position");
    end Test_Replacer;
 
 end Strings_Suite;

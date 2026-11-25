@@ -19,27 +19,28 @@ package body Errors_Suite is
    overriding procedure Register_Tests (T : in out Errors_Test) is
       use AUnit.Test_Cases.Registration;
    begin
-      Register_Routine (T, Test_New_Error_Message'Access, "New_K + Error
-      round-trip");
-      Register_Routine (T, Test_Unwrap_No_Cause'Access, "Unwrap of a fresh
-      error is No_Error");
-      Register_Routine (T, Test_Unwrap_Chain'Access, "Unwrap walks to the root
-      cause");
-      Register_Routine (T, Test_Is_Sentinel'Access, "Is matches a sentinel by
-      identity");
-      Register_Routine (T, Test_Is_Deep_Chain'Access, "Is finds a target deep
-      in the chain");
-      Register_Routine (T, Test_Is_Nil_Cases'Access, "Is nil/nil = true, Is
-      err/nil = false, Is nil/x = false");
-      Register_Routine (T, Test_Is_Distinct_Values'Access, "Is false for
-      distinct New values (Go pointer semantics)");
-      Register_Routine (T, Test_As_Head_Match'Access, "As matches the head and
-      assigns it");
-      Register_Routine (T, Test_As_Chain_Match'Access, "As finds and assigns a
-      chain member");
-      Register_Routine (T, Test_As_Tag_Mismatch'Access, "As false on tag
-      mismatch");
-      Register_Routine (T, Test_As_Null_Err'Access, "As false on No_Error");
+      Register_Routine
+        (T, Test_New_Error_Message'Access, "New_K + Message round-trip");
+      Register_Routine
+        (T, Test_Unwrap_No_Cause'Access, "Unwrap of a fresh error is No_Error");
+      Register_Routine
+        (T, Test_Unwrap_Chain'Access, "Unwrap walks to the root cause");
+      Register_Routine
+        (T, Test_Is_Sentinel'Access, "Is matches a sentinel by identity");
+      Register_Routine
+        (T, Test_Is_Deep_Chain'Access, "Is finds a target deep in the chain");
+      Register_Routine
+        (T, Test_Is_Nil_Cases'Access, "Is nil/nil, err/nil, nil/x");
+      Register_Routine
+        (T, Test_Is_Distinct_Values'Access, "Is false for distinct New values");
+      Register_Routine
+        (T, Test_As_Head_Match'Access, "As matches the head and assigns it");
+      Register_Routine
+        (T, Test_As_Chain_Match'Access, "As finds and assigns a chain member");
+      Register_Routine
+        (T, Test_As_Tag_Mismatch'Access, "As false on tag mismatch");
+      Register_Routine
+        (T, Test_As_Null_Err'Access, "As false on No_Error");
    end Register_Tests;
 
    procedure Test_New_Error_Message (T : in out
@@ -47,41 +48,45 @@ package body Errors_Suite is
       E : constant Error_Access := New_K ("boom");
    begin
       Assert (E /= No_Error, "New_K must not return No_Error");
-      Assert (Message (E.all) = "boom", "Message() must return the message, got: "
-      & Message (E.all));
+      Assert (Message (E.all) = "boom",
+              "Message() must return the message, got: " & Message (E.all));
    end Test_New_Error_Message;
 
-   procedure Test_Unwrap_No_Cause (T : in out AUnit.Test_Cases.Test_Case'Class)
-      is
+   procedure Test_Unwrap_No_Cause (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
       E : constant Error_Access := New_K ("boom");
    begin
-      Assert (Unwrap (E) = No_Error, "Unwrap of a causeless error must be
-      No_Error");
-      Assert (Unwrap (No_Error) = No_Error, "Unwrap of No_Error must be
-      No_Error");
+      Assert (Unwrap (E) = No_Error,
+              "Unwrap of a causeless error must be No_Error");
+      Assert (Unwrap (No_Error) = No_Error,
+              "Unwrap of No_Error must be No_Error");
    end Test_Unwrap_No_Cause;
 
-   procedure Test_Unwrap_Chain (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Unwrap_Chain (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
       Root : constant Error_Access := New_K ("root");
       Mid  : constant Error_Access := With_Cause ("mid", Root);
       Top  : constant Error_Access := With_Cause ("top", Mid);
    begin
       Assert (Message (Unwrap (Top).all) = "mid", "Top unwraps to Mid");
-      Assert (Message (Unwrap (Unwrap (Top)).all) = "root", "Top unwraps twice to
-      Root");
-      Assert (Unwrap (Unwrap (Unwrap (Top))) = No_Error, "chain ends at
-      No_Error");
+      Assert (Message (Unwrap (Unwrap (Top)).all) = "root",
+              "Top unwraps twice to Root");
+      Assert (Unwrap (Unwrap (Unwrap (Top))) = No_Error,
+              "chain ends at No_Error");
    end Test_Unwrap_Chain;
 
-   procedure Test_Is_Sentinel (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Is_Sentinel (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
       Err_Sentinel : constant Error_Access := New_K ("sentinel");
-      Wrapped      : constant Error_Access := With_Cause ("ctx", Err_Sentinel);
+      Wrapped      : constant Error_Access :=
+        With_Cause ("ctx", Err_Sentinel);
    begin
       Assert (Is_K (Err_Sentinel, Err_Sentinel), "sentinel Is itself");
       Assert (Is_K (Wrapped, Err_Sentinel), "wrapped Is sentinel");
    end Test_Is_Sentinel;
 
-   procedure Test_Is_Deep_Chain (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Is_Deep_Chain (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
       Target : constant Error_Access := New_K ("deep");
       E      : constant Error_Access :=
         With_Cause ("a", With_Cause ("b", With_Cause ("c", Target)));
@@ -89,7 +94,8 @@ package body Errors_Suite is
       Assert (Is_K (E, Target), "Is finds a target three links deep");
    end Test_Is_Deep_Chain;
 
-   procedure Test_Is_Nil_Cases (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Is_Nil_Cases (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
       E : constant Error_Access := New_K ("x");
    begin
       Assert (Is_K (No_Error, No_Error), "Is(nil, nil) = true (Go semantics)");
@@ -106,8 +112,9 @@ package body Errors_Suite is
               "distinct New values must not be Is-equal");
    end Test_Is_Distinct_Values;
 
-   procedure Test_As_Head_Match (T : in out AUnit.Test_Cases.Test_Case'Class) is
-      E : constant Error_Access := New_K ("head");
+   procedure Test_As_Head_Match (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      E   : constant Error_Access := New_K ("head");
       Tgt : aliased Error;
       TA  : constant access Error'Class := Tgt'Access;
    begin
@@ -115,8 +122,8 @@ package body Errors_Suite is
       Assert (Message (Tgt) = "head", "As must assign the matched value");
    end Test_As_Head_Match;
 
-   procedure Test_As_Chain_Match (T : in out AUnit.Test_Cases.Test_Case'Class)
-      is
+   procedure Test_As_Chain_Match (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
       Inner : constant Error_Access := New_K ("inner");
       E     : constant Error_Access := With_Cause ("outer", Inner);
       Tgt   : aliased Error;
@@ -126,16 +133,17 @@ package body Errors_Suite is
       Assert (Message (Tgt) = "inner", "As assigned the wrong node");
    end Test_As_Chain_Match;
 
-   procedure Test_As_Tag_Mismatch (T : in out AUnit.Test_Cases.Test_Case'Class)
-      is
+   procedure Test_As_Tag_Mismatch (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
       S  : aliased Special_Error;  --  default-init: tag Special_Error
       TA : constant access Error'Class := S'Access;
    begin
-      Assert (not As (New_K ("x"), TA), "As must be false when no chain member
-      has the target tag");
+      Assert (not As (New_K ("x"), TA),
+              "As must be false when no chain member has the target tag");
    end Test_As_Tag_Mismatch;
 
-   procedure Test_As_Null_Err (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_As_Null_Err (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
       Tgt : aliased Error;
       TA  : constant access Error'Class := Tgt'Access;
    begin

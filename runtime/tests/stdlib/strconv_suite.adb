@@ -316,7 +316,7 @@ package body Strconv_Suite is
       Unquote ('"' & "\u0800" & '"', V, E);
       Assert (E = Errors.No_Error
               and Ada.Strings.Unbounded.To_String (V)
-                = (Character'Val (16#E0#), Character'Val (16#80#),
+                = (Character'Val (16#E0#), Character'Val (16#A0#),
                    Character'Val (16#80#)),
               "\u0800 is 3-byte UTF-8");
       Unquote ('"' & "\U0001F600" & '"', V, E);

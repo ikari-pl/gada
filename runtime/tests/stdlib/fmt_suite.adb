@@ -150,7 +150,7 @@ package body Fmt_Suite is
       Assert (Sprintf ("%05d", (1 => A (42))) = "00042", "%05d no sign");
       Assert (Sprintf ("%p", (1 => A (System.Null_Address))) = "0x0",
               "%p of null");
-      Assert (Sprintf ("%q", (1 => A ('x'))) = '"' & '"' & 'x' & '"' & '"',
+      Assert (Sprintf ("%q", (1 => A ('x'))) = '"' & 'x' & '"',
               "%q of char");
       --  One bad verb per argument kind (each kind's others arm).
       Assert (Sprintf ("%s", (1 => A (1.5))) = "%!s(BADVERB)", "float %s");

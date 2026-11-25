@@ -3,7 +3,10 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 
 with AUnit.Assertions; use AUnit.Assertions;
 
+with Ada.Tags;
 with Gada.Std.Errors; use Gada.Std.Errors;
+
+use type Ada.Tags.Tag;
 
 package body Errors_Suite is
 

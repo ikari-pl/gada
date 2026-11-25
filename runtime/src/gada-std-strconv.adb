@@ -635,11 +635,11 @@ package body Gada.Std.Strconv is
                                 Natural'Min (K, Nd) - 1, Fmt = 'G');
                end if;
                declare
-                  Digits : constant Natural :=
+                  N_Sig : constant Natural :=
                     (if Shortest then Nd else Eprec);
                begin
                   return Fmt_F (Neg, R, RN, RDP,
-                                Natural'Max (0, Digits - 1 - Exp10));
+                                Natural'Max (0, N_Sig - 1 - Exp10));
                end;
             end;
       end case;

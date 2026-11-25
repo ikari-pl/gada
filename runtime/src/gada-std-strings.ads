@@ -94,8 +94,8 @@ package Gada.Std.Strings is
    ---------------------------------------------------------------
 
    function Repeat (S : String; Count : Integer) return String;
-   function Replace (S, Old, New : String; N : Integer) return String;
-   function Replace_All (S, Old, New : String) return String;
+   function Replace (S, Old, New_Text : String; N : Integer) return String;
+   function Replace_All (S, Old, New_Text : String) return String;
 
    type Replacer is private;
    --  New_Replacer takes a flat old,new,old,new,… slice (Go's

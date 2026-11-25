@@ -406,7 +406,7 @@ package body Gada.Std.Strings is
       end;
    end Repeat;
 
-   function Replace (S, Old, New : String; N : Integer) return String is
+   function Replace (S, Old, New_Text : String; N : Integer) return String is
       B     : Unbounded_String;
       Start : Integer := S'First;
    begin
@@ -418,12 +418,12 @@ package body Gada.Std.Strings is
          begin
             for I in S'Range loop
                exit when N >= 0 and then Done = N;
-               Append (B, New);
+               Append (B, New_Text);
                Done := Done + 1;
                Append (B, S (I .. I));
             end loop;
             if N < 0 or else Done < N then
-               Append (B, New);
+               Append (B, New_Text);
             end if;
             return To_String (B);
          end;
@@ -439,7 +439,7 @@ package body Gada.Std.Strings is
                return To_String (B);
             end if;
             Append (B, S (Start .. Pos - 1));
-            Append (B, New);
+            Append (B, New_Text);
             Start := Pos + Old'Length;
             if N > 0 then
                N := N - 1;
@@ -448,8 +448,8 @@ package body Gada.Std.Strings is
       end loop;
    end Replace;
 
-   function Replace_All (S, Old, New : String) return String is
-     (Replace (S, Old, New, -1));
+   function Replace_All (S, Old, New_Text : String) return String is
+     (Replace (S, Old, New_Text, -1));
 
    function New_Replacer (Oldnew : String_Slice) return Replacer is
       use String_Slices;

@@ -51,6 +51,7 @@ with Errors_Suite;
 with Strings_Suite;
 with Strconv_Suite;
 with Bytes_Suite;
+with IO_Suite;
 
 procedure Test_Runner is
 
@@ -89,6 +90,7 @@ procedure Test_Runner is
       or else Pkg = "stdlib.strings"
       or else Pkg = "stdlib.strconv"
       or else Pkg = "stdlib.bytes"
+      or else Pkg = "stdlib.io"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -179,6 +181,9 @@ procedure Test_Runner is
       end if;
       if Should_Register ("stdlib.bytes") then
          Add_Test (Result, new Bytes_Suite.Bytes_Test);
+      end if;
+      if Should_Register ("stdlib.io") then
+         Add_Test (Result, new IO_Suite.IO_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

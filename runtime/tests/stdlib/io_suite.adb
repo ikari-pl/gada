@@ -1,0 +1,167 @@
+--  Body of IO_Suite — see spec for test rationale.
+pragma Warnings (Off, "use of an anonymous access type allocator");
+
+with AUnit.Assertions; use AUnit.Assertions;
+
+with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
+with Gada.Std.Errors;
+with Gada.Std.IO; use Gada.Std.IO;
+
+package body IO_Suite is
+
+   package Errors renames Gada.Std.Errors;
+
+   use type Errors.Error_Access;
+
+   --  In-memory io.Reader double: serves Data from Pos, then EOF.
+   type Mem_Reader is new Reader with record
+      Data : Unbounded_String;
+      Pos  : Natural := 1;
+   end record;
+
+   overriding function Read (R : Mem_Reader; Data : out String;
+                             N : out Natural) return Errors.Error_Access is
+      Remaining : constant Natural := Length (R.Data) - R.Pos + 1;
+      M         : constant Natural :=
+        Natural'Min (Data'Length, Remaining);
+   begin
+      if Remaining <= 0 then
+         N := 0;
+         return EOF;
+      end if;
+      for I in 1 .. M loop
+         Data (Data'First + I - 1) := Element (R.Data, R.Pos + I - 1);
+      end loop;
+      R.Pos := R.Pos + M;
+      N := M;
+      return Errors.No_Error;
+   end Read;
+
+   --  In-memory io.Writer double: appends everything, never fails.
+   type Mem_Writer is new Writer with record
+      Data : Unbounded_String;
+   end record;
+
+   overriding function Write (W : Mem_Writer; Data : String;
+                              N : out Natural) return Errors.Error_Access is
+   begin
+      Append (W.Data, Data);
+      N := Data'Length;
+      return Errors.No_Error;
+   end Write;
+
+   --  Failing reader: hard error on the first Read.
+   type Fail_Reader is new Reader with null record;
+
+   overriding function Read (R : Fail_Reader; Data : out String;
+                             N : out Natural) return Errors.Error_Access is
+      pragma Unreferenced (R, Data);
+   begin
+      N := 0;
+      return Errors.New_K ("read failed");
+   end Read;
+
+   --  Failing writer: hard error on every Write.
+   type Fail_Writer is new Writer with null record;
+
+   overriding function Write (W : Fail_Writer; Data : String;
+                              N : out Natural) return Errors.Error_Access is
+      pragma Unreferenced (W, Data);
+   begin
+      N := 0;
+      return Errors.New_K ("write failed");
+   end Write;
+
+   overriding function Name
+     (T : IO_Test) return AUnit.Message_String is
+     (AUnit.Format ("Gada.Std.IO suite"));
+
+   overriding procedure Register_Tests (T : in out IO_Test) is
+      use AUnit.Test_Cases.Registration;
+   begin
+      Register_Routine (T, Test_EOF_Sentinel'Access, "EOF sentinel identity");
+      Register_Routine (T, Test_Copy'Access, "Copy happy path");
+      Register_Routine (T, Test_Copy_Empty'Access, "Copy empty source");
+      Register_Routine (T, Test_Copy_Read_Error'Access, "Copy read error");
+      Register_Routine (T, Test_Copy_Write_Error'Access, "Copy write error");
+      Register_Routine (T, Test_Read_All'Access, "ReadAll + EOF");
+   end Register_Tests;
+
+   procedure Test_EOF_Sentinel (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      R : aliased Mem_Reader :=
+        (Data => To_Unbounded_String (""), Pos => 1);
+      Buf : String (1 .. 4);
+      N   : Natural;
+      E   : Errors.Error_Access;
+   begin
+      Assert (Errors.Is_K (EOF, EOF), "EOF Is itself");
+      Assert (EOF /= Errors.No_Error, "EOF is not nil");
+      E := Read (R, Buf, N);
+      Assert (N = 0 and Errors.Is_K (E, EOF), "empty reader returns EOF");
+   end Test_EOF_Sentinel;
+
+   procedure Test_Copy (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      R : aliased Mem_Reader :=
+        (Data => To_Unbounded_String ("hello world"), Pos => 1);
+      W : aliased Mem_Writer;
+      N : Natural;
+      E : Errors.Error_Access;
+   begin
+      Copy (W'Access, R'Access, N, E);
+      Assert (E = Errors.No_Error, "Copy err = No_Error");
+      Assert (N = 11, "Copy wrote 11 bytes, got" & Integer'Image (N));
+      Assert (To_String (W.Data) = "hello world", "Copy content");
+   end Test_Copy;
+
+   procedure Test_Copy_Empty (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      R : aliased Mem_Reader :=
+        (Data => To_Unbounded_String (""), Pos => 1);
+      W : aliased Mem_Writer;
+      N : Natural;
+      E : Errors.Error_Access;
+   begin
+      Copy (W'Access, R'Access, N, E);
+      Assert (E = Errors.No_Error and N = 0, "Copy of empty: 0, no error");
+      Assert (Length (W.Data) = 0, "nothing written");
+   end Test_Copy_Empty;
+
+   procedure Test_Copy_Read_Error (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      R : aliased Fail_Reader;
+      W : aliased Mem_Writer;
+      N : Natural;
+      E : Errors.Error_Access;
+   begin
+      Copy (W'Access, R'Access, N, E);
+      Assert (E /= Errors.No_Error and not Errors.Is_K (E, EOF),
+              "read error propagates");
+      Assert (N = 0, "nothing written");
+   end Test_Copy_Read_Error;
+
+   procedure Test_Copy_Write_Error (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      R : aliased Mem_Reader :=
+        (Data => To_Unbounded_String ("data"), Pos => 1);
+      W : aliased Fail_Writer;
+      N : Natural;
+      E : Errors.Error_Access;
+   begin
+      Copy (W'Access, R'Access, N, E);
+      Assert (E /= Errors.No_Error and not Errors.Is_K (E, EOF),
+              "write error propagates");
+      Assert (N = 0, "failed write counts 0");
+   end Test_Copy_Write_Error;
+
+   procedure Test_Read_All (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      R    : aliased Mem_Reader :=
+        (Data => To_Unbounded_String ("all of it"), Pos => 1);
+      Data : Unbounded_String;
+      E    : Errors.Error_Access;
+   begin
+      Read_All (R'Access, Data, E);
+      Assert (E = Errors.No_Error, "ReadAll err = No_Error (EOF swallowed)");
+      Assert (To_String (Data) = "all of it", "ReadAll content");
+   end Test_Read_All;
+
+end IO_Suite;

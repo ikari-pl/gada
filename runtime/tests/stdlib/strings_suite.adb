@@ -149,36 +149,40 @@ package body Strings_Suite is
    procedure Test_Split (T : in out AUnit.Test_Cases.Test_Case'Class) is
    begin
       Check_Slice (T, Split ("a,b,c", ","),
-                   (1 => To_Unbounded_String ("a"),
-                    2 => To_Unbounded_String ("b"),
-                    3 => To_Unbounded_String ("c")));
-      Check_Slice (T, Split ("abc", ","), (1 => To_Unbounded_String ("abc")));
-      Check_Slice (T, Split ("", ","), (1 => To_Unbounded_String ("")));
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a"),
+                    2 => Ada.Strings.Unbounded.To_Unbounded_String ("b"),
+                    3 => Ada.Strings.Unbounded.To_Unbounded_String ("c")));
+      Check_Slice
+        (T, Split ("abc", ","),
+         (1 => Ada.Strings.Unbounded.To_Unbounded_String ("abc")));
+      Check_Slice
+        (T, Split ("", ","),
+         (1 => Ada.Strings.Unbounded.To_Unbounded_String ("")));
    end Test_Split;
 
    procedure Test_Split_N (T : in out AUnit.Test_Cases.Test_Case'Class) is
    begin
       Check_Slice (T, Split_N ("a,b,c,d", ",", 2),
-                   (1 => To_Unbounded_String ("a"),
-                    2 => To_Unbounded_String ("b,c,d")));
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a"),
+                    2 => Ada.Strings.Unbounded.To_Unbounded_String ("b,c,d")));
       Check_Slice (T, Split_N ("a,b,c", ",", -1),
-                   (1 => To_Unbounded_String ("a"),
-                    2 => To_Unbounded_String ("b"),
-                    3 => To_Unbounded_String ("c")));
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a"),
+                    2 => Ada.Strings.Unbounded.To_Unbounded_String ("b"),
+                    3 => Ada.Strings.Unbounded.To_Unbounded_String ("c")));
       Check_Slice (T, Split_N ("a,b,c", ",", 0),
-                   (1 .. 0 => To_Unbounded_String ("")));
+                   (1 .. 0 => Ada.Strings.Unbounded.To_Unbounded_String ("")));
    end Test_Split_N;
 
    procedure Test_Split_After_And_Empty_Sep (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
    begin
       Check_Slice (T, Split_After ("a,b", ","),
-                   (1 => To_Unbounded_String ("a,"),
-                    2 => To_Unbounded_String ("b")));
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a,"),
+                    2 => Ada.Strings.Unbounded.To_Unbounded_String ("b")));
       Check_Slice (T, Split ("abc", ""),
-                   (1 => To_Unbounded_String ("a"),
-                    2 => To_Unbounded_String ("b"),
-                    3 => To_Unbounded_String ("c")));
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a"),
+                    2 => Ada.Strings.Unbounded.To_Unbounded_String ("b"),
+                    3 => Ada.Strings.Unbounded.To_Unbounded_String ("c")));
    end Test_Split_After_And_Empty_Sep;
 
    procedure Test_Join (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -191,12 +195,14 @@ package body Strings_Suite is
    procedure Test_Fields (T : in out AUnit.Test_Cases.Test_Case'Class) is
    begin
       Check_Slice (T, Fields ("  a b" & HT & "c" & LF),
-                   (1 => To_Unbounded_String ("a"),
-                    2 => To_Unbounded_String ("b"),
-                    3 => To_Unbounded_String ("c")));
-      Check_Slice (T, Fields (""), (1 .. 0 => To_Unbounded_String ("")));
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a"),
+                    2 => Ada.Strings.Unbounded.To_Unbounded_String ("b"),
+                    3 => Ada.Strings.Unbounded.To_Unbounded_String ("c")));
+      Check_Slice
+        (T, Fields (""),
+         (1 .. 0 => Ada.Strings.Unbounded.To_Unbounded_String ("")));
       Check_Slice (T, Fields_Func ("a1b2c", Is_Upper'Access),
-                   (1 => To_Unbounded_String ("a1b2c")));
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a1b2c")));
    end Test_Fields;
 
    procedure Test_Trim_Family (T : in out

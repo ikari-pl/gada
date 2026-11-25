@@ -26,7 +26,8 @@ package Gada.Std.Strings is
    --  mapping lands with the integration example.
    package String_Vectors is new Ada.Containers.Vectors
      (Index_Type   => Positive,
-      Element_Type => Ada.Strings.Unbounded.Unbounded_String);
+      Element_Type => Ada.Strings.Unbounded.Unbounded_String,
+      "="          => Ada.Strings.Unbounded."=");
 
    subtype String_Slice is String_Vectors.Vector;
 

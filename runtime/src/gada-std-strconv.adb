@@ -27,6 +27,12 @@ package body Gada.Std.Strconv is
 
    Hex_Digits : constant String := "0123456789abcdef";
 
+   --  Named constants for the delimiter characters (the four-
+   --  apostrophe literal is spelled by code point).
+   DQUOTE : constant Character := Character'Val (34);
+   SQUOTE : constant Character := Character'Val (39);
+   BSLASH : constant Character := Character'Val (92);
+
    function Hex2 (C : Character) return String is
      (String'(Hex_Digits (1 + Character'Pos (C) / 16),
                Hex_Digits (1 + Character'Pos (C) mod 16)));
@@ -103,9 +109,9 @@ package body Gada.Std.Strconv is
          when 'r' => Append (Value, Character'Val (13)); I := I + 2;
          when 't' => Append (Value, Character'Val (9));  I := I + 2;
          when 'v' => Append (Value, Character'Val (11)); I := I + 2;
-         when '\' => Append (Value, '\');                I := I + 2;
-         when '"' => Append (Value, '"');                I := I + 2;
-         when '''' => Append (Value, '''');               I := I + 2;
+         when BSLASH => Append (Value, BSLASH);                I := I + 2;
+         when DQUOTE => Append (Value, DQUOTE);                I := I + 2;
+         when SQUOTE => Append (Value, SQUOTE);               I := I + 2;
          when 'x' =>
             declare
                V : constant Integer := Hex_N (S, I + 2, 2);
@@ -527,7 +533,7 @@ package body Gada.Std.Strconv is
    function Quote (S : String) return String is
       B : Unbounded_String;
    begin
-      Append (B, '"');
+      Append (B, DQUOTE);
       for C of S loop
          case C is
             when '"' =>
@@ -556,7 +562,7 @@ package body Gada.Std.Strconv is
                end if;
          end case;
       end loop;
-      Append (B, '"');
+      Append (B, DQUOTE);
       return To_String (B);
    end Quote;
 
@@ -593,9 +599,9 @@ package body Gada.Std.Strconv is
          end;
          return;
       end if;
-      if S (S'First) = '\'' then
+      if S (S'First) = SQUOTE then
          --  Char literal: exactly one character or one escape sequence.
-         if S (S'Last) /= '''' then
+         if S (S'Last) /= SQUOTE then
             Syntax;
             return;
          end if;

@@ -44,8 +44,10 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/gada-lang/gada/compiler/internal/ir"
 )
@@ -179,6 +181,7 @@ type emitter struct {
 	interfaceNames      map[string]bool           // file-wide set of interface type names, so typeName renders a NamedType referring to an interface as the class-wide `Name'Class` view (which dispatches) rather than a plain type name. Populated alongside structByName.
 	dispatchMethodNames map[string]bool           // file-wide set of interface method names — the only methods with an emitted subprogram (5b-i abstract op + 5c overriding body) and hence the only callable ones. A method-call selector whose name is absent would emit a dangling `X.M`, so emitCallStmt rejects it. Populated alongside interfaceNames.
 	emptyInterfaceNames map[string]bool           // file-wide set of method-less interface names (Go's `any`, or a named `interface{}`). No concrete type derives an empty interface (5b), so a type assertion `x.(T)` whose operand is one has no legal Ada view conversion; emitTypeAssert rejects it. Populated alongside interfaceNames.
+	stdlibImports       map[string]string         // Go local import name → Ada package (e.g. "strings" → "Gada.Std.Strings"), from StdlibPackages. Drives the `with Gada.Std.*;` clauses and the qualified-call lowering of `strings.ToUpper(x)` → `Gada.Std.Strings.To_Upper (X)`.
 	pendingRecvs        []pendingChanRecv         // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
 	pendingAsserts      []pendingTypeAssert       // per-subprogram queue of `v, ok := x.(T)` (comma-ok, item 6b) defines whose body-side membership-test + guarded-conversion block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order (same "RHS evaluates at the := point" rule). Reset at every emitSubprogram call.
 	err                 error
@@ -230,14 +233,89 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		interfaceNames:      map[string]bool{},
 		dispatchMethodNames: map[string]bool{},
 		emptyInterfaceNames: map[string]bool{},
+		stdlibImports:       map[string]string{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
+			// `fmt` keeps its Phase 1 special case (Gada.Core.IO.Print
+			// family) until Gada.Std.Fmt lands and supersedes it.
 			e.needsCoreIO = true
+			continue
 		}
+		ada, ok := StdlibPackages[imp]
+		if !ok {
+			e.err = fmt.Errorf("emit: unsupported import %q (Phase 5 stdlib wave 1: %s)", imp, strings.Join(StdlibWave1, ", "))
+			return e
+		}
+		// The local name of an unaliased import is the last path
+		// segment ("strings" for "strings"); aliased imports ride a
+		// later item.
+		base := imp
+		if i := strings.LastIndex(base, "/"); i >= 0 {
+			base = base[i+1:]
+		}
+		e.stdlibImports[base] = ada
 	}
 	e.collectSliceElems()
 	return e
+}
+
+// StdlibPackages maps a Go standard-library import path to the Ada
+// package that ports it (Phase 5, stdlib wave 1). "fmt" is deliberately
+// absent: it keeps the Phase 1 Gada.Core.IO special case until
+// Gada.Std.Fmt lands. StdlibWave1 is the sorted path list, used for the
+// unknown-import error message.
+var StdlibPackages = map[string]string{
+	"errors":  "Gada.Std.Errors",
+	"strings": "Gada.Std.Strings",
+	"strconv": "Gada.Std.Strconv",
+	"bytes":   "Gada.Std.Bytes",
+	"io":      "Gada.Std.IO",
+	"bufio":   "Gada.Std.Bufio",
+}
+
+// StdlibWave1 is StdlibPackages' keys, sorted — used in the
+// unknown-import error message.
+var StdlibWave1 = func() []string {
+	out := make([]string, 0, len(StdlibPackages))
+	for k := range StdlibPackages {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}()
+
+// goNameToAdaMember converts an exported Go identifier to the Ada
+// member name the Gada.Std ports use: CamelCase splits at each
+// lower→upper boundary ("ToUpper" → "To_Upper", "ReadAll" →
+// "Read_All"), while all-caps initialisms stay together ("EOF" →
+// "EOF", "Atoi" → "Atoi"). The first rune is capitalised to match the
+// runtime's Ada style, and a name that would collide with an Ada
+// reserved word gets the `_K` suffix (same rule as adaIdent).
+func goNameToAdaMember(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	var b strings.Builder
+	for i, c := range r {
+		if i > 0 && unicode.IsUpper(c) {
+			prev := r[i-1]
+			if unicode.IsLower(prev) ||
+				(unicode.IsUpper(prev) && i+1 < len(r) && unicode.IsLower(r[i+1])) {
+				b.WriteByte('_')
+			}
+		}
+		if i == 0 {
+			c = unicode.ToUpper(c)
+		}
+		b.WriteRune(c)
+	}
+	out := b.String()
+	if isAdaReserved(out) {
+		return out + "_K"
+	}
+	return out
 }
 
 // collectSliceElems walks the file's IR to surface every element type
@@ -621,6 +699,18 @@ func (e *emitter) collectWiths() []string {
 		add("with Ada.Unchecked_Conversion;")
 		add("with Ada.Unchecked_Deallocation;")
 		add("with System;")
+	}
+	// Stdlib imports, sorted by Ada package name for deterministic
+	// output regardless of Go import declaration order.
+	if len(e.stdlibImports) > 0 {
+		pkgs := make([]string, 0, len(e.stdlibImports))
+		for _, p := range e.stdlibImports {
+			pkgs = append(pkgs, p)
+		}
+		sort.Strings(pkgs)
+		for _, p := range pkgs {
+			add("with " + p + ";")
+		}
 	}
 	return withs
 }
@@ -3004,19 +3094,38 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 		e.emitFmtPrintln(c)
 		return
 	}
-	// A selector-headed call `x.M(args)` is a method call (package-
-	// qualified calls other than fmt.Println are not supported). It emits
-	// as the Ada prefixed-view `X.M`, which is a valid primitive-operation
-	// call only when M is a dispatch operation — an interface method,
-	// which 5b-i declares as an abstract op and 5c bodies as an
-	// overriding primitive. A call to a method that is *not* part of any
-	// interface (a plain method on a non-deriving type) has no emitted
-	// subprogram, so `X.M` would dangle; reject it loudly rather than emit
-	// uncompilable Ada. Direct calls to non-dispatching methods ride a
-	// later item.
-	if sel, ok := c.Fun.(*ir.Selector); ok && !e.dispatchMethodNames[sel.Sel] {
-		e.fail(fmt.Errorf("emit: method call to %q: only interface (dispatching) methods are callable yet; a direct call to a non-interface method is not supported", sel.Sel))
-		return
+	// A selector-headed call whose prefix is a stdlib import name
+	// (`strings.ToUpper(s)`) is a qualified package call, not a method
+	// call: emit `Gada.Std.Strings.To_Upper (S);`.
+	if sel, ok := c.Fun.(*ir.Selector); ok {
+		if id, ok := sel.X.(*ir.Ident); ok {
+			if _, isStdlib := e.stdlibImports[id.Name]; isStdlib {
+				fun := e.emitExpr(c.Fun)
+				args := make([]string, 0, len(c.Args))
+				for _, a := range c.Args {
+					args = append(args, e.emitExpr(a))
+				}
+				if len(args) == 0 {
+					e.println(fun + ";")
+				} else {
+					e.println(fun + " (" + strings.Join(args, ", ") + ");")
+				}
+				return
+			}
+		}
+		// Otherwise `x.M(args)` is a method call (package-qualified calls
+		// other than stdlib ones are not supported). It emits as the Ada
+		// prefixed-view `X.M`, which is a valid primitive-operation call
+		// only when M is a dispatch operation — an interface method, which
+		// 5b-i declares as an abstract op and 5c bodies as an overriding
+		// primitive. A call to a method that is *not* part of any interface
+		// has no emitted subprogram, so `X.M` would dangle; reject it
+		// loudly rather than emit uncompilable Ada. Direct calls to
+		// non-dispatching methods ride a later item.
+		if !e.dispatchMethodNames[sel.Sel] {
+			e.fail(fmt.Errorf("emit: method call to %q: only interface (dispatching) methods are callable yet; a direct call to a non-interface method is not supported", sel.Sel))
+			return
+		}
 	}
 	fun := e.emitExpr(c.Fun)
 	args := make([]string, 0, len(c.Args))
@@ -3989,6 +4098,14 @@ func (e *emitter) emitUnaryOp(u *ir.UnaryOp) string {
 // won't produce compilable Ada until later phases plumb proper
 // package translation.
 func (e *emitter) emitSelector(s *ir.Selector) string {
+	// A selector whose prefix is a stdlib import name (`strings.ToUpper`)
+	// lowers to the qualified Ada call `Gada.Std.Strings.To_Upper`; the
+	// member name goes through goNameToAdaMember (CamelCase → snake).
+	if id, ok := s.X.(*ir.Ident); ok {
+		if pkg, ok := e.stdlibImports[id.Name]; ok {
+			return pkg + "." + goNameToAdaMember(s.Sel)
+		}
+	}
 	// `fmt.Println` in statement position is intercepted by emitCallStmt
 	// (-> emitFmtPrintln), so it never reaches here. Any other selector
 	// renders as the Ada dotted form. The selected name goes through

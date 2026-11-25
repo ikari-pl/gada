@@ -105,6 +105,8 @@ func TestCorpus(t *testing.T) {
 		"type_assert_commaok.go",
 		// Phase 4 — type switch (item 6c).
 		"type_switch.go",
+		// Phase 5 — stdlib import mapping (strings.ToUpper).
+		"stdlib_import.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)

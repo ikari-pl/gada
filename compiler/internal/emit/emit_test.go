@@ -89,6 +89,8 @@ var corpusFixtures = []string{
 	"type_assert_commaok",
 	// Phase 4 — type switch (item 6c).
 	"type_switch",
+	// Phase 5 — stdlib import mapping (with Gada.Std.Strings; + qualified call).
+	"stdlib_import",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -3545,5 +3547,96 @@ func TestTypeMetaErrors(t *testing.T) {
 				t.Fatalf("expected error for %s, got nil", tc.name)
 			}
 		})
+	}
+}
+
+// TestGoNameToAdaMember pins the Go→Ada member-name conversion used for
+// stdlib qualified calls: lower→upper boundaries split ("ToUpper" →
+// "To_Upper"), all-caps initialisms stay whole ("EOF" → "EOF"), and a
+// leading lowercase is capitalised ("atoi" would be "Atoi" if Go
+// exported it — unexported names never reach here).
+func TestGoNameToAdaMember(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"New":         "New_K", // `new` is an Ada reserved word → _K suffix
+		"ToUpper":     "To_Upper",
+		"ReadAll":     "Read_All",
+		"TrimSpace":   "Trim_Space",
+		"EOF":         "EOF",
+		"Atoi":        "Atoi",
+		"Itoa":        "Itoa",
+		"Is":          "Is_K", // `is` is reserved → _K
+		"As":          "As",   // not an Ada reserved word
+		"Unwrap":      "Unwrap",
+		"ParseFloat":  "Parse_Float",
+		"FormatFloat": "Format_Float",
+		"NewReader":   "New_Reader",
+		"ReadLine":    "Read_Line",
+	}
+	for in, want := range cases {
+		if got := goNameToAdaMember(in); got != want {
+			t.Errorf("goNameToAdaMember(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestStdlibImportEmit covers the import-mapping emit paths: a stdlib
+// import produces a sorted `with Gada.Std.*;` clause and qualified
+// calls, an unknown import is a loud error, and "fmt" keeps its Phase 1
+// Gada.Core.IO special case.
+func TestStdlibImportEmit(t *testing.T) {
+	t.Parallel()
+
+	// Happy path: `import "strings"` + statement-position qualified
+	// calls (the IR's Call node is statement-only today, so call results
+	// in expression position ride a later item).
+	pkg := wrapPkg(&ir.Function{
+		Name:   "f",
+		Params: []*ir.Param{{Name: "s", Type: &ir.StringType{}}},
+		Body: []ir.Stmt{
+			&ir.Call{Fun: &ir.Selector{X: idn("strings"), Sel: "ToUpper"},
+				Args: []ir.Expr{idn("s")}},
+			&ir.Call{Fun: &ir.Selector{X: idn("strings"), Sel: "Contains"},
+				Args: []ir.Expr{idn("s"), &ir.Lit{Kind: ir.LitString, Value: `"x"`}}},
+		},
+	})
+	pkg.Files[0].Imports = []string{"strings"}
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("Package: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"with Gada.Std.Strings;",
+		"Gada.Std.Strings.To_Upper (S);",
+		"Gada.Std.Strings.Contains (S, \"x\");",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q, got:\n%s", want, got)
+		}
+	}
+
+	// Unknown import: loud error naming the supported set.
+	pkg3 := wrapPkg(&ir.Function{Name: "f"})
+	pkg3.Files[0].Imports = []string{"net/http"}
+	buf.Reset()
+	if err := Package(pkg3, &buf); err == nil {
+		t.Fatalf("expected error for unsupported import, got:\n%s", buf.String())
+	} else if !strings.Contains(err.Error(), "net/http") {
+		t.Fatalf("error should name the bad import, got: %v", err)
+	}
+
+	// fmt keeps the Gada.Core.IO path (no Gada.Std.Fmt yet).
+	pkg4 := wrapPkg(&ir.Function{Name: "f", Body: []ir.Stmt{
+		&ir.Call{Fun: &ir.Selector{X: idn("fmt"), Sel: "Println"},
+			Args: []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"hi"`}}},
+	}})
+	pkg4.Files[0].Imports = []string{"fmt"}
+	buf.Reset()
+	if err := Package(pkg4, &buf); err != nil {
+		t.Fatalf("Package fmt: %v", err)
+	}
+	if !strings.Contains(buf.String(), "with Gada.Core.IO;") || strings.Contains(buf.String(), "Gada.Std.Fmt") {
+		t.Fatalf("fmt should map to Gada.Core.IO, got:\n%s", buf.String())
 	}
 }

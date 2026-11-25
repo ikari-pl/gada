@@ -235,7 +235,7 @@ package body Gada.Std.Strings is
       if Sep'Length = 0 then
          --  per-byte split, capped at N fields (last holds the rest)
          for I in S'Range loop
-            if N > 0 and then Length (Acc) = N - 1 then
+            if N > 0 and then Integer (Length (Acc)) = N - 1 then
                Append (Acc, To_Unbounded_String (S (I .. S'Last)));
                return Acc;
             end if;
@@ -251,7 +251,7 @@ package body Gada.Std.Strings is
          Start : Integer := S'First;
       begin
          while Start <= S'Last
-           and then (N < 0 or else Length (Acc) < N - 1)
+           and then (N < 0 or else Integer (Length (Acc)) < N - 1)
          loop
             declare
                I   : constant Integer := Index (S (Start .. S'Last), Sep);
@@ -276,7 +276,7 @@ package body Gada.Std.Strings is
       use String_Vectors;
       B : Unbounded_String;
    begin
-      for I in 1 .. Length (Elems) loop
+      for I in 1 .. Integer (Length (Elems)) loop
          if I > 1 then
             Append (B, Sep);
          end if;
@@ -459,12 +459,12 @@ package body Gada.Std.Strings is
    function New_Replacer (Oldnew : String_Slice) return Replacer is
       use String_Vectors;
    begin
-      if Length (Oldnew) mod 2 /= 0 then
+      if Integer (Length (Oldnew)) mod 2 /= 0 then
          raise Constraint_Error
            with "strings.New_Replacer: odd number of strings";
       end if;
       declare
-         N     : constant Positive := Length (Oldnew) / 2;
+         N     : constant Positive := Integer (Length (Oldnew)) / 2;
          Pairs : constant Pair_Array (1 .. N) :=
            (for I in 1 .. N =>
               Pair'(Old => Element (Oldnew, 2 * I - 1),

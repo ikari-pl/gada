@@ -18,10 +18,10 @@ package body Strings_Suite is
    is
       use String_Vectors;
    begin
-      Assert (Length (Got) = Want'Length,
-              "slice length: got" & Integer'Image (Length (Got))
+      Assert (Integer (Length (Got)) = Want'Length,
+              "slice length: got" & Integer'Image (Integer (Length (Got)))
               & ", want" & Integer'Image (Want'Length));
-      for I in 1 .. Length (Got) loop
+      for I in 1 .. Integer (Length (Got)) loop
          Assert (Ada.Strings.Unbounded.To_String (Element (Got, I))
               = Want (Want'First + I - 1),
                  "element" & Integer'Image (I) & ": got '"

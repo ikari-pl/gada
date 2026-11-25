@@ -12,8 +12,15 @@ package body Strings_Suite is
    LF : constant Character := Character'Val (10);  --  line feed
 
    --  Named unconstrained array type (anonymous array parameter types
-   --  are not legal Ada).
-   type String_Array is array (Positive range <>) of String;
+   --  are not legal Ada); the element is Unbounded_String because plain
+   --  String is unconstrained and cannot be an array element type.
+   type String_Array is array (Positive range <>)
+     of Ada.Strings.Unbounded.Unbounded_String;
+
+   function Shout (C : Character) return Character is
+     (if C in 'a' .. 'z'
+      then Character'Val (Character'Pos (C) - 32)
+      else C);
 
    function Is_Upper (C : Character) return Boolean is
      (C in 'A' .. 'Z');
@@ -31,10 +38,13 @@ package body Strings_Suite is
               & ", want" & Integer'Image (Want'Length));
       for I in 1 .. Integer (Length (Got)) loop
          Assert (Ada.Strings.Unbounded.To_String (Element (Got, I))
-                 = Want (Want'First + I - 1),
+                 = Ada.Strings.Unbounded.To_String
+                     (Want (Want'First + I - 1)),
                  "element" & Integer'Image (I) & ": got '"
                  & Ada.Strings.Unbounded.To_String (Element (Got, I))
-                 & "', want '" & Want (Want'First + I - 1) & "'");
+                 & "', want '"
+                 & Ada.Strings.Unbounded.To_String
+                     (Want (Want'First + I - 1)) & "'");
       end loop;
    end Check_Slice;
 
@@ -138,24 +148,37 @@ package body Strings_Suite is
 
    procedure Test_Split (T : in out AUnit.Test_Cases.Test_Case'Class) is
    begin
-      Check_Slice (T, Split ("a,b,c", ","), (1 => "a", 2 => "b", 3 => "c"));
-      Check_Slice (T, Split ("abc", ","), (1 => "abc"));
-      Check_Slice (T, Split ("", ","), (1 => ""));
+      Check_Slice (T, Split ("a,b,c", ","),
+                   (1 => To_Unbounded_String ("a"),
+                    2 => To_Unbounded_String ("b"),
+                    3 => To_Unbounded_String ("c")));
+      Check_Slice (T, Split ("abc", ","), (1 => To_Unbounded_String ("abc")));
+      Check_Slice (T, Split ("", ","), (1 => To_Unbounded_String ("")));
    end Test_Split;
 
    procedure Test_Split_N (T : in out AUnit.Test_Cases.Test_Case'Class) is
    begin
-      Check_Slice (T, Split_N ("a,b,c,d", ",", 2), (1 => "a", 2 => "b,c,d"));
+      Check_Slice (T, Split_N ("a,b,c,d", ",", 2),
+                   (1 => To_Unbounded_String ("a"),
+                    2 => To_Unbounded_String ("b,c,d")));
       Check_Slice (T, Split_N ("a,b,c", ",", -1),
-                   (1 => "a", 2 => "b", 3 => "c"));
-      Check_Slice (T, Split_N ("a,b,c", ",", 0), (1 .. 0 => ""));
+                   (1 => To_Unbounded_String ("a"),
+                    2 => To_Unbounded_String ("b"),
+                    3 => To_Unbounded_String ("c")));
+      Check_Slice (T, Split_N ("a,b,c", ",", 0),
+                   (1 .. 0 => To_Unbounded_String ("")));
    end Test_Split_N;
 
    procedure Test_Split_After_And_Empty_Sep (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
    begin
-      Check_Slice (T, Split_After ("a,b", ","), (1 => "a,", 2 => "b"));
-      Check_Slice (T, Split ("abc", ""), (1 => "a", 2 => "b", 3 => "c"));
+      Check_Slice (T, Split_After ("a,b", ","),
+                   (1 => To_Unbounded_String ("a,"),
+                    2 => To_Unbounded_String ("b")));
+      Check_Slice (T, Split ("abc", ""),
+                   (1 => To_Unbounded_String ("a"),
+                    2 => To_Unbounded_String ("b"),
+                    3 => To_Unbounded_String ("c")));
    end Test_Split_After_And_Empty_Sep;
 
    procedure Test_Join (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -168,10 +191,12 @@ package body Strings_Suite is
    procedure Test_Fields (T : in out AUnit.Test_Cases.Test_Case'Class) is
    begin
       Check_Slice (T, Fields ("  a b" & HT & "c" & LF),
-                   (1 => "a", 2 => "b", 3 => "c"));
-      Check_Slice (T, Fields (""), (1 .. 0 => ""));
+                   (1 => To_Unbounded_String ("a"),
+                    2 => To_Unbounded_String ("b"),
+                    3 => To_Unbounded_String ("c")));
+      Check_Slice (T, Fields (""), (1 .. 0 => To_Unbounded_String ("")));
       Check_Slice (T, Fields_Func ("a1b2c", Is_Upper'Access),
-                   (1 => "a1b2c"));
+                   (1 => To_Unbounded_String ("a1b2c")));
    end Test_Fields;
 
    procedure Test_Trim_Family (T : in out
@@ -194,10 +219,6 @@ package body Strings_Suite is
 
    procedure Test_Case_And_Map (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      function Shout (C : Character) return Character is
-        (if C in 'a' .. 'z'
-         then Character'Val (Character'Pos (C) - 32)
-         else C);
    begin
       Assert (To_Upper ("go") = "GO", "ToUpper");
       Assert (To_Lower ("GO") = "go", "ToLower");

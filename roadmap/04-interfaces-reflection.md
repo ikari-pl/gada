@@ -713,7 +713,7 @@ enumeration; output matches the expected fixture.
         automatically, so `describe(Sink'(…))` should already compile once
         argument emission for it lands).
 
-- [ ] **Compiler emission — type assertions and type switches**
+- [x] **Compiler emission — type assertions and type switches**
       *Files:* `compiler/internal/{ir,translate,emit}`, golden tests
       *Verify:* `cd compiler && go test ./internal/emit/... -run Assert`
       *Done when:* `x.(T)`, `x.(T, ok)`, `switch x := y.(type) { ... }` all emit correctly.

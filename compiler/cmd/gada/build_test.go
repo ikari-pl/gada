@@ -363,9 +363,23 @@ func TestBuildPackage_IfaceDispatchExample(t *testing.T) {
 
 	stubGprbuild(t, func(gprPath string, _, _ io.Writer) error {
 		execDir := readGpr(t, gprPath)
-		body, err := os.ReadFile(filepath.Join(filepath.Dir(gprPath), "main.adb"))
+		dir := filepath.Dir(gprPath)
+		// Interface-bearing package main emits three units: the types +
+		// subprograms live in main_types.ads/.adb, main.adb is thin.
+		spec, err := os.ReadFile(filepath.Join(dir, "main_types.ads"))
 		if err != nil {
 			return err
+		}
+		body, err := os.ReadFile(filepath.Join(dir, "main_types.adb"))
+		if err != nil {
+			return err
+		}
+		main, err := os.ReadFile(filepath.Join(dir, "main.adb"))
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(spec), "is abstract;") {
+			t.Errorf("main_types.ads missing abstract op spec:\n%s", spec)
 		}
 		adb := string(body)
 		if got := strings.Count(adb, "Gada.Reflect.Types.Add_Method"); got != 8 {
@@ -375,10 +389,13 @@ func TestBuildPackage_IfaceDispatchExample(t *testing.T) {
 			t.Errorf("Register count = %d, want 6 (3 types x 2 interfaces):\n%s", got, adb)
 		}
 		if !strings.Contains(adb, "if S in Dog'Class then") {
-			t.Errorf("emitted main.adb missing the type-switch membership chain:\n%s", adb)
+			t.Errorf("emitted main_types.adb missing the type-switch membership chain:\n%s", adb)
 		}
 		if !strings.Contains(adb, "S.Speak;") {
-			t.Errorf("emitted main.adb missing the dispatching call:\n%s", adb)
+			t.Errorf("emitted main_types.adb missing the dispatching call:\n%s", adb)
+		}
+		if !strings.Contains(string(main), "with Main_Types;") || strings.Contains(string(main), "type Speaker is interface") {
+			t.Errorf("main.adb should be thin (with Main_Types, no nested types):\n%s", main)
 		}
 		return os.WriteFile(filepath.Join(execDir, "main"), []byte("#!/bin/sh\n"), 0o755)
 	})

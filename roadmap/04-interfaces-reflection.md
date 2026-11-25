@@ -873,6 +873,14 @@ enumeration; output matches the expected fixture.
       type-loads deps otherwise — the pre-existing "package fmt without
       types" failure; `go test ./cmd/...` is green again). compiler/
       coverage is now 95.00%.
+      *CI fix (2026-11-25):* the first PR run failed the examples job —
+      gnat rejects abstract/overriding subprograms nested in a procedure
+      body, so a `package main` with interface types must emit a package
+      spec/body (`main_types.ads`/`main_types.adb`) plus a thin `main.adb`
+      (`with Main_Types;`). emit gained `PackageFiles` (multi-unit output)
+      and `emitMainUnits`; the driver writes all units. Pinned by
+      `TestEmitMainUnitsIface` (spec/body/main split) and the updated
+      `TestBuildPackage_IfaceDispatchExample`.
 
 > **Note on json_roundtrip:** A reflection-end-to-end exit example
 > using `encoding/json` is appropriate but depends on Phase 7's

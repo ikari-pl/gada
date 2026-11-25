@@ -156,6 +156,78 @@ func TestCorpusComplete(t *testing.T) {
 	}
 }
 
+// TestEmitMainUnitsIface pins the three-unit layout emitted for a
+// package main that declares an interface type (Ada forbids abstract /
+// overriding subprograms nested in a procedure body, so types and
+// operations must live in a package spec/body — this is what makes
+// examples/iface_dispatch compile under gnat):
+//   - main_types.ads: package spec with the interface type + abstract
+//     op spec, the tagged record + overriding spec, instantiations,
+//     plain-function specs.
+//   - main_types.adb: package body with the subprogram bodies and the
+//     reflect-metadata elaboration.
+//   - main.adb: with/use Main_Types + the thin procedure Main.
+func TestEmitMainUnitsIface(t *testing.T) {
+	t.Parallel()
+	files, err := PackageFiles(loadFixtureIR(t, "iface_main"))
+	if err != nil {
+		t.Fatalf("PackageFiles: %v", err)
+	}
+	ads, ok := files["main_types.ads"]
+	if !ok {
+		t.Fatalf("missing main_types.ads; files: %v", keys(files))
+	}
+	adb, ok := files["main_types.adb"]
+	if !ok {
+		t.Fatalf("missing main_types.adb; files: %v", keys(files))
+	}
+	main := files["main.adb"]
+	for _, want := range []string{
+		"package Main_Types is",
+		"type Meter is interface;",
+		"is abstract;",
+		"type Gauge is new Meter with record",
+		"overriding function Value (G : Gauge) return Integer;",
+		"end Main_Types;",
+	} {
+		if !strings.Contains(ads, want) {
+			t.Fatalf("main_types.ads missing %q, got:\n%s", want, ads)
+		}
+	}
+	for _, want := range []string{
+		"package body Main_Types is",
+		"overriding function Value (G : Gauge) return Integer is",
+		"Gada.Reflect.Types.Add_Method",
+		"Gada.Reflect.Registry.Register_Type",
+		"end Main_Types;",
+	} {
+		if !strings.Contains(adb, want) {
+			t.Fatalf("main_types.adb missing %q, got:\n%s", want, adb)
+		}
+	}
+	for _, want := range []string{"with Main_Types;", "use Main_Types;", "procedure Main is"} {
+		if !strings.Contains(main, want) {
+			t.Fatalf("main.adb missing %q, got:\n%s", want, main)
+		}
+	}
+	// The spec must not contain bodies; the main unit must not contain
+	// the type declarations.
+	if strings.Contains(ads, "is abstract;\n   begin") || strings.Contains(ads, "return Integer is\n") {
+		t.Fatalf("main_types.ads unexpectedly contains a body:\n%s", ads)
+	}
+	if strings.Contains(main, "type Meter is interface") {
+		t.Fatalf("main.adb still nests the interface type:\n%s", main)
+	}
+}
+
+func keys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 func loadFixtureIR(t *testing.T, name string) *ir.Package {
 	t.Helper()
 	path := filepath.Join("..", "translate", "testdata", name+".golden.json")

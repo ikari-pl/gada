@@ -70,18 +70,36 @@ var ProjectTemplate string
 // translator currently produces one *ir.File per Go source file, so
 // this contract holds end-to-end.
 func Package(p *ir.Package, w io.Writer) error {
+	files, err := PackageFiles(p)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, files["main.adb"])
+	return err
+}
+
+// PackageFiles emits every compilation unit for p, keyed by file name.
+// The main unit is always "main.adb" (what the project template's
+// `for Main use` points at); a `package main` file declaring interface
+// types additionally yields "main_types.ads" / "main_types.adb", because
+// Ada only permits abstract/dispatching subprograms in a package
+// spec/body — never nested inside `procedure Main`.
+func PackageFiles(p *ir.Package) (map[string]string, error) {
 	if p == nil {
-		return fmt.Errorf("emit: nil package")
+		return nil, fmt.Errorf("emit: nil package")
 	}
 	if len(p.Files) != 1 {
-		return fmt.Errorf("emit: expected exactly one file, got %d", len(p.Files))
+		return nil, fmt.Errorf("emit: expected exactly one file, got %d", len(p.Files))
 	}
 	e := newEmitter(p.Name, p.Files[0])
 	if err := e.run(); err != nil {
-		return err
+		return nil, err
 	}
-	_, err := io.WriteString(w, e.buf.String())
-	return err
+	files := map[string]string{"main.adb": e.buf.String()}
+	for name, content := range e.aux {
+		files[name] = content
+	}
+	return files, nil
 }
 
 // emitter accumulates Ada source into buf with a current indent
@@ -117,7 +135,8 @@ type emitter struct {
 	pkgName string
 	file    *ir.File
 
-	buf    strings.Builder
+	buf    *strings.Builder
+	aux    map[string]string // extra compilation units (main_types.ads/.adb) for interface-bearing package main; main.adb always lands in buf
 	indent int
 
 	needsCoreIO         bool
@@ -198,6 +217,8 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 	e := &emitter{
 		pkgName:             pkg,
 		file:                f,
+		buf:                 &strings.Builder{},
+		aux:                 map[string]string{},
 		sliceElems:          map[string]ir.Type{},
 		mapPairs:            map[string]*ir.MapType{},
 		chanElems:           map[string]ir.Type{},
@@ -554,52 +575,72 @@ func (e *emitter) walkExpr(x ir.Expr) {
 	}
 }
 
-func (e *emitter) run() error {
+// collectWiths returns the with-clause lines for the file, in emission
+// order. run() prints them for the single-unit shapes; emitMainUnits
+// reuses them per emitted unit.
+func (e *emitter) collectWiths() []string {
+	var withs []string
+	add := func(s string) { withs = append(withs, s) }
 	if e.needsCoreIO {
-		e.println("with Gada.Core.IO; use Gada.Core.IO;")
+		add("with Gada.Core.IO; use Gada.Core.IO;")
 	}
 	if len(e.sliceElemOrder) > 0 {
-		e.println("with Gada.Core.Slices;")
+		add("with Gada.Core.Slices;")
 	}
 	if len(e.mapPairOrder) > 0 {
-		e.println("with Gada.Core.Maps;")
-		e.println("with Gada.Core.Hash;")
+		add("with Gada.Core.Maps;")
+		add("with Gada.Core.Hash;")
 	}
 	if len(e.chanElemOrder) > 0 {
-		e.println("with Gada.Async.Channels.Bounded;")
+		add("with Gada.Async.Channels.Bounded;")
 	}
 	if len(e.selectorElemOrder) > 0 {
-		e.println("with Gada.Async.Selector;")
+		add("with Gada.Async.Selector;")
 	}
 	if e.needsCoreDefer {
-		e.println("with Gada.Core.Defer;")
+		add("with Gada.Core.Defer;")
 	}
 	if e.needsCorePanic {
-		e.println("with Gada.Core.Panic;")
+		add("with Gada.Core.Panic;")
 	}
 	if e.needsAsyncScheduler {
-		e.println("with Gada.Async.Scheduler;")
+		add("with Gada.Async.Scheduler;")
 	}
 	if e.needsReflect {
-		e.println("with Gada.Reflect.Types;")
-		e.println("with Gada.Reflect.Registry;")
+		add("with Gada.Reflect.Types;")
+		add("with Gada.Reflect.Registry;")
 	}
 	if e.needsIfaceReg {
-		e.println("with Gada.Reflect.Interfaces;")
+		add("with Gada.Reflect.Interfaces;")
 	}
 	if e.needsGoArgs {
 		// `go f(x, y)` lowers to a per-spawn heap closure: an Unchecked_
 		// Conversion each way between the closure-access type and the
 		// scheduler's opaque System.Address payload, plus an Unchecked_
 		// Deallocation so the worker reclaims the block after unpacking.
-		e.println("with Ada.Unchecked_Conversion;")
-		e.println("with Ada.Unchecked_Deallocation;")
-		e.println("with System;")
+		add("with Ada.Unchecked_Conversion;")
+		add("with Ada.Unchecked_Deallocation;")
+		add("with System;")
 	}
-	if e.needsCoreIO || len(e.sliceElemOrder) > 0 || len(e.mapPairOrder) > 0 ||
-		len(e.chanElemOrder) > 0 || len(e.selectorElemOrder) > 0 ||
-		e.needsCoreDefer || e.needsCorePanic || e.needsAsyncScheduler ||
-		e.needsGoArgs || e.needsReflect {
+	return withs
+}
+
+func (e *emitter) run() error {
+	withs := e.collectWiths()
+	// A `package main` file that declares interface types cannot nest
+	// them in `procedure Main` — Ada only allows abstract/dispatching
+	// subprograms in a package spec/body, not in a subprogram body — so
+	// emit three units: a spec (types + abstract op specs + overriding
+	// specs + plain-function specs), a body (subprogram bodies +
+	// metadata elaboration), and the Main procedure itself.
+	if e.pkgName == "main" && e.fileHasInterfaces() {
+		e.emitMainUnits(withs)
+		return e.err
+	}
+	for _, w := range withs {
+		e.println(w)
+	}
+	if len(withs) > 0 {
 		e.println("")
 	}
 	if e.pkgName == "main" {
@@ -878,12 +919,21 @@ func (e *emitter) findMain() *ir.Function {
 	return nil
 }
 
-// emitMainProcedure handles every Go `package main` file: it produces
-// `procedure Main is <nested-subs + hoisted-decls> begin <main-body>
-// end Main;`. With no nested subprograms and no hoisted declarations
-// the layout collapses to the tight `procedure Main is begin ... end
-// Main;` form.
-func (e *emitter) emitMainProcedure() {
+// mainLayout is the gathered shape of a Go `package main` file: the
+// main function, its sibling subprograms (plain functions plus
+// overriding method bodies), and main's own split body.
+type mainLayout struct {
+	main                *ir.Function
+	others              []*ir.Function
+	decls               []*ir.Assign
+	body                []ir.Stmt
+	defers              []*ir.DeferStmt
+	gos                 []*ir.GoStmt
+	usesPanic           bool
+	defersInsideWrapper bool
+}
+
+func (e *emitter) gatherMain() mainLayout {
 	main := e.findMain()
 	overridingMain := overridingMethods(e.file.Decls)
 	var others []*ir.Function
@@ -895,7 +945,7 @@ func (e *emitter) emitMainProcedure() {
 		fn, ok := d.(*ir.Function)
 		if !ok {
 			e.fail(fmt.Errorf("emit: top-level %T not supported in Phase 1", d))
-			return
+			return mainLayout{}
 		}
 		if fn.Receiver != nil {
 			// An overriding method emits its body as a sibling subprogram
@@ -909,32 +959,185 @@ func (e *emitter) emitMainProcedure() {
 			others = append(others, fn)
 		}
 	}
-
-	var mainDecls []*ir.Assign
-	var mainBody []ir.Stmt
-	var mainDefers []*ir.DeferStmt
-	var mainGos []*ir.GoStmt
-	var mainUsesPanic bool
+	var l mainLayout
+	l.main = main
+	l.others = others
 	if main != nil {
-		mainDecls, mainBody = splitDecls(main.Body)
-		mainDefers = collectDefers(main.Body)
-		mainGos = collectGoStmts(main.Body)
-		mainUsesPanic = bodyUsesPanicOrRecover(main.Body)
+		l.decls, l.body = splitDecls(main.Body)
+		l.defers = collectDefers(main.Body)
+		l.gos = collectGoStmts(main.Body)
+		l.usesPanic = bodyUsesPanicOrRecover(main.Body)
 	}
 	// Same layering rule as emitSubprogram: when a function combines
 	// `defer` with `panic`/`recover`, the Defer_Block declarations must
 	// live inside the begin..end the exception handler wraps so they
 	// finalise (and `recover()` pops the panic) before the handler
 	// matches.
-	mainDefersInsideWrapper := len(mainDefers) > 0 && mainUsesPanic
+	l.defersInsideWrapper = len(l.defers) > 0 && l.usesPanic
+	return l
+}
+
+// emitMainProcedure handles every Go `package main` file without
+// interface declarations: it produces `procedure Main is <nested-subs
+// + hoisted-decls> begin <main-body> end Main;`. With no nested
+// subprograms and no hoisted declarations the layout collapses to the
+// tight `procedure Main is begin ... end Main;` form.
+func (e *emitter) emitMainProcedure() {
+	l := e.gatherMain()
+	if e.err != nil {
+		return
+	}
+	e.emitMainProc(l, true)
+}
+
+// emitMainUnits handles a `package main` file that declares interface
+// types. Ada forbids abstract/dispatching subprograms nested in a
+// subprogram body (gnat: "not dispatching (must be defined in a package
+// spec)"), so the types and their operations cannot live in
+// `procedure Main`'s declarative part. Instead three units are emitted:
+//   - main_types.ads — `package Main_Types` spec: type declarations
+//     (interfaces + abstract op specs, tagged records + overriding
+//     specs), generic instantiations, and plain-function specs.
+//   - main_types.adb — package body: the subprogram bodies, plus the
+//     reflect-metadata elaboration (a package body has an elaboration
+//     part, so registration runs before Main).
+//   - main.adb (e.buf) — `with Main_Types; use Main_Types;` +
+//     `procedure Main` holding main's own declarations and body.
+func (e *emitter) emitMainUnits(withs []string) {
+	l := e.gatherMain()
+	if e.err != nil {
+		return
+	}
+	const typesPkg = "Main_Types"
+	// GNAT file-name rule: unit Main_Types lives in main_types.ads/.adb.
+	const specFile = "main_types.ads"
+	const bodyFile = "main_types.adb"
+
+	e.emitAux(specFile, withs, func() {
+		e.println("package " + typesPkg + " is")
+		e.println("")
+		e.indent++
+		if err := e.emitTypeDecls(); err != nil {
+			e.fail(err)
+			return
+		}
+		// Generic instantiations live in the spec so both the body and
+		// Main (which withs this unit) can see them.
+		needSep := e.fileHasTypeDecls()
+		emitGroup := func(has bool, sepBefore *bool, fn func()) {
+			if !has {
+				return
+			}
+			if *sepBefore {
+				e.println("")
+			}
+			fn()
+			*sepBefore = true
+		}
+		sep := needSep
+		emitGroup(len(e.sliceElemOrder) > 0, &sep, e.emitSliceInstantiations)
+		emitGroup(len(e.mapPairOrder) > 0, &sep, e.emitMapInstantiations)
+		emitGroup(len(e.chanElemOrder) > 0, &sep, e.emitChannelInstantiations)
+		emitGroup(len(e.selectorElemOrder) > 0, &sep, e.emitSelectorInstantiations)
+		emitGroup(e.needsCorePanic, &sep, e.emitPanicInstantiation)
+		// Plain functions get a spec here; overriding methods already
+		// have their overriding specs in the type declarations above.
+		for _, fn := range l.others {
+			if fn.Receiver != nil {
+				continue
+			}
+			if sep {
+				e.println("")
+			}
+			header, _, ok := e.subpHeader(fn)
+			if !ok {
+				return
+			}
+			e.println(strings.TrimSuffix(header, " is") + ";")
+			sep = true
+		}
+		e.indent--
+		e.println("")
+		e.println("end " + typesPkg + ";")
+	})
+
+	e.emitAux(bodyFile, withs, func() {
+		e.println("package body " + typesPkg + " is")
+		e.println("")
+		e.indent++
+		for i, fn := range l.others {
+			if i > 0 {
+				e.println("")
+			}
+			e.emitSubprogram(fn)
+		}
+		e.indent--
+		e.println("")
+		e.println("begin")
+		e.indent++
+		// Register reflect metadata for every defined type in the
+		// package elaboration, before Main runs.
+		if e.needsReflect {
+			meta, err := collectTypeMeta(e.file.Decls)
+			if err != nil {
+				e.fail(err)
+				return
+			}
+			e.emitTypeMetadata(meta.entries())
+			e.emitInterfaceSatisfaction(meta, satisfiedPairs(e.file.Decls))
+		}
+		e.indent--
+		e.println("end " + typesPkg + ";")
+	})
+
+	for _, w := range withs {
+		e.println(w)
+	}
+	e.println("with " + typesPkg + ";")
+	e.println("use " + typesPkg + ";")
+	if len(withs) > 0 {
+		e.println("")
+	}
+	e.emitMainProc(l, false)
+}
+
+// emitAux emits one auxiliary compilation unit into e.aux under name,
+// starting from a fresh buffer with the file's with-clauses.
+func (e *emitter) emitAux(name string, withs []string, fn func()) {
+	savedBuf, savedIndent := e.buf, e.indent
+	e.buf = &strings.Builder{}
+	e.indent = 0
+	for _, w := range withs {
+		e.println(w)
+	}
+	e.println("")
+	fn()
+	e.aux[name] = e.buf.String()
+	e.buf, e.indent = savedBuf, savedIndent
+}
+
+// emitMainProc emits `procedure Main is … begin … end Main;`. When
+// nestedTypes is true (no interface declarations in the file), type
+// declarations, generic instantiations, and sibling subprograms are
+// nested in Main's declarative part; when false (interface-bearing
+// main, handled by emitMainUnits), they live in the Main_Types units
+// and only main's own declarations remain here.
+func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
+	main := l.main
+	others := l.others
+	mainDecls, mainBody := l.decls, l.body
+	mainDefers, mainGos := l.defers, l.gos
+	mainUsesPanic := l.usesPanic
+	mainDefersInsideWrapper := l.defersInsideWrapper
 
 	hasSlices := len(e.sliceElemOrder) > 0
 	hasMaps := len(e.mapPairOrder) > 0
 	hasChans := len(e.chanElemOrder) > 0
 	hasSelectors := len(e.selectorElemOrder) > 0
 	hasPanic := e.needsCorePanic
-	hasTypes := e.fileHasTypeDecls()
-	hasDeclSection := hasTypes || hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0
+	hasTypes := nestedTypes && e.fileHasTypeDecls()
+	hasInst := nestedTypes && (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic)
+	hasDeclSection := hasTypes || hasInst || (nestedTypes && len(others) > 0) || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0
 
 	e.println("procedure Main is")
 	if hasDeclSection {
@@ -948,46 +1151,48 @@ func (e *emitter) emitMainProcedure() {
 			return
 		}
 	}
-	if hasTypes && (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(others) > 0 || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0) {
+	if hasTypes && (hasInst || (nestedTypes && len(others) > 0) || len(mainDecls) > 0 || (len(mainDefers) > 0 && !mainDefersInsideWrapper) || len(mainGos) > 0) {
 		e.println("")
 	}
-	if hasSlices {
+	if nestedTypes && hasSlices {
 		e.emitSliceInstantiations()
 	}
-	if hasSlices && hasMaps {
+	if nestedTypes && hasSlices && hasMaps {
 		e.println("")
 	}
-	if hasMaps {
+	if nestedTypes && hasMaps {
 		e.emitMapInstantiations()
 	}
-	if (hasSlices || hasMaps) && hasChans {
+	if nestedTypes && (hasSlices || hasMaps) && hasChans {
 		e.println("")
 	}
-	if hasChans {
+	if nestedTypes && hasChans {
 		e.emitChannelInstantiations()
 	}
-	if (hasSlices || hasMaps || hasChans) && hasSelectors {
+	if nestedTypes && (hasSlices || hasMaps || hasChans) && hasSelectors {
 		e.println("")
 	}
-	if hasSelectors {
+	if nestedTypes && hasSelectors {
 		e.emitSelectorInstantiations()
 	}
-	if (hasSlices || hasMaps || hasChans || hasSelectors) && hasPanic {
+	if nestedTypes && (hasSlices || hasMaps || hasChans || hasSelectors) && hasPanic {
 		e.println("")
 	}
-	if hasPanic {
+	if nestedTypes && hasPanic {
 		e.emitPanicInstantiation()
 	}
-	if (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
+	if nestedTypes && (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
 		e.println("")
 	}
-	for i, fn := range others {
-		if i > 0 {
-			e.println("")
+	if nestedTypes {
+		for i, fn := range others {
+			if i > 0 {
+				e.println("")
+			}
+			e.emitSubprogram(fn)
 		}
-		e.emitSubprogram(fn)
 	}
-	if len(others) > 0 && len(mainDecls) > 0 {
+	if nestedTypes && len(others) > 0 && len(mainDecls) > 0 {
 		e.println("")
 	}
 	if main != nil {
@@ -1017,8 +1222,10 @@ func (e *emitter) emitMainProcedure() {
 
 	// Register reflect metadata for every defined type before any user
 	// code runs (a procedure body has no separate elaboration part, so
-	// the prologue of Main is the module-init point).
-	if e.needsReflect {
+	// the prologue of Main is the module-init point). In the
+	// interface-bearing layout the registration lives in Main_Types'
+	// elaboration instead (emitMainUnits), so skip it here.
+	if e.needsReflect && nestedTypes {
 		meta, err := collectTypeMeta(e.file.Decls)
 		if err != nil {
 			e.fail(err)

@@ -1,4 +1,4 @@
---  Body of Gada.Std.Fmt — see spec and docs/fmt_verb_support.md.
+--  Acc of Gada.Std.Fmt — see spec and docs/fmt_verb_support.md.
 
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 with Ada.Text_IO;
@@ -78,7 +78,7 @@ package body Gada.Std.Fmt is
 
    function Int_Base (V : Long_Integer; Base : Natural;
                       Upper : Boolean) return String is
-      Digits : constant String := (if Upper then Hex_Upper else Hex_Lower);
+      Digs : constant String := (if Upper then Hex_Upper else Hex_Lower);
       B      : Unbounded_String;
       M      : Long_Integer := V;
    begin
@@ -86,7 +86,7 @@ package body Gada.Std.Fmt is
          return "0";
       end if;
       while M > 0 loop
-         Append (B, Digits (1 + Natural (M mod Base)));
+         Append (B, Digs (1 + Natural (M mod Base)));
          M := M / Base;
       end loop;
       --  B is LSB-first; reverse it.
@@ -113,30 +113,30 @@ package body Gada.Std.Fmt is
    function Bool_Text (B : Boolean) return String is
      (if B then "true" else "false");
 
-   --  Pads Body to Sp.Width (space or zero padding, sign-aware for
+   --  Pads Acc to Sp.Width (space or zero padding, sign-aware for
    --  Zero_Pad when Sign_Pos > 0).
-   function Pad (Body : String; Sp : Spec; Numeric : Boolean;
+   function Pad (Acc : String; Sp : Spec; Numeric : Boolean;
                  Sign_Pos : Natural := 0) return String is
       N : constant Natural := Sp.Width;
    begin
-      if Body'Length >= N then
-         return Body;
+      if Acc'Length >= N then
+         return Acc;
       end if;
       declare
-         Fill : constant Natural := N - Body'Length;
+         Fill : constant Natural := N - Acc'Length;
       begin
          if Sp.Minus then
-            return Body & (1 .. Fill => ' ');
+            return Acc & (1 .. Fill => ' ');
          elsif Sp.Zero and then Numeric then
             --  Zero-pad after any sign/prefix.
             if Sign_Pos > 0 then
-               return Body (Body'First .. Sign_Pos)
+               return Acc (Acc'First .. Sign_Pos)
                  & (1 .. Fill => '0')
-                 & Body (Sign_Pos + 1 .. Body'Last);
+                 & Acc (Sign_Pos + 1 .. Acc'Last);
             end if;
-            return (1 .. Fill => '0') & Body;
+            return (1 .. Fill => '0') & Acc;
          end if;
-         return (1 .. Fill => ' ') & Body;
+         return (1 .. Fill => ' ') & Acc;
       end;
    end Pad;
 
@@ -158,23 +158,23 @@ package body Gada.Std.Fmt is
                   elsif Sp.Plus then "+"
                   elsif Sp.Space then " "
                   else "");
-               Body : Unbounded_String;
+               Acc : Unbounded_String;
             begin
                case Sp.Verb is
                   when 'd' | 'v' =>
-                     Append (Body, Int_Base (Mag, 10, False));
+                     Append (Acc, Int_Base (Mag, 10, False));
                   when 'b' =>
-                     if Sp.Hash then Append (Body, "0b"); end if;
-                     Append (Body, Int_Base (Mag, 2, False));
+                     if Sp.Hash then Append (Acc, "0b"); end if;
+                     Append (Acc, Int_Base (Mag, 2, False));
                   when 'o' =>
-                     if Sp.Hash then Append (Body, "0o"); end if;
-                     Append (Body, Int_Base (Mag, 8, False));
+                     if Sp.Hash then Append (Acc, "0o"); end if;
+                     Append (Acc, Int_Base (Mag, 8, False));
                   when 'x' =>
-                     if Sp.Hash then Append (Body, "0x"); end if;
-                     Append (Body, Int_Base (Mag, 16, False));
+                     if Sp.Hash then Append (Acc, "0x"); end if;
+                     Append (Acc, Int_Base (Mag, 16, False));
                   when 'X' =>
-                     if Sp.Hash then Append (Body, "0X"); end if;
-                     Append (Body, Int_Base (Mag, 16, True));
+                     if Sp.Hash then Append (Acc, "0X"); end if;
+                     Append (Acc, Int_Base (Mag, 16, True));
                   when 'c' =>
                      return Pad (String'(1 => Character'Val (X.I)),
                                  Sp, False);
@@ -183,7 +183,7 @@ package body Gada.Std.Fmt is
                      return "%!" & Sp.Verb & "(BADVERB)";
                end case;
                declare
-                  S    : constant String := Sign & To_String (Body);
+                  S    : constant String := Sign & To_String (Acc);
                   --  Zero padding goes after the sign and any base
                   --  prefix (Go: %#08x of 255 is 0x0000ff).
                   Plen : constant Natural :=

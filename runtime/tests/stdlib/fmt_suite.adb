@@ -78,10 +78,12 @@ package body Fmt_Suite is
    procedure Test_Sprintf_Misc (T : in out AUnit.Test_Cases.Test_Case'Class) is
       E : constant Errors.Error_Access := Errors.New_K ("boom");
    begin
-      Assert (Sprintf ("%p", (1 => A (E.all'Address)))'First = '0'
-                and then Sprintf ("%p", (1 => A (E.all'Address))
-                ) (2) = 'x',
-              "%p is 0x…");
+      declare
+         P : constant String := Sprintf ("%p", (1 => A (E.all'Address)));
+      begin
+         Assert (P'Length >= 2 and then P (1) = '0' and then P (2) = 'x',
+                 "%p is 0x…: " & P);
+      end;
       Assert (Sprintf ("%v", (1 => A (E))) = "boom", "%v error");
       Assert (Sprintf ("%s", (1 => A (E))) = "boom", "%s error");
       Assert (Sprintf ("%z", (1 => A (1))) = "%!z(BADVERB)", "bad verb");

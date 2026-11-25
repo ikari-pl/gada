@@ -87,10 +87,15 @@ func buildPackage(pkgPath string, stdout, stderr io.Writer) error {
 		return failStage("resolve", err)
 	}
 
-	// Stage: translate (load + IR conversion).
+	// Stage: translate (load + IR conversion). NeedDeps|NeedImports are
+	// required alongside NeedTypes: with x/tools v0.27 + Go 1.27 the
+	// export-data path no longer type-loads dependencies unless the deps
+	// themselves are in the load set — omitting them surfaces as
+	// "internal error: package \"fmt\" without types".
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo,
+			packages.NeedTypes | packages.NeedTypesInfo |
+			packages.NeedDeps | packages.NeedImports,
 		Dir: abs,
 	}
 	loaded, err := packages.Load(cfg, ".")

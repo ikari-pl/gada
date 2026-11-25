@@ -37,6 +37,7 @@ package body Strconv_Suite is
       Register_Routine (T, Test_Unquote_Errors'Access, "Unquote errors");
       Register_Routine (T, Test_Num_Error_Is_As'Access,
                         "NumError Is/As/Message");
+      Register_Routine (T, Test_Edges'Access, "escapes/UTF-8/rounding edges");
    end Register_Tests;
 
    procedure Test_Itoa (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -287,5 +288,53 @@ package body Strconv_Suite is
                 & Errors.Message (E.all));
       Assert (Errors.Unwrap (E) = Err_Syntax, "NumError Unwrap = sentinel");
    end Test_Num_Error_Is_As;
+
+   procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      V : Ada.Strings.Unbounded.Unbounded_String;
+      E : Errors.Error_Access;
+   begin
+      --  All simple escapes.
+      Unquote ('"' & "\a\b\f\r\v\'" & '"', V, E);
+      Assert (E = Errors.No_Error
+              and Ada.Strings.Unbounded.To_String (V)
+                = (Character'Val (7), Character'Val (8),
+                   Character'Val (12), Character'Val (13),
+                   Character'Val (11), Character'Val (39)),
+              "simple escapes a b f r v '");
+      --  Hex escape, incl. A-F digits.
+      Unquote ('"' & "\xAB" & '"', V, E);
+      Assert (E = Errors.No_Error
+              and Ada.Strings.Unbounded.To_String (V)
+                = (1 => Character'Val (16#AB#)),
+              "\xAB");
+      Unquote ('"' & "\xZZ" & '"', V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "\xZZ invalid");
+      --  Unicode escapes: 1/3/4-byte UTF-8, surrogate rejection.
+      Unquote ('"' & "\u0041" & '"', V, E);
+      Assert (E = Errors.No_Error
+              and Ada.Strings.Unbounded.To_String (V) = "A", "\u0041");
+      Unquote ('"' & "\u0800" & '"', V, E);
+      Assert (E = Errors.No_Error
+              and Ada.Strings.Unbounded.To_String (V)
+                = (Character'Val (16#E0#), Character'Val (16#80#),
+                   Character'Val (16#80#)),
+              "\u0800 is 3-byte UTF-8");
+      Unquote ('"' & "\U0001F600" & '"', V, E);
+      Assert (E = Errors.No_Error
+              and Ada.Strings.Unbounded.To_String (V)
+                = (Character'Val (16#F0#), Character'Val (16#9F#),
+                   Character'Val (16#98#), Character'Val (16#80#)),
+              "\U0001F600 is 4-byte UTF-8");
+      Unquote ('"' & "\uD800" & '"', V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "surrogate rejected");
+      --  Rounding carry: 9.999 to 3 significant digits overflows to 10.
+      Assert (Format_Float (9.999, 'e', 2) = "1.00e+01", "carry 9.999");
+      --  'f' prec 0 rounds at the units digit.
+      Assert (Format_Float (0.6, 'f', 0) = "1", "0.6 rounds to 1");
+      Assert (Format_Float (0.4, 'f', 0) = "0", "0.4 rounds to 0");
+      --  17-significant-digit shortest (0.1 + 0.2).
+      Assert (Format_Float (0.1 + 0.2) = "0.30000000000000004",
+              "17-digit shortest");
+   end Test_Edges;
 
 end Strconv_Suite;

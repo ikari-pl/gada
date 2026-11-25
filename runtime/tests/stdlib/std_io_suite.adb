@@ -7,7 +7,7 @@ with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 with Gada.Std.Errors;
 with Gada.Std.IO; use Gada.Std.IO;
 
-package body IO_Suite is
+package body Std_IO_Suite is
 
    package Errors renames Gada.Std.Errors;
 
@@ -77,10 +77,10 @@ package body IO_Suite is
                       Pos => 1));
 
    overriding function Name
-     (T : IO_Test) return AUnit.Message_String is
+     (T : Std_IO_Test) return AUnit.Message_String is
      (AUnit.Format ("Gada.Std.IO suite"));
 
-   overriding procedure Register_Tests (T : in out IO_Test) is
+   overriding procedure Register_Tests (T : in out Std_IO_Test) is
       use AUnit.Test_Cases.Registration;
    begin
       Register_Routine (T, Test_EOF_Sentinel'Access, "EOF sentinel identity");
@@ -164,4 +164,4 @@ package body IO_Suite is
       Assert (To_String (Data) = "all of it", "ReadAll content");
    end Test_Read_All;
 
-end IO_Suite;
+end Std_IO_Suite;

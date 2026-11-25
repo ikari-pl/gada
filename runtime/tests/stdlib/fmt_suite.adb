@@ -4,6 +4,7 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 with AUnit.Assertions; use AUnit.Assertions;
 
 with Ada.Strings.Unbounded;
+with System;
 with Gada.Core.IO;
 with Gada.Std.Errors;
 with Gada.Std.Fmt; use Gada.Std.Fmt;
@@ -28,6 +29,7 @@ package body Fmt_Suite is
       Register_Routine (T, Test_Errorf'Access, "Errorf + %w");
       Register_Routine (T, Test_Sscanf'Access, "Sscanf");
       Register_Routine (T, Test_Print_Family'Access, "Print/Println/Printf");
+      Register_Routine (T, Test_Edges'Access, "bad verbs, Sscanf edges");
    end Register_Tests;
 
    procedure Test_Sprintf_Int (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -138,5 +140,58 @@ package body Fmt_Suite is
       Println ((1 => A ("b")));
       Printf ("%d-%s" & Character'Val (10), (1 => A (7), 2 => A ("z")));
    end Test_Print_Family;
+
+   procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      E   : constant Errors.Error_Access := Errors.New_K ("e");
+      N   : Natural;
+      Err : Errors.Error_Access;
+   begin
+      Assert (Sprintf ("%d", (1 => A (0))) = "0", "%d of 0");
+      Assert (Sprintf ("%05d", (1 => A (42))) = "00042", "%05d no sign");
+      Assert (Sprintf ("%p", (1 => A (System.Null_Address))) = "0x0",
+              "%p of null");
+      Assert (Sprintf ("%q", (1 => A ('x'))) = '"' & '"' & 'x' & '"' & '"',
+              "%q of char");
+      --  One bad verb per argument kind (each kind's others arm).
+      Assert (Sprintf ("%s", (1 => A (1.5))) = "%!s(BADVERB)", "float %s");
+      Assert (Sprintf ("%d", (1 => A ("x"))) = "%!d(BADVERB)", "str %d");
+      Assert (Sprintf ("%d", (1 => A (True))) = "%!d(BADVERB)", "bool %d");
+      Assert (Sprintf ("%d", (1 => A ('x'))) = "%!d(BADVERB)", "char %d");
+      Assert (Sprintf ("%d", (1 => A (System.Null_Address)))
+                = "%!d(BADVERB)", "ptr %d");
+      Assert (Sprintf ("%d", (1 => A (E))) = "%!d(BADVERB)", "err %d");
+      --  Sscanf edges.
+      declare
+         None : Arg_Array (1 .. 0) := (others => A (0));
+      begin
+         Sscanf ("100", "%%", None, N, Err);
+         Assert (Err = Errors.No_Error and N = 0, "literal %%");
+      end;
+      declare
+         One : Arg_Array (1 .. 1) := (1 => (Int_Arg, 0));
+      begin
+         Sscanf ("1", "%d %d", One, N, Err);
+         Assert (Err /= Errors.No_Error, "not enough args");
+         Sscanf ("1", "%z", One, N, Err);
+         Assert (Err /= Errors.No_Error, "unsupported verb");
+         Sscanf ("x", "%s", One, N, Err);
+         Assert (Err /= Errors.No_Error, "%s into int kind");
+         Sscanf ("1.5", "%f", One, N, Err);
+         Assert (Err /= Errors.No_Error, "%f into int kind");
+      end;
+      declare
+         B : Arg_Array (1 .. 1) := (1 => A (""));
+      begin
+         Sscanf ("true", "%t", B, N, Err);
+         Assert (Err /= Errors.No_Error, "%t into str kind");
+      end;
+      declare
+         C : Arg_Array (1 .. 1) := (1 => A (' '));
+      begin
+         Sscanf ("x", "%c", C, N, Err);
+         Assert (Err = Errors.No_Error and N = 1 and C (1).C = 'x',
+                 "%c parses one char");
+      end;
+   end Test_Edges;
 
 end Fmt_Suite;

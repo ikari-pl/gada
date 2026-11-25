@@ -53,7 +53,7 @@ with Errors_Suite;
 with Strings_Suite;
 with Strconv_Suite;
 with Bytes_Suite;
-with IO_Suite;
+with Std_IO_Suite;
 with Bufio_Suite;
 with Fmt_Suite;
 
@@ -189,7 +189,7 @@ procedure Test_Runner is
          Add_Test (Result, new Bytes_Suite.Bytes_Test);
       end if;
       if Should_Register ("stdlib.io") then
-         Add_Test (Result, new IO_Suite.IO_Test);
+         Add_Test (Result, new Std_IO_Suite.Std_IO_Test);
       end if;
       if Should_Register ("stdlib.bufio") then
          Add_Test (Result, new Bufio_Suite.Bufio_Test);

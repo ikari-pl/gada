@@ -85,6 +85,7 @@ package body Strings_Suite is
         (T, Test_Replace'Access, "Replace/ReplaceAll incl. N");
       Register_Routine
         (T, Test_Replacer'Access, "Replacer priority order");
+      Register_Routine (T, Test_Edges'Access, "Repeat/NewReplacer/old empty");
    end Register_Tests;
 
    procedure Test_Contains (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -256,5 +257,43 @@ package body Strings_Suite is
       Assert (Replace (New_Replacer (Split ("aa,a", ",")), "aaa") = "aa",
               "first-listed wins at a position");
    end Test_Replacer;
+
+   procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   begin
+      --  Repeat with a negative count raises (Go panics).
+      begin
+         declare
+            S : constant String := Repeat ("a", -1);
+         begin
+            Assert (S'Length = 0, "Repeat(-1) must raise");
+         end;
+      exception
+         when Constraint_Error =>
+            null;  --  expected
+      end;
+      --  New_Replacer with an odd pair count raises (Go panics).
+      begin
+         declare
+            R : constant Replacer :=
+              New_Replacer (Split ("a,b,c", ","));
+            pragma Unreferenced (R);
+         begin
+            Assert (False, "New_Replacer(odd) must raise");
+         end;
+      exception
+         when Constraint_Error =>
+            null;  --  expected
+      end;
+      --  Empty old string inserts between every byte and at the end.
+      Assert (Replace ("abc", "", "-", -1) = "-a-b-c-",
+              "Replace empty old");
+      --  A default Replacer (no pairs) is the identity.
+      declare
+         R : Replacer;
+      begin
+         Assert (Replace (R, "unchanged") = "unchanged",
+                 "empty Replacer is identity");
+      end;
+   end Test_Edges;
 
 end Strings_Suite;

@@ -23,5 +23,6 @@ package Bytes_Suite is
    procedure Test_Split_Join (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Buffer (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Reader (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Bytes_Suite;

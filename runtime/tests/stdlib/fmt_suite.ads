@@ -24,5 +24,6 @@ package Fmt_Suite is
    procedure Test_Errorf (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Sscanf (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Print_Family (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Fmt_Suite;

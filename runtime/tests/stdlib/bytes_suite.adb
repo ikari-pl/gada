@@ -24,6 +24,7 @@ package body Bytes_Suite is
       Register_Routine (T, Test_Split_Join'Access, "Split/Join");
       Register_Routine (T, Test_Buffer'Access, "Buffer write/read/reset");
       Register_Routine (T, Test_Reader'Access, "Reader read/readbyte/len");
+      Register_Routine (T, Test_Edges'Access, "Compare/Contains edges");
    end Register_Tests;
 
    procedure Test_Conversions (T : in out
@@ -139,5 +140,14 @@ package body Bytes_Suite is
       Reset (R);
       Assert (Len (R) = 4, "Reset restores");
    end Test_Reader;
+
+   procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class) is
+   begin
+      Assert (Compare (To_Bytes ("b"), To_Bytes ("a")) = 1, "Compare gt");
+      Assert (Compare (To_Bytes ("a"), To_Bytes ("a")) = 0, "Compare eq");
+      Assert (not Contains (To_Bytes ("abc"), To_Bytes ("z")),
+              "Contains missing");
+      Assert (Index (To_Bytes ("abc"), To_Bytes ("z")) = -1, "Index -1");
+   end Test_Edges;
 
 end Bytes_Suite;

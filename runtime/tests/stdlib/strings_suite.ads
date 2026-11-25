@@ -36,5 +36,6 @@ package Strings_Suite is
    procedure Test_Repeat (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Replace (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Replacer (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Strings_Suite;

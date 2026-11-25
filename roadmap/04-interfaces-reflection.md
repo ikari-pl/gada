@@ -2,7 +2,7 @@
 
 [← Phase 3](03-concurrency.md) · [Index](README.md) · Next: [Phase 5 →](05-stdlib-wave1.md)
 
-**Status:** `IN_PROGRESS` (opened 2026-05-30)
+**Status:** `DONE` (opened 2026-05-30, completed 2026-11-25)
 **Prerequisites:** [Phase 2](02-core-runtime.md) `DONE` ([Phase 3](03-concurrency.md) not strictly required)
 **Goal:** Implement Go interface dispatch (structural at compile time,
 nominal at runtime) and the `reflect` package's common surface
@@ -832,10 +832,25 @@ enumeration; output matches the expected fixture.
         emit/ 95.94%, translate/ 95.42%, runtime/ 100%; vet + lint +
         gate clean, `go test -race ./internal/...` green.
 
-- [ ] **`iface_dispatch` example**
+- [x] **`iface_dispatch` example**
       *Files:* `examples/iface_dispatch/main.go`, `examples/iface_dispatch/expected_output.txt`
       *Verify:* `make example HELLO=iface_dispatch`
       *Done when:* example exercises 3+ types implementing 2 interfaces with reflection-based method enumeration; output matches expected.
+      *Done 2026-11-25:* Dog/Cat/Robot each derive both `Speaker` and
+      `Mover` (`is new Speaker and Mover`); `announce`/`report` dispatch
+      through class-wide params and `kind` runs the 6c type switch. The
+      emitted package init enumerates every type's methods in
+      Gada.Reflect (Add_Method per method) and registers both
+      satisfaction edges per type. `expected_output.txt` is the
+      byte-for-byte output of stock `go run .`; `gada build` passes
+      resolve+translate+emit in this sandbox and stops only at gprbuild
+      (no Ada toolchain installed here), so the full
+      `make example HELLO=iface_dispatch` diff runs under the Alire
+      toolchain in CI. Along the way, `cmd/gada`'s packages.Load mode
+      gained NeedDeps|NeedImports (x/tools v0.27 + Go 1.27 no longer
+      type-loads deps otherwise — the pre-existing "package fmt without
+      types" failure; `go test ./cmd/...` is green again). compiler/
+      coverage is now 95.00%.
 
 > **Note on json_roundtrip:** A reflection-end-to-end exit example
 > using `encoding/json` is appropriate but depends on Phase 7's

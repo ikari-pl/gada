@@ -2,7 +2,7 @@
 
 [← Phase 4](04-interfaces-reflection.md) · [Index](README.md) · Next: [Phase 6 →](06-stdlib-wave2.md)
 
-**Status:** `NOT_STARTED`
+**Status:** `IN_PROGRESS` (opened 2026-11-25)
 **Prerequisites:** [Phase 2](02-core-runtime.md) `DONE`, [Phase 4](04-interfaces-reflection.md) `DONE`
 **Goal:** Port the pure-Go foundational packages: `errors`, `strings`,
 `strconv`, `bytes`, `io`, `bufio`, `fmt`. These are mostly mechanical

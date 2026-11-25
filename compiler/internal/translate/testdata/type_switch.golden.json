@@ -1,0 +1,178 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "type_switch.go",
+      "imports": null,
+      "decls": [
+        {
+          "kind": "TypeDecl",
+          "name": "Speaker",
+          "underlying": {
+            "kind": "InterfaceType",
+            "methods": [
+              {
+                "kind": "MethodSig",
+                "name": "Speak",
+                "params": null,
+                "results": null
+              }
+            ]
+          }
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Dog",
+          "underlying": {
+            "kind": "StructType",
+            "fields": [
+              {
+                "kind": "StructField",
+                "name": "Legs",
+                "type": {
+                  "kind": "IntType"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "Function",
+          "name": "Speak",
+          "receiver": {
+            "kind": "Receiver",
+            "name": "d",
+            "type": "Dog",
+            "pointer": false
+          },
+          "params": null,
+          "results": null,
+          "body": null
+        },
+        {
+          "kind": "TypeDecl",
+          "name": "Cat",
+          "underlying": {
+            "kind": "StructType",
+            "fields": [
+              {
+                "kind": "StructField",
+                "name": "Lives",
+                "type": {
+                  "kind": "IntType"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "Function",
+          "name": "Speak",
+          "receiver": {
+            "kind": "Receiver",
+            "name": "c",
+            "type": "Cat",
+            "pointer": false
+          },
+          "params": null,
+          "results": null,
+          "body": null
+        },
+        {
+          "kind": "Function",
+          "name": "describe",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "s",
+              "type": {
+                "kind": "NamedType",
+                "name": "Speaker"
+              }
+            }
+          ],
+          "results": [
+            {
+              "kind": "Param",
+              "name": "",
+              "type": {
+                "kind": "IntType"
+              }
+            }
+          ],
+          "body": [
+            {
+              "kind": "TypeSwitch",
+              "x": {
+                "kind": "Ident",
+                "name": "s"
+              },
+              "var": "d",
+              "cases": [
+                {
+                  "type": {
+                    "kind": "NamedType",
+                    "name": "Dog"
+                  },
+                  "body": [
+                    {
+                      "kind": "Return",
+                      "results": [
+                        {
+                          "kind": "Selector",
+                          "x": {
+                            "kind": "Ident",
+                            "name": "d"
+                          },
+                          "sel": "Legs"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": {
+                    "kind": "NamedType",
+                    "name": "Cat"
+                  },
+                  "body": [
+                    {
+                      "kind": "Return",
+                      "results": [
+                        {
+                          "kind": "Selector",
+                          "x": {
+                            "kind": "Ident",
+                            "name": "d"
+                          },
+                          "sel": "Lives"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": null,
+                  "body": [
+                    {
+                      "kind": "Return",
+                      "results": [
+                        {
+                          "kind": "Lit",
+                          "litKind": "int",
+                          "value": "0"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

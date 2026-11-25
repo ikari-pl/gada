@@ -64,6 +64,7 @@ func TestNodeKind(t *testing.T) {
 		{"ChanRecv", &ChanRecv{}, "ChanRecv"},
 		{"TypeAssert", &TypeAssert{}, "TypeAssert"},
 		{"SelectStmt", &SelectStmt{}, "SelectStmt"},
+		{"TypeSwitch", &TypeSwitch{}, "TypeSwitch"},
 		{"TypeDecl", &TypeDecl{}, "TypeDecl"},
 		{"StructType", &StructType{}, "StructType"},
 		{"InterfaceType", &InterfaceType{}, "InterfaceType"},
@@ -102,6 +103,7 @@ func TestSealedInterfaces(t *testing.T) {
 	var _ Stmt = &GoStmt{}
 	var _ Stmt = &ChanSend{}
 	var _ Stmt = &SelectStmt{}
+	var _ Stmt = &TypeSwitch{}
 
 	var _ Expr = &Ident{}
 	var _ Expr = &Lit{}
@@ -1291,6 +1293,46 @@ func kitchenSinkPackage() *Package {
 
 // roundTrip is the shared round-trip assertion: marshal, unmarshal,
 // reflect.DeepEqual.
+// TestRoundTripTypeSwitch exercises the type-switch IR nodes (6c),
+// including a nil-Type default case, which must round-trip as nil.
+func TestRoundTripTypeSwitch(t *testing.T) {
+	t.Parallel()
+
+	pkg := &Package{
+		Name: "p",
+		Files: []*File{{
+			Name: "p.go",
+			Decls: []Decl{
+				&Function{
+					Name:    "describe",
+					Params:  []*Param{{Name: "s", Type: &NamedType{Name: "Speaker"}}},
+					Results: []*Param{{Type: &IntType{}}},
+					Body: []Stmt{
+						// `switch d := s.(type) { case Dog: return d.Legs; default: return 0 }`
+						&TypeSwitch{
+							X:   &Ident{Name: "s"},
+							Var: "d",
+							Cases: []*TypeSwitchCase{
+								{
+									Type: &NamedType{Name: "Dog"},
+									Body: []Stmt{&Return{Results: []Expr{
+										&Selector{X: &Ident{Name: "d"}, Sel: "Legs"},
+									}}},
+								},
+								{
+									Type: nil, // default
+									Body: []Stmt{&Return{Results: []Expr{&Lit{Kind: LitInt, Value: "0"}}}},
+								},
+							},
+						},
+					},
+				},
+			},
+		}},
+	}
+	roundTrip(t, pkg)
+}
+
 func roundTrip(t *testing.T, pkg *Package) {
 	t.Helper()
 

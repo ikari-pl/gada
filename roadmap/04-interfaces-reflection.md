@@ -803,13 +803,34 @@ enumeration; output matches the expected fixture.
         "package fmt without types" failure is pre-existing on the base
         commit in this environment, unrelated).
 
-  - [ ] **(6c) type switch `switch x := y.(type) { ... }`**
+  - [x] **(6c) type switch `switch x := y.(type) { ... }`**
         *Files:* `compiler/internal/{ir,translate,emit}`, golden tests.
-        *Verify:* `cd compiler && go test ./internal/emit/... -run Assert`
+        *Verify:* `cd compiler && go test ./internal/emit/... -run 'Assert|TypeSwitch'`
         *Done when:* a type switch lowers to a chain of membership tests
         (`if X in T1'Class then … elsif X in T2'Class then … else …`),
         with the switch variable viewed as each case's type inside its
         arm.
+        *Done 2026-11-25:* new `*ir.TypeSwitch{X, Var, Cases}` +
+        `*ir.TypeSwitchCase{Type (nil = default), Body}` (kind-tagged
+        JSON round-trip, default's nil Type preserved). `transTypeSwitch`
+        accepts the go/ast binding form (`Assign` = `v := x.(type)`) and
+        the bare `switch x.(type)` form; rejects an Init statement,
+        multi-type `case A, B:`, and non-guard assigns. emit lowers to
+        `if X in T1'Class then … elsif X in T2'Class then … else … end if;`,
+        each typed arm wrapping its body in `declare V : T := T (X); begin
+        … end;` (safe: the membership test proved the tag) with
+        `localTypes` bound to the case type for the arm's scope; the
+        default arm keeps the operand's type. Case targets reuse
+        `typeAssertTarget` (now `(x, t)`-shaped, shared with 6a/6b), so
+        interface/scalar targets and method-less-interface operands are
+        loud errors. Walker arms added to walkStmt / collectDefers /
+        collectGoStmts / bodyUsesPanicOrRecover. Fixture `type_switch`
+        (Dog/Cat over Speaker with default). `TestEmitTypeSwitch` (bare
+        form, default-only inline, bound-form chain, reject arms),
+        `TestTransTypeSwitch`, `TestRoundTripTypeSwitch`;
+        `.golangci.yml` revive allowlist gained TypeSwitch/TypeSwitchCase.
+        emit/ 95.94%, translate/ 95.42%, runtime/ 100%; vet + lint +
+        gate clean, `go test -race ./internal/...` green.
 
 - [ ] **`iface_dispatch` example**
       *Files:* `examples/iface_dispatch/main.go`, `examples/iface_dispatch/expected_output.txt`

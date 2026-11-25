@@ -103,6 +103,8 @@ func TestCorpus(t *testing.T) {
 		"type_assert.go",
 		// Phase 4 — comma-ok type assertion (item 6b).
 		"type_assert_commaok.go",
+		// Phase 4 — type switch (item 6c).
+		"type_switch.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -754,5 +756,77 @@ func TestTransAssignCommaOKAssertion(t *testing.T) {
 	}
 	if ta1 := a1.RHS[0].(*ir.TypeAssert); ta1.CommaOK {
 		t.Fatal("1-LHS assertion: CommaOK = true, want false")
+	}
+}
+
+// TestTransTypeSwitch pins item 6c's translate half: the binding form
+// `switch v := x.(type)` carries Var and the guard operand, the bare
+// `switch x.(type)` form leaves Var empty, a default case has Type nil,
+// and the unsupported shapes (init statement, multi-type case, non-guard
+// assign) are loud errors.
+func TestTransTypeSwitch(t *testing.T) {
+	t.Parallel()
+	guard := &ast.TypeAssertExpr{X: &ast.Ident{Name: "s"}, Type: nil}
+
+	// Binding form.
+	ts, err := transTypeSwitch(&ast.TypeSwitchStmt{
+		Assign: &ast.AssignStmt{
+			Tok: token.DEFINE,
+			Lhs: []ast.Expr{&ast.Ident{Name: "d"}},
+			Rhs: []ast.Expr{guard},
+		},
+		Body: &ast.BlockStmt{List: []ast.Stmt{
+			&ast.CaseClause{List: []ast.Expr{&ast.Ident{Name: "Dog"}}, Body: []ast.Stmt{
+				&ast.ReturnStmt{Results: []ast.Expr{&ast.Ident{Name: "x"}}},
+			}},
+			&ast.CaseClause{Body: []ast.Stmt{}}, // default
+		}},
+	})
+	if err != nil {
+		t.Fatalf("transTypeSwitch binding form: %v", err)
+	}
+	if ts.Var != "d" {
+		t.Fatalf("Var = %q, want %q", ts.Var, "d")
+	}
+	if id, ok := ts.X.(*ir.Ident); !ok || id.Name != "s" {
+		t.Fatalf("X = %#v, want Ident s", ts.X)
+	}
+	if len(ts.Cases) != 2 {
+		t.Fatalf("len(Cases) = %d, want 2", len(ts.Cases))
+	}
+	if nt, ok := ts.Cases[0].Type.(*ir.NamedType); !ok || nt.Name != "Dog" {
+		t.Fatalf("Cases[0].Type = %#v, want NamedType Dog", ts.Cases[0].Type)
+	}
+	if ts.Cases[1].Type != nil {
+		t.Fatalf("default case Type = %#v, want nil", ts.Cases[1].Type)
+	}
+
+	// Bare form: Var stays empty.
+	ts2, err := transTypeSwitch(&ast.TypeSwitchStmt{
+		Assign: &ast.ExprStmt{X: &ast.TypeAssertExpr{X: &ast.Ident{Name: "s"}, Type: nil}},
+		Body:   &ast.BlockStmt{List: []ast.Stmt{&ast.CaseClause{}}},
+	})
+	if err != nil {
+		t.Fatalf("transTypeSwitch bare form: %v", err)
+	}
+	if ts2.Var != "" {
+		t.Fatalf("bare form Var = %q, want empty", ts2.Var)
+	}
+
+	// Rejects.
+	bad := []*ast.TypeSwitchStmt{
+		{Init: &ast.AssignStmt{Tok: token.DEFINE, Lhs: []ast.Expr{&ast.Ident{Name: "v"}}, Rhs: []ast.Expr{&ast.Ident{Name: "f"}}},
+			Assign: &ast.ExprStmt{X: guard}, Body: &ast.BlockStmt{}}, // init present
+		{Assign: &ast.ExprStmt{X: guard}, Body: &ast.BlockStmt{List: []ast.Stmt{
+			&ast.CaseClause{List: []ast.Expr{&ast.Ident{Name: "Dog"}, &ast.Ident{Name: "Cat"}}},
+		}}}, // multi-type case
+		{Assign: &ast.AssignStmt{Tok: token.DEFINE, Lhs: []ast.Expr{&ast.Ident{Name: "d"}}, Rhs: []ast.Expr{&ast.Ident{Name: "s"}}},
+			Body: &ast.BlockStmt{}}, // assign RHS not a guard
+		{Assign: &ast.ExprStmt{X: &ast.Ident{Name: "s"}}, Body: &ast.BlockStmt{}}, // tag not a guard
+	}
+	for i, b := range bad {
+		if _, err := transTypeSwitch(b); err == nil {
+			t.Fatalf("reject case %d: expected error, got none", i)
+		}
 	}
 }

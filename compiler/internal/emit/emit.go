@@ -432,6 +432,11 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 	case *ir.RangeStmt:
 		e.walkExpr(s.X)
 		e.walkStmts(s.Body)
+	case *ir.TypeSwitch:
+		e.walkExpr(s.X)
+		for _, c := range s.Cases {
+			e.walkStmts(c.Body)
+		}
 	case *ir.DeferStmt:
 		e.needsCoreDefer = true
 		e.walkStmt(s.Call)
@@ -1472,6 +1477,10 @@ func collectDefers(body []ir.Stmt) []*ir.DeferStmt {
 				walk(s.Body)
 			case *ir.RangeStmt:
 				walk(s.Body)
+			case *ir.TypeSwitch:
+				for _, c := range s.Cases {
+					walk(c.Body)
+				}
 			}
 		}
 	}
@@ -1500,6 +1509,10 @@ func collectGoStmts(body []ir.Stmt) []*ir.GoStmt {
 				walk(s.Body)
 			case *ir.RangeStmt:
 				walk(s.Body)
+			case *ir.TypeSwitch:
+				for _, c := range s.Cases {
+					walk(c.Body)
+				}
 			}
 		}
 	}
@@ -1602,6 +1615,13 @@ func bodyUsesPanicOrRecover(body []ir.Stmt) bool {
 			walkExpr(s.X)
 			for _, t := range s.Body {
 				walkStmt(t)
+			}
+		case *ir.TypeSwitch:
+			walkExpr(s.X)
+			for _, c := range s.Cases {
+				for _, t := range c.Body {
+					walkStmt(t)
+				}
 			}
 		case *ir.DeferStmt:
 			walkStmt(s.Call)
@@ -2054,7 +2074,7 @@ func (e *emitter) emitTypeAssertDecl(a *ir.Assign, ta *ir.TypeAssert) {
 		e.fail(fmt.Errorf("emit: comma-ok := second lhs must be a plain identifier"))
 		return
 	}
-	name, st, err := e.typeAssertTarget(ta)
+	name, st, err := e.typeAssertTarget(ta.X, ta.Type)
 	if err != nil {
 		e.fail(err)
 		return
@@ -2109,6 +2129,139 @@ func (e *emitter) emitTypeAssertBlock(pa pendingTypeAssert) {
 	e.println(adaIdent(pa.LHSName) + " := " + pa.Target + " (" + x + ");")
 	e.indent--
 	e.println("end if;")
+}
+
+// emitTypeSwitch lowers a Go type switch `switch v := x.(type) { … }`
+// (item 6c) to an Ada if/elsif/else chain of class-wide membership
+// tests: `if X in T1'Class then … elsif X in T2'Class then … else …`.
+// Inside a typed arm the switch variable is viewed as the case's type
+// via a per-arm `declare V : T := T (X); begin … end;` block — safe
+// because the membership test already proved the tag is in T'Class, so
+// the view conversion cannot raise. The operand is rendered per arm;
+// only side-effect-free operands (in practice an identifier) are
+// supported at this phase, as with the comma-ok assertion. Case target
+// validation reuses typeAssertTarget, so an interface/scalar target or
+// a method-less-interface operand is a loud error, never invalid Ada.
+// In the default arm the variable keeps the operand's own type.
+func (e *emitter) emitTypeSwitch(s *ir.TypeSwitch) {
+	x := e.emitExpr(s.X)
+	// Validate every typed arm up front so no partial chain is emitted
+	// before a bad case fails.
+	names := make([]string, len(s.Cases))
+	for i, c := range s.Cases {
+		if c.Type == nil {
+			continue
+		}
+		name, _, err := e.typeAssertTarget(s.X, c.Type)
+		if err != nil {
+			e.fail(err)
+			return
+		}
+		names[i] = name
+	}
+	typed := 0
+	for _, c := range s.Cases {
+		if c.Type != nil {
+			typed++
+		}
+	}
+	if typed == 0 {
+		// No typed arms: the switch degenerates to its default body (or
+		// nothing). Emit inline at the current position.
+		for _, c := range s.Cases {
+			if c.Type == nil {
+				e.emitTypeSwitchArm(s, c, "")
+			}
+		}
+		if len(s.Cases) == 0 {
+			e.println("null;")
+		}
+		return
+	}
+	first := true
+	for i, c := range s.Cases {
+		if c.Type == nil {
+			continue
+		}
+		kw := "elsif"
+		if first {
+			kw = "if"
+			first = false
+		}
+		e.println(kw + " " + x + " in " + names[i] + "'Class then")
+		e.indent++
+		e.emitTypeSwitchArm(s, c, names[i])
+		e.indent--
+	}
+	for _, c := range s.Cases {
+		if c.Type != nil {
+			continue
+		}
+		e.println("else")
+		e.indent++
+		e.emitTypeSwitchArm(s, c, "")
+		e.indent--
+	}
+	e.println("end if;")
+}
+
+// emitTypeSwitchArm emits one type-switch arm's body at the current
+// indent. When the switch binds a variable (Var non-empty) and the arm
+// is typed (target non-empty), the body runs inside a `declare V : T :=
+// T (X); begin … end;` block so V is scoped to the arm at the case's
+// type; in the default arm (target empty) V keeps the operand's type.
+// An empty body still emits `null;` — Ada requires a statement between
+// begin and end.
+func (e *emitter) emitTypeSwitchArm(s *ir.TypeSwitch, c *ir.TypeSwitchCase, target string) {
+	if s.Var == "" {
+		e.emitStmtListOrNull(c.Body)
+		return
+	}
+	// Bind the switch variable for the arm's scope, restoring any
+	// outer binding afterwards (mirrors the range-loop name binding).
+	prev, had := e.localTypes[s.Var]
+	if target != "" {
+		e.localTypes[s.Var] = c.Type
+	} else if id, ok := s.X.(*ir.Ident); ok {
+		if t, ok := e.localTypes[id.Name]; ok {
+			e.localTypes[s.Var] = t
+		}
+	}
+	defer func() {
+		if had {
+			e.localTypes[s.Var] = prev
+		} else {
+			delete(e.localTypes, s.Var)
+		}
+	}()
+
+	if target != "" {
+		x := e.emitExpr(s.X)
+		e.println("declare")
+		e.indent++
+		e.println(adaIdent(s.Var) + " : " + target + " := " + target + " (" + x + ");")
+		e.indent--
+		e.println("begin")
+		e.indent++
+		e.emitStmtListOrNull(c.Body)
+		e.indent--
+		e.println("end;")
+		return
+	}
+	e.emitStmtListOrNull(c.Body)
+}
+
+// emitStmtListOrNull emits stmts at the current indent, or a `null;` when
+// the list is empty (Ada requires at least one statement in a begin..end
+// block, which empty switch arms would otherwise produce).
+func (e *emitter) emitStmtListOrNull(stmts []ir.Stmt) {
+	if len(stmts) == 0 {
+		e.println("null;")
+		return
+	}
+	for _, st := range stmts {
+		e.emitStmt(st)
+	}
 }
 
 // inferDeclType maps a `:=` RHS to its Ada type name. Phase 1
@@ -2214,6 +2367,8 @@ func (e *emitter) emitStmt(s ir.Stmt) {
 		e.emitChanSend(s)
 	case *ir.SelectStmt:
 		e.emitSelectStmt(s)
+	case *ir.TypeSwitch:
+		e.emitTypeSwitch(s)
 	default:
 		e.fail(fmt.Errorf("emit: unsupported stmt %T", s))
 	}
@@ -2905,9 +3060,9 @@ func zeroValueFor(t ir.Type) (string, error) {
 
 // typeAssertTarget validates a type assertion's target and operand,
 // returning the Ada name of the concrete struct type being asserted to
-// plus its declaration. Shared by the single-value form (emitTypeAssert)
-// and the comma-ok form (emitTypeAssertDecl) so both enforce one rule
-// set. Only a concrete struct target is a valid Ada view conversion of a
+// plus its declaration. Shared by the single-value form (emitTypeAssert),
+// the comma-ok form (emitTypeAssertDecl), and each typed arm of a type
+// switch (emitTypeSwitch) so all three enforce one rule set. Only a concrete struct target is a valid Ada view conversion of a
 // class-wide operand: an interface target (`x.(I)` — a
 // does-it-implement check, not a down-conversion), and scalar/builtin
 // targets (`x.(int)`, `x.(Celsius)` — `Integer (X)` on a class-wide
@@ -2919,8 +3074,8 @@ func zeroValueFor(t ir.Type) (string, error) {
 // illegal Ada conversion; that shape is rejected when the operand's
 // static type (known for an identifier via localTypes) is such an
 // interface.
-func (e *emitter) typeAssertTarget(a *ir.TypeAssert) (string, *ir.StructType, error) {
-	nt, ok := a.Type.(*ir.NamedType)
+func (e *emitter) typeAssertTarget(x ir.Expr, t ir.Type) (string, *ir.StructType, error) {
+	nt, ok := t.(*ir.NamedType)
 	if !ok {
 		return "", nil, fmt.Errorf("emit: type assertion to a non-named type is not supported yet (item 6a covers a concrete struct target)")
 	}
@@ -2928,7 +3083,7 @@ func (e *emitter) typeAssertTarget(a *ir.TypeAssert) (string, *ir.StructType, er
 	if !isStruct {
 		return "", nil, fmt.Errorf("emit: type assertion x.(%s): only a concrete struct target is supported yet (item 6a); interface, named-scalar, and builtin targets ride later items", nt.Name)
 	}
-	if id, ok := a.X.(*ir.Ident); ok {
+	if id, ok := x.(*ir.Ident); ok {
 		if ot, ok := e.localTypes[id.Name].(*ir.NamedType); ok && e.emptyInterfaceNames[ot.Name] {
 			return "", nil, fmt.Errorf("emit: type assertion x.(%s) on a method-less interface (%s) operand has no legal Ada conversion (no concrete type derives an empty interface); not supported yet", nt.Name, ot.Name)
 		}
@@ -2950,7 +3105,7 @@ func (e *emitter) emitTypeAssert(a *ir.TypeAssert) string {
 		e.fail(fmt.Errorf("emit: comma-ok type assertion `v, ok := x.(T)` has no expression value; it lowers at statement position (item 6b) and must not reach emitExpr"))
 		return ""
 	}
-	name, _, err := e.typeAssertTarget(a)
+	name, _, err := e.typeAssertTarget(a.X, a.Type)
 	if err != nil {
 		e.fail(err)
 		return ""

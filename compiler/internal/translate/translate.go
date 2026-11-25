@@ -401,6 +401,8 @@ func transStmt(s ast.Stmt) (ir.Stmt, error) {
 		return transGo(s)
 	case *ast.SelectStmt:
 		return transSelect(s)
+	case *ast.TypeSwitchStmt:
+		return transTypeSwitch(s)
 	case *ast.SendStmt:
 		return transSend(s)
 	case *ast.ReturnStmt:
@@ -861,6 +863,81 @@ func transTypeAssert(e *ast.TypeAssertExpr) (*ir.TypeAssert, error) {
 		return nil, err
 	}
 	return &ir.TypeAssert{X: x, Type: t}, nil
+}
+
+// transTypeSwitch lowers a Go type switch (item 6c):
+//
+//	switch v := x.(type) { case T: ...; case U: ...; default: ... }
+//
+// The guard is an *ast.TypeAssertExpr with Type == nil. In go/ast the
+// guard lives in TypeSwitchStmt.Assign — an *ast.AssignStmt for the
+// binding form (`v := x.(type)`, single identifier LHS) or an
+// *ast.ExprStmt for the bare `switch x.(type)` form (Var stays empty).
+// A non-nil Init (`switch v := f(); v.(type)`) is rejected: it needs
+// *types.Info to type the intermediate. Each case clause must list at
+// most one type — `case A, B:` binds the variable at the operand's
+// interface type and rides a later item; an empty list is `default`.
+func transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
+	if s.Init != nil {
+		return nil, fmt.Errorf("translate: type switch with an init statement (`switch v := f(); v.(type)`) not supported yet (item 6c)")
+	}
+	var guard *ast.TypeAssertExpr
+	var varName string
+	switch a := s.Assign.(type) {
+	case *ast.AssignStmt:
+		if a.Tok != token.DEFINE || len(a.Lhs) != 1 || len(a.Rhs) != 1 {
+			return nil, fmt.Errorf("translate: type switch assign must be `v := x.(type)`")
+		}
+		ta, ok := a.Rhs[0].(*ast.TypeAssertExpr)
+		if !ok || ta.Type != nil {
+			return nil, fmt.Errorf("translate: type switch assign RHS must be a `x.(type)` guard")
+		}
+		id, ok := a.Lhs[0].(*ast.Ident)
+		if !ok {
+			return nil, fmt.Errorf("translate: type switch binding LHS must be a plain identifier")
+		}
+		varName = id.Name
+		guard = ta
+	case *ast.ExprStmt:
+		ta, ok := a.X.(*ast.TypeAssertExpr)
+		if !ok || ta.Type != nil {
+			return nil, fmt.Errorf("translate: type switch tag must be `x.(type)`")
+		}
+		guard = ta
+	default:
+		return nil, fmt.Errorf("translate: type switch without a `x.(type)` guard (got %T)", s.Assign)
+	}
+	x, err := transExpr(guard.X)
+	if err != nil {
+		return nil, err
+	}
+	ts := &ir.TypeSwitch{X: x, Var: varName}
+	for _, stmt := range s.Body.List {
+		cc, ok := stmt.(*ast.CaseClause)
+		if !ok {
+			return nil, fmt.Errorf("translate: type switch body must contain only case clauses (got %T)", stmt)
+		}
+		tc := &ir.TypeSwitchCase{}
+		switch len(cc.List) {
+		case 0:
+			// default arm: Type stays nil
+		case 1:
+			t, err := transType(cc.List[0])
+			if err != nil {
+				return nil, err
+			}
+			tc.Type = t
+		default:
+			return nil, fmt.Errorf("translate: multi-type case `case A, B:` not supported yet (item 6c covers single-type cases and default)")
+		}
+		body, err := transStmtList(cc.Body)
+		if err != nil {
+			return nil, err
+		}
+		tc.Body = body
+		ts.Cases = append(ts.Cases, tc)
+	}
+	return ts, nil
 }
 
 func transCall(c *ast.CallExpr) (*ir.Call, error) {

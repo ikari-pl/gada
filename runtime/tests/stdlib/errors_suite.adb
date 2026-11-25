@@ -132,7 +132,11 @@ package body Errors_Suite is
       TA    : constant access Error'Class := Tgt'Access;
    begin
       Assert (As (E, TA), "As must walk to the chain member");
-      Assert (Tgt'Tag = Special_Error'Tag, "As assigned the wrong node");
+      declare
+         CW : constant Error'Class := Tgt;
+      begin
+         Assert (CW'Tag = Special_Error'Tag, "As assigned the wrong node");
+      end;
    end Test_As_Chain_Match;
 
    procedure Test_As_Tag_Mismatch (T : in out

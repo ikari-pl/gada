@@ -171,7 +171,7 @@ package body Gada.Std.Strings is
    --  single bytes (v1: bytes, not runes).
    procedure Split_Into
      (Acc : in out String_Slice; S, Sep : String; After : Boolean) is
-      use String_Slices;
+      use String_Vectors;
    begin
       if S'Length = 0 then
          --  Go: Split("", sep) = [""] — one empty field, not empty.
@@ -212,22 +212,22 @@ package body Gada.Std.Strings is
    end Split_Into;
 
    function Split (S, Sep : String) return String_Slice is
-      Acc : String_Slice := String_Slices.Empty;
+      Acc : String_Slice := String_Vectors.Empty_Vector;
    begin
       Split_Into (Acc, S, Sep, After => False);
       return Acc;
    end Split;
 
    function Split_After (S, Sep : String) return String_Slice is
-      Acc : String_Slice := String_Slices.Empty;
+      Acc : String_Slice := String_Vectors.Empty_Vector;
    begin
       Split_Into (Acc, S, Sep, After => True);
       return Acc;
    end Split_After;
 
    function Split_N (S, Sep : String; N : Integer) return String_Slice is
-      use String_Slices;
-      Acc : String_Slice := Empty;
+      use String_Vectors;
+      Acc : String_Slice := Empty_Vector;
    begin
       if N = 0 then
          return Acc;
@@ -274,7 +274,7 @@ package body Gada.Std.Strings is
    end Split_N;
 
    function Join (Elems : String_Slice; Sep : String) return String is
-      use String_Slices;
+      use String_Vectors;
       B : Unbounded_String;
    begin
       for I in 1 .. Len (Elems) loop
@@ -287,8 +287,8 @@ package body Gada.Std.Strings is
    end Join;
 
    function Fields_Func (S : String; F : Char_Predicate) return String_Slice is
-      use String_Slices;
-      Acc   : String_Slice := Empty;
+      use String_Vectors;
+      Acc   : String_Slice := Empty_Vector;
       Start : Integer := S'First;
       I     : Integer := S'First;
    begin
@@ -458,7 +458,7 @@ package body Gada.Std.Strings is
      (Replace (S, Old, New_Text, -1));
 
    function New_Replacer (Oldnew : String_Slice) return Replacer is
-      use String_Slices;
+      use String_Vectors;
    begin
       if Len (Oldnew) mod 2 /= 0 then
          raise Constraint_Error

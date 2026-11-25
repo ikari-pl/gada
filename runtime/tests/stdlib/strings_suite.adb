@@ -16,7 +16,7 @@ package body Strings_Suite is
       Got  : String_Slice;
       Want : array of String)
    is
-      use String_Slices;
+      use String_Vectors;
    begin
       Assert (Len (Got) = Want'Length,
               "slice length: got" & Integer'Image (Len (Got))

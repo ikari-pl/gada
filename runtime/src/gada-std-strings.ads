@@ -11,8 +11,8 @@
 --  instantiation the compiler emits for Go []string, so values flow
 --  between transpiled code and this package without conversion.
 
+with Ada.Containers.Vectors;
 with Ada.Strings.Unbounded;
-with Gada.Core.Slices;
 
 package Gada.Std.Strings is
 
@@ -20,13 +20,15 @@ package Gada.Std.Strings is
    --  compiler emits the identical `Slices_Of_String` instantiation for
    --  Go `[]string`, and two instantiations of a generic with the same
    --  actuals are the same type (RM 12.3), so no conversion is needed.
-   --  Element type is Unbounded_String (definite — plain String is
-   --  unconstrained and cannot be a slice element). The compiler emits
-   --  the identical Slices_Of_String instantiation for Go []string.
-   package String_Slices is new Gada.Core.Slices
-     (Element_Type => Ada.Strings.Unbounded.Unbounded_String);
+   --  v1 uses a vector of Unbounded_String for Go's []string
+   --  (Gada.Core.Slices' raw-buffer overlay only supports
+   --  non-controlled element types). The compiler-side []string
+   --  mapping lands with the integration example.
+   package String_Vectors is new Ada.Containers.Vectors
+     (Index_Type   => Positive,
+      Element_Type => Ada.Strings.Unbounded.Unbounded_String);
 
-   subtype String_Slice is String_Slices.Slice;
+   subtype String_Slice is String_Vectors.Vector;
 
    --  Character predicate/transform callbacks (Go's func(rune) bool /
    --  func(rune) rune, byte-wise in v1).

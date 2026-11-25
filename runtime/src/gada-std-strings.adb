@@ -451,6 +451,8 @@ package body Gada.Std.Strings is
             end if;
          end;
       end loop;
+      --  N replacements done: append the rest unchanged.
+      Append (B, S (Start .. S'Last));
       return To_String (B);
    end Replace;
 

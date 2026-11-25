@@ -813,6 +813,22 @@ func TestTransTypeSwitch(t *testing.T) {
 		t.Fatalf("bare form Var = %q, want empty", ts2.Var)
 	}
 
+	// Blank binding `switch _ := x.(type)` discards the variable.
+	tsBlank, err := transTypeSwitch(&ast.TypeSwitchStmt{
+		Assign: &ast.AssignStmt{
+			Tok: token.DEFINE,
+			Lhs: []ast.Expr{&ast.Ident{Name: "_"}},
+			Rhs: []ast.Expr{&ast.TypeAssertExpr{X: &ast.Ident{Name: "s"}, Type: nil}},
+		},
+		Body: &ast.BlockStmt{List: []ast.Stmt{&ast.CaseClause{}}},
+	})
+	if err != nil {
+		t.Fatalf("blank binding: %v", err)
+	}
+	if tsBlank.Var != "" {
+		t.Fatalf("blank binding Var = %q, want empty", tsBlank.Var)
+	}
+
 	// Rejects.
 	bad := []*ast.TypeSwitchStmt{
 		{Init: &ast.AssignStmt{Tok: token.DEFINE, Lhs: []ast.Expr{&ast.Ident{Name: "v"}}, Rhs: []ast.Expr{&ast.Ident{Name: "f"}}},
@@ -823,6 +839,15 @@ func TestTransTypeSwitch(t *testing.T) {
 		{Assign: &ast.AssignStmt{Tok: token.DEFINE, Lhs: []ast.Expr{&ast.Ident{Name: "d"}}, Rhs: []ast.Expr{&ast.Ident{Name: "s"}}},
 			Body: &ast.BlockStmt{}}, // assign RHS not a guard
 		{Assign: &ast.ExprStmt{X: &ast.Ident{Name: "s"}}, Body: &ast.BlockStmt{}}, // tag not a guard
+		{Assign: &ast.ExprStmt{X: &ast.TypeAssertExpr{X: &ast.CallExpr{Fun: &ast.Ident{Name: "f"}}, Type: nil}},
+			Body: &ast.BlockStmt{}}, // non-ident operand (rendered once per arm)
+		{Assign: &ast.ExprStmt{X: guard}, Body: &ast.BlockStmt{List: []ast.Stmt{
+			&ast.CaseClause{List: []ast.Expr{&ast.Ident{Name: "nil"}}},
+		}}}, // case nil
+		{Assign: &ast.ExprStmt{X: guard}, Body: &ast.BlockStmt{List: []ast.Stmt{
+			&ast.CaseClause{},
+			&ast.CaseClause{},
+		}}}, // duplicate default
 	}
 	for i, b := range bad {
 		if _, err := transTypeSwitch(b); err == nil {

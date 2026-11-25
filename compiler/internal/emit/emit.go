@@ -991,6 +991,10 @@ func (e *emitter) emitMainProcedure() {
 		e.println("")
 	}
 	if main != nil {
+		// Reset per-main state so leftover queues from a previous
+		// subprogram never bleed in (mirrors emitSubprogram).
+		e.pendingRecvs = nil
+		e.pendingAsserts = nil
 		e.populateLocals(main)
 	}
 	for _, a := range mainDecls {
@@ -1045,7 +1049,17 @@ func (e *emitter) emitMainProcedure() {
 		e.indent++
 	}
 
-	emittedAny := false
+	// Drain pending head-of-main `v := <-c` / `v, ok := x.(T)` defines in
+	// source order (all receives, then all assertions — same queues and
+	// order as emitSubprogram) before any main body statement, matching
+	// Go's "RHS evaluates at the := point" semantics.
+	emittedAny := len(e.pendingRecvs) > 0 || len(e.pendingAsserts) > 0
+	for _, pr := range e.pendingRecvs {
+		e.emitChanRecvBlock(pr)
+	}
+	for _, pa := range e.pendingAsserts {
+		e.emitTypeAssertBlock(pa)
+	}
 	if len(mainBody) > 0 {
 		for _, s := range mainBody {
 			if _, isDefer := s.(*ir.DeferStmt); !isDefer {
@@ -2074,6 +2088,13 @@ func (e *emitter) emitTypeAssertDecl(a *ir.Assign, ta *ir.TypeAssert) {
 		e.fail(fmt.Errorf("emit: comma-ok := second lhs must be a plain identifier"))
 		return
 	}
+	// The operand is rendered twice (membership test + guarded
+	// conversion), so it must be side-effect-free — enforce a plain
+	// identifier rather than miscompile once call expressions land.
+	if _, ok := ta.X.(*ir.Ident); !ok {
+		e.fail(fmt.Errorf("emit: comma-ok assertion operand must be a plain identifier (got %T); it is rendered twice", ta.X))
+		return
+	}
 	name, st, err := e.typeAssertTarget(ta.X, ta.Type)
 	if err != nil {
 		e.fail(err)
@@ -2118,8 +2139,8 @@ func (e *emitter) structZeroLit(name string, st *ir.StructType) (string, error) 
 // is in T's class, RM 4.5.2 — no exception raised) followed by the
 // guarded view conversion `if OK then V := T (X); end if;`. V was
 // declared with its zero value, so a failed assertion leaves the zero,
-// matching Go. The operand is rendered twice; only side-effect-free
-// operands (in practice an identifier) are supported at this phase.
+// matching Go. The operand is rendered twice, so emitTypeAssertDecl
+// only accepts a plain identifier operand.
 func (e *emitter) emitTypeAssertBlock(pa pendingTypeAssert) {
 	x := e.emitExpr(pa.X)
 	ok := adaIdent(pa.OKName)
@@ -2137,13 +2158,26 @@ func (e *emitter) emitTypeAssertBlock(pa pendingTypeAssert) {
 // Inside a typed arm the switch variable is viewed as the case's type
 // via a per-arm `declare V : T := T (X); begin … end;` block — safe
 // because the membership test already proved the tag is in T'Class, so
-// the view conversion cannot raise. The operand is rendered per arm;
-// only side-effect-free operands (in practice an identifier) are
-// supported at this phase, as with the comma-ok assertion. Case target
-// validation reuses typeAssertTarget, so an interface/scalar target or
-// a method-less-interface operand is a loud error, never invalid Ada.
-// In the default arm the variable keeps the operand's own type.
+// the view conversion cannot raise. In the default arm the variable is
+// declared at the operand's own (class-wide) type, matching Go, where
+// the switch variable keeps the switch expression's type there. The
+// operand must be a plain identifier — it is rendered once per arm, so
+// a side-effecting operand would be evaluated multiple times; reject
+// anything else loudly. Case target validation reuses typeAssertTarget,
+// so an interface/scalar target or a method-less-interface operand is a
+// loud error, never invalid Ada.
 func (e *emitter) emitTypeSwitch(s *ir.TypeSwitch) {
+	// A blank binding (`switch _ := x.(type)`) discards the variable;
+	// translate already normalises it to "", but hand-built IR may not.
+	v := s.Var
+	if v == "_" {
+		v = ""
+	}
+	switchV := &ir.TypeSwitch{X: s.X, Var: v, Cases: s.Cases}
+	if _, ok := s.X.(*ir.Ident); !ok {
+		e.fail(fmt.Errorf("emit: type switch operand must be a plain identifier (got %T); it is rendered once per arm", s.X))
+		return
+	}
 	x := e.emitExpr(s.X)
 	// Validate every typed arm up front so no partial chain is emitted
 	// before a bad case fails.
@@ -2160,7 +2194,7 @@ func (e *emitter) emitTypeSwitch(s *ir.TypeSwitch) {
 		names[i] = name
 	}
 	typed := 0
-	for _, c := range s.Cases {
+	for _, c := range switchV.Cases {
 		if c.Type != nil {
 			typed++
 		}
@@ -2168,18 +2202,18 @@ func (e *emitter) emitTypeSwitch(s *ir.TypeSwitch) {
 	if typed == 0 {
 		// No typed arms: the switch degenerates to its default body (or
 		// nothing). Emit inline at the current position.
-		for _, c := range s.Cases {
+		for _, c := range switchV.Cases {
 			if c.Type == nil {
-				e.emitTypeSwitchArm(s, c, "")
+				e.emitTypeSwitchArm(switchV, c, "")
 			}
 		}
-		if len(s.Cases) == 0 {
+		if len(switchV.Cases) == 0 {
 			e.println("null;")
 		}
 		return
 	}
 	first := true
-	for i, c := range s.Cases {
+	for i, c := range switchV.Cases {
 		if c.Type == nil {
 			continue
 		}
@@ -2190,43 +2224,58 @@ func (e *emitter) emitTypeSwitch(s *ir.TypeSwitch) {
 		}
 		e.println(kw + " " + x + " in " + names[i] + "'Class then")
 		e.indent++
-		e.emitTypeSwitchArm(s, c, names[i])
+		e.emitTypeSwitchArm(switchV, c, names[i])
 		e.indent--
 	}
-	for _, c := range s.Cases {
+	for _, c := range switchV.Cases {
 		if c.Type != nil {
 			continue
 		}
 		e.println("else")
 		e.indent++
-		e.emitTypeSwitchArm(s, c, "")
+		e.emitTypeSwitchArm(switchV, c, "")
 		e.indent--
 	}
 	e.println("end if;")
 }
 
 // emitTypeSwitchArm emits one type-switch arm's body at the current
-// indent. When the switch binds a variable (Var non-empty) and the arm
-// is typed (target non-empty), the body runs inside a `declare V : T :=
-// T (X); begin … end;` block so V is scoped to the arm at the case's
-// type; in the default arm (target empty) V keeps the operand's type.
-// An empty body still emits `null;` — Ada requires a statement between
-// begin and end.
+// indent. When the switch binds a variable (Var non-empty), the body
+// runs inside a per-arm `declare … begin … end;` block so V is scoped to
+// the arm: at the case's type via the view conversion (`V : T := T (X)`)
+// in a typed arm, or at the operand's own class-wide type in the default
+// arm (`V : Speaker'Class := S` — Go binds the switch variable at the
+// switch expression's type there, and a class-wide declaration is what
+// makes uses of V in the default arm compile). An empty body still
+// emits `null;` — Ada requires a statement between begin and end.
 func (e *emitter) emitTypeSwitchArm(s *ir.TypeSwitch, c *ir.TypeSwitchCase, target string) {
 	if s.Var == "" {
 		e.emitStmtListOrNull(c.Body)
 		return
 	}
+	// The variable's type in this arm: the case's type for a typed arm,
+	// the operand's own type for default. emitTypeSwitch already
+	// rejected a non-Ident operand, so the default lookup is safe; an
+	// unknown operand type is still a loud error (never invalid Ada).
+	armType := c.Type
+	if target == "" {
+		id := s.X.(*ir.Ident)
+		t, ok := e.localTypes[id.Name]
+		if !ok {
+			e.fail(fmt.Errorf("emit: type switch default arm cannot resolve operand %s's type", id.Name))
+			return
+		}
+		armType = t
+	}
+	tname, err := e.typeName(armType)
+	if err != nil {
+		e.fail(err)
+		return
+	}
 	// Bind the switch variable for the arm's scope, restoring any
 	// outer binding afterwards (mirrors the range-loop name binding).
 	prev, had := e.localTypes[s.Var]
-	if target != "" {
-		e.localTypes[s.Var] = c.Type
-	} else if id, ok := s.X.(*ir.Ident); ok {
-		if t, ok := e.localTypes[id.Name]; ok {
-			e.localTypes[s.Var] = t
-		}
-	}
+	e.localTypes[s.Var] = armType
 	defer func() {
 		if had {
 			e.localTypes[s.Var] = prev
@@ -2235,20 +2284,22 @@ func (e *emitter) emitTypeSwitchArm(s *ir.TypeSwitch, c *ir.TypeSwitchCase, targ
 		}
 	}()
 
+	x := e.emitExpr(s.X)
+	decl := adaIdent(s.Var) + " : " + tname + " := "
 	if target != "" {
-		x := e.emitExpr(s.X)
-		e.println("declare")
-		e.indent++
-		e.println(adaIdent(s.Var) + " : " + target + " := " + target + " (" + x + ");")
-		e.indent--
-		e.println("begin")
-		e.indent++
-		e.emitStmtListOrNull(c.Body)
-		e.indent--
-		e.println("end;")
-		return
+		decl += target + " (" + x + ")"
+	} else {
+		decl += x
 	}
+	e.println("declare")
+	e.indent++
+	e.println(decl + ";")
+	e.indent--
+	e.println("begin")
+	e.indent++
 	e.emitStmtListOrNull(c.Body)
+	e.indent--
+	e.println("end;")
 }
 
 // emitStmtListOrNull emits stmts at the current indent, or a `null;` when
@@ -3062,7 +3113,8 @@ func zeroValueFor(t ir.Type) (string, error) {
 // returning the Ada name of the concrete struct type being asserted to
 // plus its declaration. Shared by the single-value form (emitTypeAssert),
 // the comma-ok form (emitTypeAssertDecl), and each typed arm of a type
-// switch (emitTypeSwitch) so all three enforce one rule set. Only a concrete struct target is a valid Ada view conversion of a
+// switch (emitTypeSwitch) so all three enforce one rule set. Only a
+// concrete struct target is a valid Ada view conversion of a
 // class-wide operand: an interface target (`x.(I)` — a
 // does-it-implement check, not a down-conversion), and scalar/builtin
 // targets (`x.(int)`, `x.(Celsius)` — `Integer (X)` on a class-wide

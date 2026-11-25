@@ -896,7 +896,11 @@ func transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
 		if !ok {
 			return nil, fmt.Errorf("translate: type switch binding LHS must be a plain identifier")
 		}
-		varName = id.Name
+		// `switch _ := x.(type)` discards the binding, exactly like the
+		// range-stmt blank: Var stays empty so emit declares nothing.
+		if id.Name != "_" {
+			varName = id.Name
+		}
 		guard = ta
 	case *ast.ExprStmt:
 		ta, ok := a.X.(*ast.TypeAssertExpr)
@@ -907,11 +911,19 @@ func transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
 	default:
 		return nil, fmt.Errorf("translate: type switch without a `x.(type)` guard (got %T)", s.Assign)
 	}
+	// The operand must be a plain identifier: emit renders it once per
+	// arm (membership test + view conversion), so a side-effecting
+	// operand would be evaluated multiple times. Reject loudly now
+	// rather than miscompile when call expressions land.
+	if _, ok := guard.X.(*ast.Ident); !ok {
+		return nil, fmt.Errorf("translate: type switch operand must be a plain identifier (got %T); item 6c", guard.X)
+	}
 	x, err := transExpr(guard.X)
 	if err != nil {
 		return nil, err
 	}
 	ts := &ir.TypeSwitch{X: x, Var: varName}
+	seenDefault := false
 	for _, stmt := range s.Body.List {
 		cc, ok := stmt.(*ast.CaseClause)
 		if !ok {
@@ -920,8 +932,17 @@ func transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
 		tc := &ir.TypeSwitchCase{}
 		switch len(cc.List) {
 		case 0:
-			// default arm: Type stays nil
+			// default arm: Type stays nil. go/parser accepts duplicate
+			// defaults (only the type-checker rejects them), so guard
+			// here to keep emit from printing two `else` branches.
+			if seenDefault {
+				return nil, fmt.Errorf("translate: duplicate `default` arm in type switch")
+			}
+			seenDefault = true
 		case 1:
+			if id, ok := cc.List[0].(*ast.Ident); ok && id.Name == "nil" {
+				return nil, fmt.Errorf("translate: `case nil:` in a type switch is not supported yet (item 6c)")
+			}
 			t, err := transType(cc.List[0])
 			if err != nil {
 				return nil, err

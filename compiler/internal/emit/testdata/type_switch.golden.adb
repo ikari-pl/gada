@@ -41,7 +41,11 @@ package body P is
             return D.Lives;
          end;
       else
-         return 0;
+         declare
+            D : Speaker'Class := S;
+         begin
+            return 0;
+         end;
       end if;
    end Describe;
 

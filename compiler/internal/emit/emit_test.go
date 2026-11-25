@@ -1861,6 +1861,119 @@ func TestEmitTypeSwitch(t *testing.T) {
 			t.Fatalf("%s: expected emit error, got:\n%s", tc.name, b.String())
 		}
 	}
+
+	// A non-identifier operand is rejected loudly: emit renders the
+	// operand once per arm, so a side-effecting operand would be
+	// evaluated multiple times.
+	pNonID := wrapPkg(speaker, dog, &ir.Function{Name: "f",
+		Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}},
+		Body: []ir.Stmt{&ir.TypeSwitch{X: &ir.Lit{Kind: ir.LitInt, Value: "1"}, Cases: []*ir.TypeSwitchCase{
+			{Type: &ir.NamedType{Name: "Dog"}, Body: []ir.Stmt{ret0}},
+		}}}})
+	var bNonID bytes.Buffer
+	if err := Package(pNonID, &bNonID); err == nil {
+		t.Fatalf("non-ident operand: expected emit error, got:\n%s", bNonID.String())
+	}
+}
+
+// TestEmitTypeSwitchDefaultArmVar pins the review fix for the default
+// arm: the bound switch variable is declared at the operand's class-
+// wide type (`D : Speaker'Class := S;`), so uses of it inside `default`
+// compile — Go binds the variable at the switch expression's type there.
+// A blank `_` binding declares nothing.
+func TestEmitTypeSwitchDefaultArmVar(t *testing.T) {
+	t.Parallel()
+	speaker := &ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{{Name: "Speak"}}}}
+	dog := &ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Legs", Type: &ir.IntType{}}}}}
+
+	// default arm calls a method through the bound variable: dispatches
+	// on the class-wide view.
+	pkg := wrapPkg(speaker, dog,
+		&ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			&ir.TypeSwitch{X: idn("s"), Var: "d", Cases: []*ir.TypeSwitchCase{
+				{Type: &ir.NamedType{Name: "Dog"}, Body: []ir.Stmt{
+					&ir.Return{Results: []ir.Expr{&ir.Selector{X: idn("d"), Sel: "Legs"}}},
+				}},
+				{Type: nil, Body: []ir.Stmt{
+					&ir.Call{Fun: &ir.Selector{X: idn("d"), Sel: "Speak"}},
+				}},
+			}},
+		}},
+	)
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("default-arm-var emit failed: %v\n%s", err, buf.String())
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"D : Dog := Dog (S);",
+		"else",
+		"D : Speaker'Class := S;",
+		"D.Speak;",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q, got:\n%s", want, got)
+		}
+	}
+
+	// Blank `_` binding: no declaration at all, body emitted bare.
+	pkgBlank := wrapPkg(speaker, dog,
+		&ir.Function{Name: "f", Params: []*ir.Param{{Name: "s", Type: &ir.NamedType{Name: "Speaker"}}}, Body: []ir.Stmt{
+			&ir.TypeSwitch{X: idn("s"), Var: "_", Cases: []*ir.TypeSwitchCase{
+				{Type: &ir.NamedType{Name: "Dog"}, Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{litInt("1")}}}},
+			}},
+		}},
+	)
+	buf.Reset()
+	if err := Package(pkgBlank, &buf); err != nil {
+		t.Fatalf("blank-binding emit failed: %v\n%s", err, buf.String())
+	}
+	if strings.Contains(buf.String(), "declare") && strings.Contains(buf.String(), "_ :") {
+		t.Fatalf("blank binding must not declare, got:\n%s", buf.String())
+	}
+}
+
+// TestCommaOKAssertDrainOrder pins the head-of-body queue drain order:
+// all pending comma-ok receives first, then all pending comma-ok
+// assertions, each in source order — before any body statement.
+func TestCommaOKAssertDrainOrder(t *testing.T) {
+	t.Parallel()
+	speaker := &ir.TypeDecl{Name: "Speaker", Underlying: &ir.InterfaceType{Methods: []*ir.MethodSig{{Name: "Speak"}}}}
+	dog := &ir.TypeDecl{Name: "Dog", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Legs", Type: &ir.IntType{}}}}}
+	cat := &ir.TypeDecl{Name: "Cat", Underlying: &ir.StructType{Fields: []*ir.StructField{{Name: "Lives", Type: &ir.IntType{}}}}}
+
+	pkg := wrapPkg(speaker, dog, cat,
+		&ir.Function{Name: "f",
+			Params: []*ir.Param{
+				{Name: "c", Type: &ir.ChanType{Elem: &ir.IntType{}}},
+				{Name: "s", Type: &ir.NamedType{Name: "Speaker"}},
+			},
+			Body: []ir.Stmt{
+				// Source order: assert, recv, assert — the drain must
+				// still emit the receive first, then both assertions.
+				&ir.Assign{Define: true, LHS: []ir.Expr{idn("d"), idn("ok1")},
+					RHS: []ir.Expr{&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Dog"}, CommaOK: true}}},
+				&ir.Assign{Define: true, LHS: []ir.Expr{idn("v"), idn("ok2")},
+					RHS: []ir.Expr{&ir.ChanRecv{Chan: idn("c"), CommaOK: true}}},
+				&ir.Assign{Define: true, LHS: []ir.Expr{idn("e"), idn("ok3")},
+					RHS: []ir.Expr{&ir.TypeAssert{X: idn("s"), Type: &ir.NamedType{Name: "Cat"}, CommaOK: true}}},
+				&ir.Return{Results: []ir.Expr{idn("v")}},
+			}},
+	)
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("drain-order emit failed: %v\n%s", err, buf.String())
+	}
+	got := buf.String()
+	recv := strings.Index(got, "Receive (C, V, Ok2);")
+	assert1 := strings.Index(got, "Ok1 := S in Dog'Class;")
+	assert2 := strings.Index(got, "Ok3 := S in Cat'Class;")
+	if recv < 0 || assert1 < 0 || assert2 < 0 {
+		t.Fatalf("missing drain statements, got:\n%s", got)
+	}
+	if recv >= assert1 || assert1 >= assert2 {
+		t.Fatalf("drain order = recv@%d assert1@%d assert2@%d, want recv < assert1 < assert2:\n%s", recv, assert1, assert2, got)
+	}
 }
 
 func TestTypeNameNamed(t *testing.T) {

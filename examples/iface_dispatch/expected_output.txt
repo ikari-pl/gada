@@ -1,0 +1,9 @@
+woof
+meow
+beep
+dog with 4 legs
+cat with 9 lives
+robot at 80 %
+it's a dog with 4 legs
+it's a cat with 9 lives
+it's a robot at 80 %

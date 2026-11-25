@@ -29,6 +29,7 @@ with AUnit.Test_Suites; use AUnit.Test_Suites;
 
 with IO_Suite;
 with Bufio_Suite;
+with Fmt_Suite;
 with Memory_Suite;
 with Slices_Suite;
 with Defer_Suite;
@@ -54,6 +55,7 @@ with Strconv_Suite;
 with Bytes_Suite;
 with IO_Suite;
 with Bufio_Suite;
+with Fmt_Suite;
 
 procedure Test_Runner is
 
@@ -94,6 +96,7 @@ procedure Test_Runner is
       or else Pkg = "stdlib.bytes"
       or else Pkg = "stdlib.io"
       or else Pkg = "stdlib.bufio"
+      or else Pkg = "stdlib.fmt"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -190,6 +193,9 @@ procedure Test_Runner is
       end if;
       if Should_Register ("stdlib.bufio") then
          Add_Test (Result, new Bufio_Suite.Bufio_Test);
+      end if;
+      if Should_Register ("stdlib.fmt") then
+         Add_Test (Result, new Fmt_Suite.Fmt_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

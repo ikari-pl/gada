@@ -3,6 +3,7 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 
 with AUnit.Assertions; use AUnit.Assertions;
 
+with Ada.Strings.Unbounded;
 with Gada.Std.Strings; use Gada.Std.Strings;
 
 package body Strings_Suite is
@@ -21,10 +22,11 @@ package body Strings_Suite is
               "slice length: got" & Integer'Image (Len (Got))
               & ", want" & Integer'Image (Want'Length));
       for I in 1 .. Len (Got) loop
-         Assert (Element (Got, I) = Want (Want'First + I - 1),
+         Assert (Ada.Strings.Unbounded.To_String (Element (Got, I))
+              = Want (Want'First + I - 1),
                  "element" & Integer'Image (I) & ": got '"
-                 & Element (Got, I) & "', want '"
-                 & Want (Want'First + I - 1) & "'");
+                 & Ada.Strings.Unbounded.To_String (Element (Got, I))
+                 & "', want '" & Want (Want'First + I - 1) & "'");
       end loop;
    end Check_Slice;
 

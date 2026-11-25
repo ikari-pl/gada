@@ -20,8 +20,11 @@ package Gada.Std.Strings is
    --  compiler emits the identical `Slices_Of_String` instantiation for
    --  Go `[]string`, and two instantiations of a generic with the same
    --  actuals are the same type (RM 12.3), so no conversion is needed.
+   --  Element type is Unbounded_String (definite — plain String is
+   --  unconstrained and cannot be a slice element). The compiler emits
+   --  the identical Slices_Of_String instantiation for Go []string.
    package String_Slices is new Gada.Core.Slices
-     (Element_Type => String, Element_Is_Atomic => True);
+     (Element_Type => Ada.Strings.Unbounded.Unbounded_String);
 
    subtype String_Slice is String_Slices.Slice;
 

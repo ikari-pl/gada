@@ -175,12 +175,12 @@ package body Gada.Std.Strings is
    begin
       if S'Length = 0 then
          --  Go: Split("", sep) = [""] — one empty field, not empty.
-         Acc := Append (Acc, "");
+         Acc := Append (Acc, Null_Unbounded_String);
          return;
       end if;
       if Sep'Length = 0 then
          for I in S'Range loop
-            Acc := Append (Acc, S (I .. I));
+            Acc := Append (Acc, To_Unbounded_String (S (I .. I)));
          end loop;
          return;
       end if;
@@ -191,7 +191,7 @@ package body Gada.Std.Strings is
          while Start <= S'Last loop
             I := Index (S (Start .. S'Last), Sep);
             if I < 0 then
-               Acc := Append (Acc, S (Start .. S'Last));
+               Acc := Append (Acc, To_Unbounded_String (S (Start .. S'Last)));
                return;
             end if;
             --  I is relative to S(Start..); absolute position:
@@ -199,9 +199,11 @@ package body Gada.Std.Strings is
                Pos : constant Integer := Start + I;
             begin
                if After then
-                  Acc := Append (Acc, S (Start .. Pos + Sep'Length - 1));
+                  Acc := Append (Acc, To_Unbounded_String (S (Start .. Pos +
+         Sep'Length - 1)));
                else
-                  Acc := Append (Acc, S (Start .. Pos - 1));
+                  Acc := Append (Acc, To_Unbounded_String (S (Start .. Pos -
+         1)));
                end if;
                Start := Pos + Sep'Length;
             end;
@@ -234,35 +236,38 @@ package body Gada.Std.Strings is
          --  per-byte split, capped at N fields (last holds the rest)
          for I in S'Range loop
             if N > 0 and then Len (Acc) = N - 1 then
-               Acc := Append (Acc, S (I .. S'Last));
+               Acc := Append (Acc, To_Unbounded_String (S (I .. S'Last)));
                return Acc;
             end if;
-            Acc := Append (Acc, S (I .. I));
+            Acc := Append (Acc, To_Unbounded_String (S (I .. I)));
          end loop;
          return Acc;
       end if;
       if S'Length = 0 then
-         Acc := Append (Acc, "");
+         Acc := Append (Acc, Null_Unbounded_String);
          return Acc;
       end if;
       declare
          Start : Integer := S'First;
       begin
-         while Start <= S'Last and then (N < 0 or else Len (Acc) < N - 1) loop
+         while Start <= S'Last
+           and then (N < 0 or else Len (Acc) < N - 1)
+         loop
             declare
                I   : constant Integer := Index (S (Start .. S'Last), Sep);
                Pos : constant Integer := Start + I;
             begin
                if I < 0 then
-                  Acc := Append (Acc, S (Start .. S'Last));
+                  Acc := Append (Acc, To_Unbounded_String (S (Start ..
+         S'Last)));
                   return Acc;
                end if;
-               Acc := Append (Acc, S (Start .. Pos - 1));
+               Acc := Append (Acc, To_Unbounded_String (S (Start .. Pos - 1)));
                Start := Pos + Sep'Length;
             end;
          end loop;
          if Start <= S'Last then
-            Acc := Append (Acc, S (Start .. S'Last));
+            Acc := Append (Acc, To_Unbounded_String (S (Start .. S'Last)));
          end if;
          return Acc;
       end;
@@ -276,7 +281,7 @@ package body Gada.Std.Strings is
          if I > 1 then
             Append (B, Sep);
          end if;
-         Append (B, Element (Elems, I));
+         Append (B, To_String (Element (Elems, I)));
       end loop;
       return To_String (B);
    end Join;
@@ -290,7 +295,7 @@ package body Gada.Std.Strings is
       while I <= S'Last + 1 loop
          if I > S'Last or else F (S (I)) then
             if I > Start then
-               Acc := Append (Acc, S (Start .. I - 1));
+               Acc := Append (Acc, To_Unbounded_String (S (Start .. I - 1)));
             end if;
             Start := I + 1;
          end if;
@@ -407,8 +412,9 @@ package body Gada.Std.Strings is
    end Repeat;
 
    function Replace (S, Old, New_Text : String; N : Integer) return String is
-      B     : Unbounded_String;
-      Start : Integer := S'First;
+      B         : Unbounded_String;
+      Start     : Integer := S'First;
+      Remaining : Integer := N;
    begin
       if Old'Length = 0 then
          --  Go: empty old inserts New before every byte and at the end,
@@ -417,19 +423,19 @@ package body Gada.Std.Strings is
             Done : Integer := 0;
          begin
             for I in S'Range loop
-               exit when N >= 0 and then Done = N;
+               exit when Remaining >= 0 and then Done = Remaining;
                Append (B, New_Text);
                Done := Done + 1;
                Append (B, S (I .. I));
             end loop;
-            if N < 0 or else Done < N then
+            if Remaining < 0 or else Done < Remaining then
                Append (B, New_Text);
             end if;
             return To_String (B);
          end;
       end if;
       loop
-         exit when N = 0;
+         exit when Remaining = 0;
          declare
             I   : constant Integer := Index (S (Start .. S'Last), Old);
             Pos : constant Integer := Start + I;
@@ -441,8 +447,8 @@ package body Gada.Std.Strings is
             Append (B, S (Start .. Pos - 1));
             Append (B, New_Text);
             Start := Pos + Old'Length;
-            if N > 0 then
-               N := N - 1;
+            if Remaining > 0 then
+               Remaining := Remaining - 1;
             end if;
          end;
       end loop;
@@ -462,8 +468,8 @@ package body Gada.Std.Strings is
          N     : constant Positive := Len (Oldnew) / 2;
          Pairs : constant Pair_Array (1 .. N) :=
            (for I in 1 .. N =>
-              Pair'(Old => To_Unbounded_String (Element (Oldnew, 2 * I - 1)),
-                    New_Text => To_Unbounded_String (Element (Oldnew, 2 * I))));
+              Pair'(Old => Element (Oldnew, 2 * I - 1),
+                    New_Text => Element (Oldnew, 2 * I)));
       begin
          return Replacer'(Pairs => new Pair_Array'(Pairs));
       end;

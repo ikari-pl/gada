@@ -47,6 +47,7 @@ with Reflect_Types_Suite;
 with Reflect_Suite;
 with Reflect_Values_Suite;
 with Reflect_Interfaces_Suite;
+with Errors_Suite;
 
 procedure Test_Runner is
 
@@ -81,6 +82,7 @@ procedure Test_Runner is
       or else Pkg = "reflect"
       or else Pkg = "reflect.values"
       or else Pkg = "reflect.interfaces"
+      or else Pkg = "stdlib.errors"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -159,6 +161,9 @@ procedure Test_Runner is
          Add_Test
            (Result,
             new Reflect_Interfaces_Suite.Reflect_Interfaces_Test);
+      end if;
+      if Should_Register ("stdlib.errors") then
+         Add_Test (Result, new Errors_Suite.Errors_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

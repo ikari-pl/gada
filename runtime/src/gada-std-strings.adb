@@ -463,7 +463,7 @@ package body Gada.Std.Strings is
          Pairs : constant Pair_Array (1 .. N) :=
            (for I in 1 .. N =>
               Pair'(Old => To_Unbounded_String (Element (Oldnew, 2 * I - 1)),
-                    New => To_Unbounded_String (Element (Oldnew, 2 * I))));
+                    New_Text => To_Unbounded_String (Element (Oldnew, 2 * I))));
       begin
          return Replacer'(Pairs => new Pair_Array'(Pairs));
       end;
@@ -508,7 +508,7 @@ package body Gada.Std.Strings is
                Old : constant String := To_String (R.Pairs (Best_I).Old);
             begin
                Append (B, S (Start .. Best_Pos - 1));
-               Append (B, To_String (R.Pairs (Best_I).New));
+               Append (B, To_String (R.Pairs (Best_I).New_Text));
                Start := Best_Pos + Old'Length;
             end;
          end;

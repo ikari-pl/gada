@@ -106,7 +106,7 @@ package Gada.Std.Strings is
 private
 
    type Pair is record
-      Old, New : Ada.Strings.Unbounded.Unbounded_String;
+      Old, New_Text : Ada.Strings.Unbounded.Unbounded_String;
    end record;
 
    type Pair_Array is array (Positive range <>) of Pair;

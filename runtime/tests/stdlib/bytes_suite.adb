@@ -1,9 +1,12 @@
 --  Body of Bytes_Suite — see spec for test rationale.
 pragma Warnings (Off, "use of an anonymous access type allocator");
 
+with Ada.Containers;
 with AUnit.Assertions; use AUnit.Assertions;
 
 with Gada.Std.Bytes; use Gada.Std.Bytes;
+
+use type Ada.Containers.Count_Type;
 
 package body Bytes_Suite is
 

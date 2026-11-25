@@ -1,10 +1,13 @@
 --  Body of Gada.Std.Bytes — see spec for the Go-semantics contract.
 
+with Ada.Containers;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Gada.Std.Strings;
 
 package body Gada.Std.Bytes is
+
+   use type Ada.Containers.Count_Type;
 
    function To_Bytes (S : String) return Byte_Slice is
       R : Byte_Slice;

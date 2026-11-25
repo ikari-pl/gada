@@ -715,7 +715,7 @@ enumeration; output matches the expected fixture.
 
 - [x] **Compiler emission — type assertions and type switches**
       *Files:* `compiler/internal/{ir,translate,emit}`, golden tests
-      *Verify:* `cd compiler && go test ./internal/emit/... -run Assert`
+      *Verify:* `cd compiler && go test ./internal/emit/... ./internal/translate/... -run 'Assert|TypeSwitch'`
       *Done when:* `x.(T)`, `x.(T, ok)`, `switch x := y.(type) { ... }` all emit correctly.
 
   Decomposed 2026-08-21: three forms, each greenfield (no IR node, no
@@ -773,7 +773,7 @@ enumeration; output matches the expected fixture.
         *Done when:* `v, ok := x.(T)` lowers to a membership test
         (`OK := X in T'Class`) plus a guarded view conversion at statement
         position, so ok reports the match without raising. (`transAssign`
-        already flips `TypeAssert.CommaOK` for the 2-LHS shape; emit's
+        flips `TypeAssert.CommaOK` for the 2-LHS shape; emit's
         statement-position lowering — mirroring the comma-ok chan receive
         — is the work.)
         *Done 2026-11-25:* the roadmap note above was stale — `transAssign`
@@ -802,6 +802,14 @@ enumeration; output matches the expected fixture.
         clean (`go test -race ./internal/...` green; the `cmd/gada`
         "package fmt without types" failure is pre-existing on the base
         commit in this environment, unrelated).
+        *Code-review fixes (2026-11-25):* the operand is rendered twice
+        (membership test + guarded conversion), so `emitTypeAssertDecl`
+        now rejects a non-identifier operand loudly instead of relying on
+        a comment; the package-`main` emission path now drains
+        `pendingRecvs`/`pendingAsserts` like `emitSubprogram` did (it
+        previously dropped them silently); drain order (all receives,
+        then all assertions, source order within each) is pinned by
+        `TestCommaOKAssertDrainOrder`.
 
   - [x] **(6c) type switch `switch x := y.(type) { ... }`**
         *Files:* `compiler/internal/{ir,translate,emit}`, golden tests.
@@ -831,6 +839,16 @@ enumeration; output matches the expected fixture.
         `.golangci.yml` revive allowlist gained TypeSwitch/TypeSwitchCase.
         emit/ 95.94%, translate/ 95.42%, runtime/ 100%; vet + lint +
         gate clean, `go test -race ./internal/...` green.
+        *Code-review fixes (2026-11-25):* the default arm now declares
+        the bound variable at the operand's class-wide type
+        (`D : Speaker'Class := S;`) — previously any use of the switch
+        variable in `default` emitted an undeclared identifier; a blank
+        `_` binding declares nothing; non-identifier operands are
+        rejected (translate and emit) since the operand is rendered once
+        per arm; `case nil:` and duplicate `default:` get their own loud
+        rejects. Pinned by `TestEmitTypeSwitchDefaultArmVar` (default-arm
+        method dispatch) + new reject arms in `TestEmitTypeSwitch` /
+        `TestTransTypeSwitch`.
 
 - [x] **`iface_dispatch` example**
       *Files:* `examples/iface_dispatch/main.go`, `examples/iface_dispatch/expected_output.txt`
@@ -844,9 +862,13 @@ enumeration; output matches the expected fixture.
       satisfaction edges per type. `expected_output.txt` is the
       byte-for-byte output of stock `go run .`; `gada build` passes
       resolve+translate+emit in this sandbox and stops only at gprbuild
-      (no Ada toolchain installed here), so the full
-      `make example HELLO=iface_dispatch` diff runs under the Alire
-      toolchain in CI. Along the way, `cmd/gada`'s packages.Load mode
+      (no Ada toolchain installed here). *Code-review fix (2026-11-25):*
+      the example is now gated two ways — a CI step
+      (`make example HELLO=iface_dispatch` in `.github/workflows/ci.yml`,
+      runs end to end under the Alire toolchain) and a gprbuild-free
+      driver test (`TestBuildPackage_IfaceDispatchExample`) asserting the
+      emitted `main.adb` carries 8 `Add_Method` + 6 `Register` calls and
+      the membership chain. Along the way, `cmd/gada`'s packages.Load mode
       gained NeedDeps|NeedImports (x/tools v0.27 + Go 1.27 no longer
       type-loads deps otherwise — the pre-existing "package fmt without
       types" failure; `go test ./cmd/...` is green again). compiler/

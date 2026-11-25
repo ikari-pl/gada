@@ -340,6 +340,19 @@ jobs:
           export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
           make example HELLO=ping_pong
 
+      - name: Run make example HELLO=iface_dispatch
+        # The Phase-4 exit-criterion target (roadmap/04-interfaces-
+        # reflection item 7). Exercises 3+ types implementing 2
+        # interfaces end-to-end: class-wide dispatch calls, a type
+        # switch (membership-test chain), and reflection-based method
+        # enumeration in the emitted package init (one Add_Method per
+        # method per type + Register satisfaction edges). Output is
+        # diffed against expected_output.txt like the other examples.
+        run: |
+          set -euo pipefail
+          export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
+          make example HELLO=iface_dispatch
+
       - name: Upload example binary as artifact
         # Always upload — even on failure the partially-built binary (when
         # present) is useful for post-mortem. `if-no-files-found: warn`

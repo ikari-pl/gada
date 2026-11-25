@@ -840,6 +840,26 @@ func tryBuiltinCall(c *ast.CallExpr) (*ir.BuiltinCall, bool, error) {
 	return &ir.BuiltinCall{Name: id.Name, Args: args}, true, nil
 }
 
+// transTypeAssert lowers a Go type assertion `x.(T)` to an *ir.TypeAssert.
+// The type-switch guard `x.(type)` (Type == nil) is a different construct
+// (a type switch, item 6c) and is rejected here. transAssign flips
+// CommaOK on the 2-LHS `v, ok := x.(T)` shape (item 6b); a plain
+// assertion stays CommaOK false.
+func transTypeAssert(e *ast.TypeAssertExpr) (*ir.TypeAssert, error) {
+	if e.Type == nil {
+		return nil, fmt.Errorf("translate: `x.(type)` outside a type switch is invalid Go; the type-switch form is a separate construct")
+	}
+	x, err := transExpr(e.X)
+	if err != nil {
+		return nil, err
+	}
+	t, err := transType(e.Type)
+	if err != nil {
+		return nil, err
+	}
+	return &ir.TypeAssert{X: x, Type: t}, nil
+}
+
 func transCall(c *ast.CallExpr) (*ir.Call, error) {
 	fun, err := transExpr(c.Fun)
 	if err != nil {
@@ -892,6 +912,8 @@ func transExpr(e ast.Expr) (ir.Expr, error) {
 		return transIndex(e)
 	case *ast.SliceExpr:
 		return transSlice(e)
+	case *ast.TypeAssertExpr:
+		return transTypeAssert(e)
 	case *ast.CallExpr:
 		// Phase 3 channel-emit sub-item (b): `make (chan T, N)` and
 		// `make (chan T)` are intercepted *before* tryBuiltinCall

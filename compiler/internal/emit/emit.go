@@ -159,6 +159,7 @@ type emitter struct {
 	structByName        map[string]*ir.StructType // file-wide type name → its struct definition, so emitStructLit can consult the declared field set: an Ada record aggregate must supply a value for every component (RM 4.3.1), so a literal that omits fields, names a non-struct type, or has a single positional field needs the declared fields to lower correctly (or to be rejected loudly). Populated alongside funcByName.
 	interfaceNames      map[string]bool           // file-wide set of interface type names, so typeName renders a NamedType referring to an interface as the class-wide `Name'Class` view (which dispatches) rather than a plain type name. Populated alongside structByName.
 	dispatchMethodNames map[string]bool           // file-wide set of interface method names — the only methods with an emitted subprogram (5b-i abstract op + 5c overriding body) and hence the only callable ones. A method-call selector whose name is absent would emit a dangling `X.M`, so emitCallStmt rejects it. Populated alongside interfaceNames.
+	emptyInterfaceNames map[string]bool           // file-wide set of method-less interface names (Go's `any`, or a named `interface{}`). No concrete type derives an empty interface (5b), so a type assertion `x.(T)` whose operand is one has no legal Ada view conversion; emitTypeAssert rejects it. Populated alongside interfaceNames.
 	pendingRecvs        []pendingChanRecv         // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
 	err                 error
 }
@@ -193,6 +194,7 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		structByName:        map[string]*ir.StructType{},
 		interfaceNames:      map[string]bool{},
 		dispatchMethodNames: map[string]bool{},
+		emptyInterfaceNames: map[string]bool{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
@@ -228,6 +230,9 @@ func (e *emitter) collectSliceElems() {
 				e.structByName[td.Name] = u
 			case *ir.InterfaceType:
 				e.interfaceNames[td.Name] = true
+				if len(u.Methods) == 0 {
+					e.emptyInterfaceNames[td.Name] = true
+				}
 				for _, m := range u.Methods {
 					e.dispatchMethodNames[m.Name] = true
 				}
@@ -1918,7 +1923,7 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 		e.emitChanRecvDecl(a, cr)
 		return
 	}
-	typ, err := inferDeclType(a.RHS[0])
+	typ, err := e.inferDeclType(a.RHS[0])
 	if err != nil {
 		e.fail(err)
 		return
@@ -1984,7 +1989,7 @@ func (e *emitter) emitChanRecvDecl(a *ir.Assign, cr *ir.ChanRecv) {
 // literal (whose element type is on the node, so no *types.Info
 // plumbing is needed). Anything else still defers — full RHS-typing
 // arrives with the type-info plumbing in a later phase.
-func inferDeclType(x ir.Expr) (string, error) {
+func (e *emitter) inferDeclType(x ir.Expr) (string, error) {
 	switch x := x.(type) {
 	case *ir.Lit:
 		switch x.Kind {
@@ -2019,6 +2024,9 @@ func inferDeclType(x ir.Expr) (string, error) {
 	case *ir.StructLit:
 		// The literal names its own record type; no *types.Info needed.
 		return adaIdent(x.TypeName), nil
+	case *ir.TypeAssert:
+		// `v := x.(T)` binds v to the asserted type T.
+		return e.typeName(x.Type)
 	}
 	return "", fmt.Errorf("emit: := requires a literal or composite RHS, got %T", x)
 }
@@ -2547,6 +2555,8 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		return e.emitStructLit(x)
 	case *ir.MakeChan:
 		return e.emitMakeChan(x)
+	case *ir.TypeAssert:
+		return e.emitTypeAssert(x)
 	case *ir.IndexExpr:
 		return e.emitIndexExpr(x)
 	case *ir.SliceExpr:
@@ -2764,6 +2774,49 @@ func zeroValueFor(t ir.Type) (string, error) {
 		return zeroLiteralOf(t), nil
 	}
 	return "", fmt.Errorf("emit: no zero value for struct field %w", validStructFieldType(t))
+}
+
+// emitTypeAssert renders a single Go type assertion `x.(T)` as the Ada
+// view conversion `T (X)`. Converting a class-wide operand to a specific
+// type in its class checks the tag (RM 4.6) and raises Constraint_Error
+// on a mismatch — Go instead panics, so the raised exception is the
+// runtime approximation (a faithful Gada.Core panic rides a later item).
+// The comma-ok form `v, ok := x.(T)` (CommaOK) has no expression value —
+// it lowers to a membership test plus a guarded conversion at statement
+// position (item 6b), so it must not reach here.
+func (e *emitter) emitTypeAssert(a *ir.TypeAssert) string {
+	if a.CommaOK {
+		e.fail(fmt.Errorf("emit: comma-ok type assertion `v, ok := x.(T)` is not supported yet (item 6b); only the single-value form `x.(T)` is"))
+		return ""
+	}
+	// Only a concrete struct target is a valid Ada view conversion of a
+	// class-wide operand. An interface target (`x.(I)` — a
+	// does-it-implement check, not a down-conversion), and scalar/builtin
+	// targets (`x.(int)`, `x.(Celsius)` — `Integer (X)` on a class-wide
+	// operand is not a legal conversion) need different machinery and
+	// ride a later item; reject them loudly rather than emit invalid Ada.
+	nt, ok := a.Type.(*ir.NamedType)
+	if !ok {
+		e.fail(fmt.Errorf("emit: type assertion to a non-named type is not supported yet (item 6a covers a concrete struct target)"))
+		return ""
+	}
+	if _, isStruct := e.structByName[nt.Name]; !isStruct {
+		e.fail(fmt.Errorf("emit: type assertion x.(%s): only a concrete struct target is supported yet (item 6a); interface, named-scalar, and builtin targets ride later items", nt.Name))
+		return ""
+	}
+	// A method-less interface operand is valid Go — every type satisfies
+	// it — but no concrete type *derives* an empty interface (5b), so the
+	// operand's class-wide view contains no struct and `T (X)` is an
+	// illegal Ada conversion. Reject when the operand's static type
+	// (known for an identifier via localTypes) is such an interface,
+	// rather than emit a conversion gnat would reject.
+	if id, ok := a.X.(*ir.Ident); ok {
+		if ot, ok := e.localTypes[id.Name].(*ir.NamedType); ok && e.emptyInterfaceNames[ot.Name] {
+			e.fail(fmt.Errorf("emit: type assertion x.(%s) on a method-less interface (%s) operand has no legal Ada conversion (no concrete type derives an empty interface); not supported yet", nt.Name, ot.Name))
+			return ""
+		}
+	}
+	return adaIdent(nt.Name) + " (" + e.emitExpr(a.X) + ")"
 }
 
 // emitSliceExpr dispatches `s[lo:hi]` (and the elided forms) to

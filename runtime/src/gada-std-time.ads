@@ -72,9 +72,10 @@ package Gada.Std.Time is
                   Ns : Natural;
                   In_UTC : Boolean) return Time;
 
-   --  Go: t.Since(u) / time.Since(t) — monotonic elapsed.
+   --  Go: time.Since(t) — monotonic elapsed. Until maps to
+   --  Until_K ("until" is reserved, same _K rule as New_K/Is_K).
    function Since (T : Time) return Duration;
-   function Until (T : Time; U : Time) return Duration;
+   function Until_K (T : Time; U : Time) return Duration;
 
    --  Zone conversions (Go: t.UTC(), t.Local()) — same instant,
    --  different display zone.

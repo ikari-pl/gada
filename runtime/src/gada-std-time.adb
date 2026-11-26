@@ -43,21 +43,21 @@ package body Gada.Std.Time is
 
    --  Appends N as decimal digits (no padding).
    procedure Append_Num (B : in out Unbounded_String; N : Long_Integer) is
-      Digits : constant String := Long_Integer'Image (N);
+      Digs : constant String := Long_Integer'Image (N);
    begin
       --  'Image has a leading space for non-negative values.
-      if N >= 0 and then Digits (Digits'First) = ' ' then
-         Append (B, Digits (Digits'First + 1 .. Digits'Last));
+      if N >= 0 and then Digs (Digs'First) = ' ' then
+         Append (B, Digs (Digs'First + 1 .. Digs'Last));
       else
-         Append (B, Digits);
+         Append (B, Digs);
       end if;
    end Append_Num;
 
    --  Appends R as a Width-digit fraction with trailing zeros trimmed.
    procedure Append_Frac (B : in out Unbounded_String; R : Long_Integer;
                           Width : Positive) is
-      Digits : constant String := Long_Integer'Image (R);
-      D      : constant String := Digits (Digits'First + 1 .. Digits'Last);
+      Digs : constant String := Long_Integer'Image (R);
+      D      : constant String := Digs (Digs'First + 1 .. Digs'Last);
       S      : String (1 .. Width);
    begin
       if D'Length >= Width then
@@ -165,7 +165,7 @@ package body Gada.Std.Time is
                         * 1_000_000_000.0));
    end Since;
 
-   function Until (T : Time; U : Time) return Duration is
+   function Until_K (T : Time; U : Time) return Duration is
    begin
       return Duration
         (Long_Integer (RT.To_Duration (RT."-" (U.Mono, T.Mono))

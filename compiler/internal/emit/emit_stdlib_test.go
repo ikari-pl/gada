@@ -476,3 +476,22 @@ func TestSyncImportEmit(t *testing.T) {
 		}
 	}
 }
+
+// TestTimeImportEmit pins the Phase 6 `time` import mapping.
+func TestTimeImportEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"time"},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("time"), Sel: "NewTimer"},
+			Args: []ir.Expr{litInt("5_000_000_000")},
+		},
+	)
+	for _, want := range []string{
+		"with Gada.Std.Time;",
+		"Gada.Std.Time.New_Timer (",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}

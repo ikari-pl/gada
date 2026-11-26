@@ -1,0 +1,317 @@
+--  Body of Gada.Std.Time — see spec for the Go-semantics contract.
+
+with Ada.Calendar.Formatting;
+with Ada.Calendar.Time_Zones;
+with Ada.Containers.Indefinite_Vectors;
+with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
+with System;
+
+package body Gada.Std.Time is
+
+   package RT renames Ada.Real_Time;
+   package Cal renames Ada.Calendar;
+   package Fmt renames Ada.Calendar.Formatting;
+
+   function "+" (L, R : Duration) return Duration is
+     (Duration (Long_Integer (L) + Long_Integer (R)));
+   function "-" (L, R : Duration) return Duration is
+     (Duration (Long_Integer (L) - Long_Integer (R)));
+   function "*" (L : Duration; R : Long_Integer) return Duration is
+     (Duration (Long_Integer (L) * R));
+   function "*" (L : Long_Integer; R : Duration) return Duration is
+     (Duration (L * Long_Integer (R)));
+   function "/" (L : Duration; R : Long_Integer) return Duration is
+     (Duration (Long_Integer (L) / R));
+   function "<" (L, R : Duration) return Boolean is
+     (Long_Integer (L) < Long_Integer (R));
+   function "<=" (L, R : Duration) return Boolean is
+     (Long_Integer (L) <= Long_Integer (R));
+   function ">" (L, R : Duration) return Boolean is
+     (Long_Integer (L) > Long_Integer (R));
+   function ">=" (L, R : Duration) return Boolean is
+     (Long_Integer (L) >= Long_Integer (R));
+   function "=" (L, R : Duration) return Boolean is
+     (Long_Integer (L) = Long_Integer (R));
+
+   function Nanoseconds (D : Duration) return Long_Integer is
+     (Long_Integer (D));
+
+   ---------------------------------------------------------------
+   --  Duration.String — Go's algorithm: largest units first, the
+   --  fraction printed with trailing zeros trimmed.
+   ---------------------------------------------------------------
+
+   --  Appends N as decimal digits (no padding).
+   procedure Append_Num (B : in out Unbounded_String; N : Long_Integer) is
+      Digits : constant String := Long_Integer'Image (N);
+   begin
+      --  'Image has a leading space for non-negative values.
+      if N >= 0 and then Digits (Digits'First) = ' ' then
+         Append (B, Digits (Digits'First + 1 .. Digits'Last));
+      else
+         Append (B, Digits);
+      end if;
+   end Append_Num;
+
+   --  Appends R as a Width-digit fraction with trailing zeros trimmed.
+   procedure Append_Frac (B : in out Unbounded_String; R : Long_Integer;
+                          Width : Positive) is
+      Digits : constant String := Long_Integer'Image (R);
+      D      : constant String := Digits (Digits'First + 1 .. Digits'Last);
+      S      : String (1 .. Width);
+   begin
+      if D'Length >= Width then
+         S := D (D'Last - Width + 1 .. D'Last);
+      else
+         S := (1 .. Width - D'Length => '0') & D;
+      end if;
+      declare
+         Last : Natural := Width;
+      begin
+         while Last > 0 and then S (Last) = '0' loop
+            Last := Last - 1;
+         end loop;
+         if Last > 0 then
+            Append (B, '.' & S (1 .. Last));
+         end if;
+      end;
+   end Append_Frac;
+
+   function String (D : Duration) return String is
+      Ns : constant Long_Integer := Long_Integer (D);
+      U  : constant Long_Integer := (if Ns < 0 then -Ns else Ns);
+      B  : Unbounded_String;
+   begin
+      if Ns < 0 then
+         Append (B, '-');
+      end if;
+      if U = 0 then
+         return To_String (B) & "0s";
+      elsif U < Long_Integer (Second) then
+         if U < 1_000 then
+            Append_Num (B, U);
+            Append (B, "ns");
+         elsif U < 1_000_000 then
+            Append_Num (B, U / 1_000);
+            Append_Frac (B, U mod 1_000, 3);
+            Append (B, "µs");
+         else
+            Append_Num (B, U / 1_000_000);
+            Append_Frac (B, U mod 1_000_000, 6);
+            Append (B, "ms");
+         end if;
+      else
+         declare
+            H : constant Long_Integer := U / 3_600_000_000_000;
+            M : constant Long_Integer :=
+              (U mod 3_600_000_000_000) / 60_000_000_000;
+            S : constant Long_Integer :=
+              (U mod 60_000_000_000) / 1_000_000_000;
+            F : constant Long_Integer := U mod 1_000_000_000;
+         begin
+            if H > 0 then
+               Append_Num (B, H);
+               Append (B, 'h');
+            end if;
+            if H > 0 or else M > 0 then
+               Append_Num (B, M);
+               Append (B, 'm');
+            end if;
+            Append_Num (B, S);
+            Append_Frac (B, F, 9);
+            Append (B, 's');
+         end;
+      end if;
+      return To_String (B);
+   end String;
+
+   ---------------------------------------------------------------
+   --  Time
+   ---------------------------------------------------------------
+
+   function Now return Time is
+      R    : constant RT.Time := RT.Clock;
+      W    : constant Cal.Time := Cal.Clock;
+      Secs : constant Long_Float :=
+        RT.To_Duration (RT."-" (R, RT.Time_First));
+   begin
+      return (Mono => R,
+              Wall => W,
+              Ns   => Natural
+                (Long_Integer (Secs * 1.0e9) mod 1_000_000_000),
+              UTC  => False);
+   end Now;
+
+   function Date (Year : Cal.Year_Number;
+                  Month : Cal.Month_Number;
+                  Day : Cal.Day_Number;
+                  Hour : Cal.Hour_Number;
+                  Minute : Cal.Minute_Number;
+                  Second : Cal.Second_Number;
+                  Ns : Natural;
+                  In_UTC : Boolean) return Time is
+   begin
+      return (Mono => RT.Clock,
+              Wall => Cal.Time_Of (Year, Month, Day,
+                                   Hour, Minute, Second),
+              Ns   => Ns,
+              UTC  => In_UTC);
+   end Date;
+
+   function Since (T : Time) return Duration is
+   begin
+      return Duration
+        (Long_Integer (RT.To_Duration (RT."-" (RT.Clock, T.Mono))
+                        * 1_000_000_000.0));
+   end Since;
+
+   function Until (T : Time; U : Time) return Duration is
+   begin
+      return Duration
+        (Long_Integer (RT.To_Duration (RT."-" (U.Mono, T.Mono))
+                        * 1_000_000_000.0));
+   end Until;
+
+   function UTC (T : Time) return Time is (T with UTC => True);
+   function Local (T : Time) return Time is (T with UTC => False);
+
+   function Year (T : Time) return Cal.Year_Number is
+     (Cal.Year (T.Wall));
+   function Month (T : Time) return Cal.Month_Number is
+     (Cal.Month (T.Wall));
+   function Day (T : Time) return Cal.Day_Number is
+     (Cal.Day (T.Wall));
+   function Hour (T : Time) return Cal.Hour_Number is
+     (Cal.Hour (T.Wall));
+   function Minute (T : Time) return Cal.Minute_Number is
+     (Cal.Minute (T.Wall));
+   function Second (T : Time) return Cal.Second_Number is
+     (Cal.Second (T.Wall));
+   function Nanosecond (T : Time) return Natural is (T.Ns);
+
+   --  "2026-11-26T07:08:09.123456789Z" (UTC) or "…+01:00" (Local).
+   function RFC3339_Nano (T : Time) return String is
+      B : Unbounded_String;
+   begin
+      Append (B, Fmt.Image (T.Wall, "%Y-%m-%dT%H:%M:%S"));
+      Append_Frac (B, Long_Integer (T.Ns), 9);
+      if T.UTC then
+         Append (B, 'Z');
+      else
+         declare
+            Off  : constant Ada.Calendar.Time_Zones.Time_Offset :=
+              Ada.Calendar.Time_Zones.UTC_Time_Offset (T.Wall);
+            Mins : constant Integer := Integer (Off);
+            Sign : constant Character :=
+              (if Mins < 0 then '-' else '+');
+            A    : constant Natural := (if Mins < 0 then -Mins else Mins);
+            function Dig2 (N : Natural) return String is
+              (if N < 10 then "0" & Natural'Image (N)
+               else Natural'Image (N));
+         begin
+            Append (B, Sign & Dig2 (A / 60) & ':' & Dig2 (A mod 60));
+         end;
+      end if;
+      return To_String (B);
+   end RFC3339_Nano;
+
+   ---------------------------------------------------------------
+   --  Timers
+   ---------------------------------------------------------------
+
+   protected body Stop_Flag is
+      procedure Stop is
+      begin
+         S := True;
+      end Stop;
+      function Stopped return Boolean is (S);
+   end Stop_Flag;
+
+   function To_Span (D : Duration) return RT.Time_Span is
+     (RT.To_Duration (Long_Float (Long_Integer (D)) / 1.0e9));
+
+   --  Keeps heap task objects reachable so the GC never collects a
+   --  live timer task (After/Tick return only the channel).
+   package Address_Vectors is
+      new Ada.Containers.Indefinite_Vectors (Positive, System.Address);
+
+   protected type Keeper is
+      procedure Add (A : System.Address);
+   private
+      Items : Address_Vectors.Vector;
+   end Keeper;
+
+   protected body Keeper is
+      procedure Add (A : System.Address) is
+      begin
+         Items.Append (A);
+      end Add;
+   end Keeper;
+
+   Keep : Keeper;
+
+   task type One_Shot (Ch : Time_Channels.Channel; D : Duration;
+                       F : Stop_Flag_Access) is
+   end One_Shot;
+
+   type One_Shot_Access is access all One_Shot;
+
+   task body One_Shot is
+   begin
+      delay until RT."+" (RT.Clock, To_Span (D));
+      if not F.Stopped then
+         Time_Channels.Send (Ch, True);
+      end if;
+   end One_Shot;
+
+   task type Repeater (Ch : Time_Channels.Channel; D : Duration;
+                       F : Stop_Flag_Access) is
+   end Repeater;
+
+   type Repeater_Access is access all Repeater;
+
+   task body Repeater is
+   begin
+      loop
+         delay until RT."+" (RT.Clock, To_Span (D));
+         exit when F.Stopped;
+         Time_Channels.Send (Ch, True);
+      end loop;
+   end Repeater;
+
+   function New_Timer (D : Duration) return Timer is
+      T : constant One_Shot_Access :=
+        new One_Shot'(Ch => Time_Channels.Make, D => D,
+                      F => new Stop_Flag);
+   begin
+      Keep.Add (T.all'Address);
+      return (C => T.Ch,
+              F => T.F);
+   end New_Timer;
+
+   procedure Stop (T : in out Timer) is
+   begin
+      T.F.Stop;
+   end Stop;
+
+   function Chan (T : Timer) return Time_Channels.Channel is (T.C);
+
+   function After (D : Duration) return Time_Channels.Channel is
+      T : constant One_Shot_Access :=
+        new One_Shot'(Ch => Time_Channels.Make, D => D,
+                      F => new Stop_Flag);
+   begin
+      Keep.Add (T.all'Address);
+      return T.Ch;
+   end After;
+
+   function Tick (D : Duration) return Time_Channels.Channel is
+      T : constant Repeater_Access :=
+        new Repeater'(Ch => Time_Channels.Make, D => D,
+                      F => new Stop_Flag);
+   begin
+      Keep.Add (T.all'Address);
+      return T.Ch;
+   end Tick;
+
+end Gada.Std.Time;

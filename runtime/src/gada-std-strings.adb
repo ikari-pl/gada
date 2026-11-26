@@ -173,15 +173,16 @@ package body Gada.Std.Strings is
      (Acc : in out String_Slice; S, Sep : String; After : Boolean) is
       use String_Vectors;
    begin
-      if S'Length = 0 then
-         --  Go: Split("", sep) = [""] — one empty field, not empty.
-         Append (Acc, Null_Unbounded_String);
-         return;
-      end if;
       if Sep'Length = 0 then
+         --  Go: empty sep explodes into single bytes; Split("","") = [].
          for I in S'Range loop
             Append (Acc, To_Unbounded_String (S (I .. I)));
          end loop;
+         return;
+      end if;
+      if S'Length = 0 then
+         --  Go: Split("", sep) = [""] — one empty field, not empty.
+         Append (Acc, Null_Unbounded_String);
          return;
       end if;
       declare
@@ -208,6 +209,10 @@ package body Gada.Std.Strings is
                Start := Pos + Sep'Length;
             end;
          end loop;
+         --  Go's genSplit appends the final field unconditionally: a
+         --  trailing separator yields a final empty field (the null
+         --  slice S (S'Last + 1 .. S'Last) is legal in Ada).
+         Append (Acc, To_Unbounded_String (S (Start .. S'Last)));
       end;
    end Split_Into;
 
@@ -265,9 +270,10 @@ package body Gada.Std.Strings is
                Start := Pos + Sep'Length;
             end;
          end loop;
-         if Start <= S'Last then
-            Append (Acc, To_Unbounded_String (S (Start .. S'Last)));
-         end if;
+         --  Append the remainder unconditionally: the N-cap exit
+         --  keeps the rest of the string, and a trailing separator
+         --  yields a final empty field (Go's genSplit contract).
+         Append (Acc, To_Unbounded_String (S (Start .. S'Last)));
          return Acc;
       end;
    end Split_N;
@@ -417,16 +423,23 @@ package body Gada.Std.Strings is
    begin
       if Old'Length = 0 then
          --  Go: empty old inserts New before every byte and at the end,
-         --  up to N times (N < 0 = all).
+         --  up to N times (N < 0 = all; N = 0 returns S unchanged).
          declare
             Done : Integer := 0;
+            I    : Integer := S'First;
          begin
-            for I in S'Range loop
-               exit when Remaining >= 0 and then Done = Remaining;
+            while I <= S'Last
+              and then (Remaining < 0 or else Done < Remaining)
+            loop
                Append (B, New_Text);
                Done := Done + 1;
                Append (B, S (I .. I));
+               I := I + 1;
             end loop;
+            --  When the N-cap hit mid-string the rest of S is copied
+            --  verbatim (the null slice handles the empty-S case).
+            Append (B, S (I .. S'Last));
+            --  The end-of-string insertion point, if not capped.
             if Remaining < 0 or else Done < Remaining then
                Append (B, New_Text);
             end if;
@@ -467,13 +480,27 @@ package body Gada.Std.Strings is
            with "strings.New_Replacer: odd number of strings";
       end if;
       declare
-         N     : constant Positive := Integer (Length (Oldnew)) / 2;
-         Pairs : constant Pair_Array (1 .. N) :=
-           (for I in 1 .. N =>
-              Pair'(Old => Element (Oldnew, 2 * I - 1),
-                    New_Text => Element (Oldnew, 2 * I)));
+         N : constant Natural := Integer (Length (Oldnew)) / 2;
       begin
-         return Replacer'(Pairs => new Pair_Array'(Pairs));
+         if N = 0 then
+            --  Go: NewReplacer() with no pairs is a valid no-op.
+            return Replacer'(Pairs => null);
+         end if;
+         for I in 1 .. N loop
+            if Length (Element (Oldnew, 2 * I - 1)) = 0 then
+               --  Go panics on an empty old string.
+               raise Constraint_Error
+                 with "strings.New_Replacer: empty old string";
+            end if;
+         end loop;
+         declare
+            Pairs : constant Pair_Array (1 .. N) :=
+              (for I in 1 .. N =>
+                 Pair'(Old => Element (Oldnew, 2 * I - 1),
+                       New_Text => Element (Oldnew, 2 * I)));
+         begin
+            return Replacer'(Pairs => new Pair_Array'(Pairs));
+         end;
       end;
    end New_Replacer;
 

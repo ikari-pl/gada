@@ -164,6 +164,18 @@ package body Strings_Suite is
       Check_Slice
         (T, Split ("", ","),
          (1 => Ada.Strings.Unbounded.To_Unbounded_String ("")));
+      --  Go's genSplit appends the final field unconditionally: a
+      --  trailing separator yields a final EMPTY field.
+      Check_Slice (T, Split ("a,", ","),
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a"),
+                    2 => Ada.Strings.Unbounded.To_Unbounded_String ("")));
+      Check_Slice (T, Split (",", ","),
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String (""),
+                    2 => Ada.Strings.Unbounded.To_Unbounded_String ("")));
+      Check_Slice (T, Split ("a,,b", ","),
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a"),
+                    2 => Ada.Strings.Unbounded.To_Unbounded_String (""),
+                    3 => Ada.Strings.Unbounded.To_Unbounded_String ("b")));
    end Test_Split;
 
    procedure Test_Split_N (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -181,6 +193,11 @@ package body Strings_Suite is
       Check_Slice (T, Split_N ("abcd", "", 2),
                    (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a"),
                     2 => Ada.Strings.Unbounded.To_Unbounded_String ("bcd")));
+      Check_Slice (T, Split_N ("a,", ",", -1),
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a"),
+                    2 => Ada.Strings.Unbounded.To_Unbounded_String ("")));
+      Check_Slice (T, Split_N ("", ",", -1),
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("")));
    end Test_Split_N;
 
    procedure Test_Split_After_And_Empty_Sep (T : in out
@@ -193,6 +210,13 @@ package body Strings_Suite is
                    (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a"),
                     2 => Ada.Strings.Unbounded.To_Unbounded_String ("b"),
                     3 => Ada.Strings.Unbounded.To_Unbounded_String ("c")));
+      --  Go: if s and sep are both empty, Split returns an empty slice.
+      Check_Slice (T, Split ("", ""),
+                   (1 .. 0 =>
+                      Ada.Strings.Unbounded.To_Unbounded_String ("")));
+      Check_Slice (T, Split_After ("a,", ","),
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a,"),
+                    2 => Ada.Strings.Unbounded.To_Unbounded_String ("")));
    end Test_Split_After_And_Empty_Sep;
 
    procedure Test_Join (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -256,6 +280,13 @@ package body Strings_Suite is
       Assert (Replace_All ("a-b-c", "-", "+") = "a+b+c", "Replace_All");
       Assert (Replace ("a-b-c", "-", "+", 1) = "a+b-c", "Replace N=1");
       Assert (Replace ("abc", "x", "y", -1) = "abc", "no match unchanged");
+      --  Empty old: insert New before each byte and at the end, up to
+      --  N times; N = 0 returns S unchanged (Go-verified).
+      Assert (Replace ("abc", "", "X", 2) = "XaXbc", "empty old N=2");
+      Assert (Replace ("abc", "", "X", 0) = "abc", "empty old N=0");
+      Assert (Replace ("abc", "", "X", -1) = "XaXbXcX", "empty old all");
+      Assert (Replace ("", "", "X", -1) = "X", "empty old empty s");
+      Assert (Replace ("ab", "", "X", 1) = "Xab", "empty old N=1");
    end Test_Replace;
 
    procedure Test_Replacer (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -267,6 +298,22 @@ package body Strings_Suite is
               "Replacer replaces all");
       Assert (Replace (New_Replacer (Split ("aa,a", ",")), "aaa") = "aa",
               "first-listed wins at a position");
+      --  Go: NewReplacer() with no pairs is a valid no-op replacer.
+      --  Split ("", "") is the empty slice, so this builds zero pairs.
+      Assert (Replace (New_Replacer (Split ("", "")), "abc") = "abc",
+              "empty pair list is a no-op");
+      --  Go panics on an empty old string in a pair.
+      begin
+         declare
+            R : constant Replacer := New_Replacer (Split (",x", ","));
+            pragma Unreferenced (R);
+         begin
+            Assert (False, "empty old must raise");
+         end;
+      exception
+         when Constraint_Error =>
+            null;  --  expected
+      end;
    end Test_Replacer;
 
    procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class) is

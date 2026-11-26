@@ -258,7 +258,7 @@ package body Bufio_Suite is
       Assert (N = 3 and E = Errors.No_Error and Buf (1 .. 3) = "abc",
               "data comes back with nil error");
       Read (R, Buf, N, E);
-      Assert (N = 0 and E /= Errors.No_Error
+      Assert (N = 0 and then E /= Errors.No_Error
               and then not Errors.Is_K (E, IO.EOF),
               "stored hard error delivered once");
       Read (R, Buf, N, E);

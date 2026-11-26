@@ -2469,8 +2469,11 @@ func (e *emitter) rhsIRType(x ir.Expr) ir.Type {
 	case *ir.SliceLit:
 		return &ir.SliceType{Elem: x.Elem}
 	case *ir.BuiltinCall:
-		if x.Name == "string" {
+		switch x.Name {
+		case "string":
 			return &ir.StringType{}
+		case "len", "cap":
+			return &ir.IntType{}
 		}
 	}
 	if t, ok := inferRHSType(x); ok {

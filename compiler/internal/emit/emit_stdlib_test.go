@@ -327,3 +327,35 @@ func TestBuiltinAndInferErrorArms(t *testing.T) {
 		t.Error("unknown builtin should fail")
 	}
 }
+
+// TestDeclInitHelpers pins the bare-decl initializer rules:
+// vector-backed slices get their empty vector, String gets "", others
+// get none.
+func TestDeclInitHelpers(t *testing.T) {
+	t.Parallel()
+	if got := vectorEmptyInit(&ir.SliceType{Elem: &ir.StringType{}}); got != "Gada.Std.Strings.String_Vectors.Empty" {
+		t.Errorf("vectorEmptyInit([]string) = %q", got)
+	}
+	if got := vectorEmptyInit(&ir.SliceType{Elem: &ir.ByteType{}}); got != "Gada.Std.Bytes.Byte_Vectors.Empty" {
+		t.Errorf("vectorEmptyInit([]byte) = %q", got)
+	}
+	if got := vectorEmptyInit(&ir.SliceType{Elem: &ir.IntType{}}); got != "" {
+		t.Errorf("vectorEmptyInit([]int) = %q, want empty", got)
+	}
+	if got := declInit(&ir.StringType{}); got != `""` {
+		t.Errorf("declInit(string) = %q", got)
+	}
+	if got := declInit(&ir.IntType{}); got != "" {
+		t.Errorf("declInit(int) = %q, want empty", got)
+	}
+	e := newEmitter("p", &ir.File{})
+	if got := e.rhsIRType(&ir.BuiltinCall{Name: "string"}); got == nil || got.NodeKind() != "StringType" {
+		t.Errorf("rhsIRType(string()) = %#v", got)
+	}
+	if got := e.rhsIRType(&ir.SliceLit{Elem: &ir.IntType{}}); got == nil || got.NodeKind() != "SliceType" {
+		t.Errorf("rhsIRType(slicelit) = %#v", got)
+	}
+	if got := e.rhsIRType(&ir.BuiltinCall{Name: "len"}); got == nil || got.NodeKind() != "IntType" {
+		t.Errorf("rhsIRType(len) = %#v", got)
+	}
+}

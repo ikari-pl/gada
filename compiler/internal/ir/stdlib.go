@@ -9,15 +9,16 @@ package ir
 // clauses) share one source of truth. StdlibWave1 is the sorted path
 // list, used for the unknown-import error message.
 var StdlibPackages = map[string]string{
-	"errors":  "Gada.Std.Errors",
-	"strings": "Gada.Std.Strings",
-	"strconv": "Gada.Std.Strconv",
-	"bytes":   "Gada.Std.Bytes",
-	"io":      "Gada.Std.IO",
-	"bufio":   "Gada.Std.Bufio",
-	"os":      "Gada.Std.OS",
-	"sync":    "Gada.Std.Sync",
-	"time":    "Gada.Std.Time",
-	"runtime": "Gada.Std.Runtime",
-	"net":     "Gada.Std.Net",
+	"errors":        "Gada.Std.Errors",
+	"strings":       "Gada.Std.Strings",
+	"strconv":       "Gada.Std.Strconv",
+	"bytes":         "Gada.Std.Bytes",
+	"io":            "Gada.Std.IO",
+	"bufio":         "Gada.Std.Bufio",
+	"os":            "Gada.Std.OS",
+	"sync":          "Gada.Std.Sync",
+	"time":          "Gada.Std.Time",
+	"runtime":       "Gada.Std.Runtime",
+	"net":           "Gada.Std.Net",
+	"encoding/json": "Gada.Std.Json",
 }

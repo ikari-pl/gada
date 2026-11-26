@@ -91,6 +91,15 @@ func (tr *translator) stdlibCall(c *ast.CallExpr) (*ir.Call, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	// Phase 7: `json.Unmarshal(data, &v)` — the Go pointer-to-target
+	// becomes the Ada out-parameter directly, so drop the `&` and pass
+	// the operand itself; the emitter appends it as an out-arg.
+	if path == "encoding/json" && sel.Sel.Name == "Unmarshal" &&
+		len(args) == 2 {
+		if u, ok := args[1].(*ir.UnaryOp); ok && u.Op == "&" {
+			args[1] = u.X
+		}
+	}
 	call := &ir.Call{
 		Fun:  &ir.Selector{X: &ir.Ident{Name: id.Name}, Sel: sel.Sel.Name},
 		Args: args,
@@ -118,6 +127,11 @@ var fallbackResultTypes = map[string][]ir.Type{
 	},
 	"strings.Fields":    {&ir.SliceType{Elem: &ir.StringType{}}},
 	"strings.TrimSpace": {&ir.StringType{}},
+	"encoding/json.Marshal": {
+		&ir.SliceType{Elem: &ir.ByteType{}},
+		&ir.ErrorType{},
+	},
+	"encoding/json.Unmarshal": {&ir.ErrorType{}},
 }
 
 // goTypesToIR converts a go/types type to the IR type(s) it denotes.

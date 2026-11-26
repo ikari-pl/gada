@@ -1085,3 +1085,62 @@ func typeNameFor(caseName string) string {
 	}
 	return "T"
 }
+
+// TestJsonMarshalUnmarshal pins the Phase 7 encoding/json lowering:
+// `data, err := json.Marshal(x)` rides the generic 2-LHS out-call path
+// to `Gada.Std.Json.Marshal (X, Data, Err);` (Ada overload resolution
+// picks the scalar overload by X's type), and
+// `err := json.Unmarshal(data, &v)` declares only the error and queues
+// `Gada.Std.Json.Unmarshal (Data, V, Err);` at the top of the body.
+// The bare statement form wraps the call in a block with a local Err.
+func TestJsonMarshalUnmarshal(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"encoding/json"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("data"), idn("err")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:  &ir.Selector{X: idn("json"), Sel: "Marshal"},
+				Args: []ir.Expr{litInt("42")},
+				ResultTypes: []ir.Type{
+					&ir.SliceType{Elem: &ir.ByteType{}}, &ir.ErrorType{},
+				},
+			}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("n")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.Lit{Kind: ir.LitInt, Value: "0"}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("err2")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:  &ir.Selector{X: idn("json"), Sel: "Unmarshal"},
+				Args: []ir.Expr{idn("data"), idn("n")},
+				ResultTypes: []ir.Type{
+					&ir.ErrorType{},
+				},
+			}},
+		},
+		&ir.ExprStmt{X: &ir.Call{
+			Fun:  &ir.Selector{X: idn("json"), Sel: "Unmarshal"},
+			Args: []ir.Expr{idn("data"), idn("n")},
+		}},
+	)
+	for _, want := range []string{
+		"with Gada.Std.Json;",
+		"Data : Gada.Std.Bytes.Byte_Slice",
+		"Gada.Std.Json.Marshal (42, Data, Err);",
+		"Gada.Std.Json.Unmarshal (Data, N, Err2);",
+		"Err : Gada.Std.Errors.Error_Access;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	// The Unmarshal define must NOT emit a function-call initialiser.
+	if strings.Contains(out, "Err2 : Gada.Std.Errors.Error_Access := Gada.Std.Json.Unmarshal") {
+		t.Errorf("unmarshal define emitted as function call:\n%s", out)
+	}
+}

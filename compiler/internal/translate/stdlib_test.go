@@ -475,3 +475,80 @@ func f(s string) {
 		t.Fatalf("[]byte(s) translated to %#v, want BuiltinCall bytes", e)
 	}
 }
+
+// TestJsonCalls pins the Phase 7 encoding/json translation:
+// `json.Marshal(x)` resolves its ( []byte, error ) result types from
+// *types.Info, and `json.Unmarshal(data, &v)` drops the `&` so the
+// emitter can pass v as an out-arg.
+func TestJsonCalls(t *testing.T) {
+	t.Parallel()
+	src := `package p
+
+import (
+	"encoding/json"
+)
+
+func f(data []byte, v int) {
+	b, err := json.Marshal(v)
+	_, _ = b, err
+	err2 := json.Unmarshal(data, &v)
+	_ = err2
+}
+`
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "x.go", src, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	conf := types.Config{Importer: importer.Default()}
+	info := &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+	}
+	if _, err = conf.Check("p", fset, []*ast.File{af}, info); err != nil {
+		t.Fatalf("typecheck: %v", err)
+	}
+	tr, err := newTranslator(af, info)
+	if err != nil {
+		t.Fatalf("newTranslator: %v", err)
+	}
+	fn := af.Decls[1].(*ast.FuncDecl)
+	// b, err := json.Marshal(v)
+	mAssign := fn.Body.List[0].(*ast.AssignStmt)
+	mc, err := tr.transExpr(mAssign.Rhs[0])
+	if err != nil {
+		t.Fatalf("transExpr(json.Marshal): %v", err)
+	}
+	mcall, ok := mc.(*ir.Call)
+	if !ok {
+		t.Fatalf("json.Marshal translated to %T, want *ir.Call", mc)
+	}
+	if len(mcall.ResultTypes) != 2 ||
+		mcall.ResultTypes[0].NodeKind() != "SliceType" ||
+		mcall.ResultTypes[1].NodeKind() != "ErrorType" {
+		t.Fatalf("Marshal ResultTypes = %#v", mcall.ResultTypes)
+	}
+	// err2 := json.Unmarshal(data, &v)
+	uAssign := fn.Body.List[2].(*ast.AssignStmt)
+	uc, err := tr.transExpr(uAssign.Rhs[0])
+	if err != nil {
+		t.Fatalf("transExpr(json.Unmarshal): %v", err)
+	}
+	ucall, ok := uc.(*ir.Call)
+	if !ok {
+		t.Fatalf("json.Unmarshal translated to %T, want *ir.Call", uc)
+	}
+	if len(ucall.ResultTypes) != 1 ||
+		ucall.ResultTypes[0].NodeKind() != "ErrorType" {
+		t.Fatalf("Unmarshal ResultTypes = %#v", ucall.ResultTypes)
+	}
+	if len(ucall.Args) != 2 {
+		t.Fatalf("Unmarshal args = %d, want 2", len(ucall.Args))
+	}
+	id, ok := ucall.Args[1].(*ir.Ident)
+	if !ok || id.Name != "v" {
+		t.Fatalf("Unmarshal arg[1] = %#v, want Ident v (& stripped)",
+			ucall.Args[1])
+	}
+}

@@ -294,10 +294,12 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		if imp == "strings" {
 			e.needsUnbounded = true
 		}
-		if imp == "os" || imp == "errors" || imp == "net" {
+		if imp == "os" || imp == "errors" || imp == "net" ||
+			imp == "encoding/json" {
 			e.needsStdErrors = true
 		}
-		if imp == "os" || imp == "bytes" || imp == "net" {
+		if imp == "os" || imp == "bytes" || imp == "net" ||
+			imp == "encoding/json" {
 			e.needsStdBytes = true
 		}
 	}
@@ -2891,6 +2893,29 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 		e.emitChanRecvDecl(a, cr)
 		return
 	}
+	// Phase 7: `err := json.Unmarshal(data, &v)` — the call's second
+	// argument is the out-target, so the define declares only the
+	// error and the call statement runs at the top of the body with
+	// the target appended as an out-arg.
+	if c, ok := a.RHS[0].(*ir.Call); ok && len(c.ResultTypes) == 1 &&
+		e.isJSONUnmarshal(c) {
+		typ, terr := e.typeName(c.ResultTypes[0])
+		if terr != nil {
+			e.fail(terr)
+			return
+		}
+		decl := adaIdent(id.Name) + " : " + typ
+		if init := declInit(c.ResultTypes[0]); init != "" {
+			decl += " := " + init
+		}
+		e.println(decl + ";")
+		e.pendingHead = append(e.pendingHead,
+			pendingHeadInit{outCall: &pendingOutCall{
+				call: c, lhs: []string{adaIdent(id.Name)},
+			}})
+		e.deferredDecls[id.Name] = true
+		return
+	}
 	typ, err := e.inferDeclType(a.RHS[0])
 	if err != nil {
 		e.fail(err)
@@ -3456,6 +3481,20 @@ func (e *emitter) emitAssign(a *ir.Assign) {
 		e.fail(fmt.Errorf("emit: := outside head of function body not supported in Phase 1"))
 		return
 	}
+	// Phase 7: a 1-LHS plain assignment of json.Unmarshal
+	// (`err = json.Unmarshal(data, &v)`) emits the call with the LHS
+	// as the trailing out-arg — the target is a source argument, not
+	// a result, so this is `Gada.Std.Json.Unmarshal (Data, V, Err);`.
+	if c, ok := a.RHS[0].(*ir.Call); ok && len(a.LHS) == 1 &&
+		e.isJSONUnmarshal(c) {
+		args := make([]string, 0, len(c.Args)+1)
+		for _, arg := range c.Args {
+			args = append(args, e.emitExpr(arg))
+		}
+		args = append(args, e.emitExpr(a.LHS[0]))
+		e.println(e.emitExpr(c.Fun) + " (" + strings.Join(args, ", ") + ");")
+		return
+	}
 	// Phase 7: a 2-LHS plain assignment of an out-call
 	// (`n, err = conn.Read(buf)`) emits the call statement with the
 	// LHS as trailing out-params — same shape as the head-of-body
@@ -3819,6 +3858,22 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 				args := make([]string, 0, len(c.Args))
 				for _, a := range c.Args {
 					args = append(args, e.emitExpr(a))
+				}
+				// Phase 7: bare `json.Unmarshal(data, &v);` statement
+				// — discard the error into a block-local and pass the
+				// target as the trailing out-arg.
+				if e.isJSONUnmarshal(c) {
+					e.println("declare")
+					e.indent++
+					e.println("Err : Gada.Std.Errors.Error_Access;")
+					e.println("begin")
+					e.indent++
+					args = append(args, "Err")
+					e.println(fun + " (" + strings.Join(args, ", ") + ");")
+					e.indent--
+					e.println("end;")
+					e.indent--
+					return
 				}
 				if len(args) == 0 {
 					e.println(fun + ";")
@@ -5031,6 +5086,22 @@ func (e *emitter) emitUnaryOp(u *ir.UnaryOp) string {
 	}
 	e.fail(fmt.Errorf("emit: unsupported unary op %q", u.Op))
 	return s
+}
+
+// isJSONUnmarshal reports whether c is `json.Unmarshal(data, &v)` —
+// the one stdlib call whose *argument* (not result) is an out-param,
+// so it lowers to a procedure call with the target appended after the
+// source args: `Gada.Std.Json.Unmarshal (Data, V, Err);`.
+func (e *emitter) isJSONUnmarshal(c *ir.Call) bool {
+	sel, ok := c.Fun.(*ir.Selector)
+	if !ok || sel.Sel != "Unmarshal" {
+		return false
+	}
+	id, ok := sel.X.(*ir.Ident)
+	if !ok {
+		return false
+	}
+	return e.stdlibImports[id.Name] == "Gada.Std.Json"
 }
 
 // netMethodCall renders a method call on a Gada.Std.Net-typed local:

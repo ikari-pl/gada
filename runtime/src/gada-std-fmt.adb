@@ -16,6 +16,7 @@ package body Gada.Std.Fmt is
    use type Errors.Error_Access;
 
    type U64 is new Interfaces.Unsigned_64;
+   use type U64;
    function To_U64 is new Ada.Unchecked_Conversion (System.Address, U64);
 
    Hex_Lower : constant String := "0123456789abcdef";
@@ -74,18 +75,18 @@ package body Gada.Std.Fmt is
       end if;
    end Parse_Spec;
 
-   function Int_Base_U (V : Interfaces.Unsigned_64; Base : Natural;
+   function Int_Base_U (V : U64; Base : Natural;
                         Upper : Boolean) return String is
       Digs : constant String := (if Upper then Hex_Upper else Hex_Lower);
       B      : Unbounded_String;
-      M      : Interfaces.Unsigned_64 := V;
+      M      : U64 := V;
    begin
       if M = 0 then
          return "0";
       end if;
       while M > 0 loop
-         Append (B, Digs (1 + Natural (M mod Interfaces.Unsigned_64 (Base))));
-         M := M / Interfaces.Unsigned_64 (Base);
+         Append (B, Digs (1 + Natural (M mod U64 (Base))));
+         M := M / U64 (Base);
       end loop;
       --  B is LSB-first; reverse it.
       declare
@@ -101,7 +102,7 @@ package body Gada.Std.Fmt is
 
    function Int_Base (V : Long_Integer; Base : Natural;
                       Upper : Boolean) return String is
-     (Int_Base_U (Interfaces.Unsigned_64 (V), Base, Upper));
+     (Int_Base_U (U64 (V), Base, Upper));
 
    function Hex_Addr (P : System.Address) return String is
       V : constant U64 := To_U64 (P);
@@ -156,9 +157,8 @@ package body Gada.Std.Fmt is
                Neg  : constant Boolean := V < 0;
                --  Unsigned magnitude: -Long_Integer'First would raise
                --  (Go prints the min int without complaint).
-               Mag  : constant Interfaces.Unsigned_64 :=
-                 (if Neg then 0 - Interfaces.Unsigned_64 (V)
-                  else Interfaces.Unsigned_64 (V));
+               Mag  : constant U64 :=
+                 (if Neg then 0 - U64 (V) else U64 (V));
                Sign : constant String :=
                  (if Neg then "-"
                   elsif Sp.Plus then "+"

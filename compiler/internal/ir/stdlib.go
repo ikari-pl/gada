@@ -16,4 +16,5 @@ var StdlibPackages = map[string]string{
 	"io":      "Gada.Std.IO",
 	"bufio":   "Gada.Std.Bufio",
 	"os":      "Gada.Std.OS",
+	"sync":    "Gada.Std.Sync",
 }

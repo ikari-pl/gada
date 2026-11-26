@@ -49,6 +49,7 @@ with Reflect_Types_Suite;
 with Reflect_Suite;
 with Reflect_Values_Suite;
 with Reflect_Interfaces_Suite;
+with Sync_Suite;
 with Errors_Suite;
 with Strings_Suite;
 with Strconv_Suite;
@@ -99,6 +100,7 @@ procedure Test_Runner is
       or else Pkg = "stdlib.bufio"
       or else Pkg = "stdlib.fmt"
       or else Pkg = "stdlib.os"
+      or else Pkg = "stdlib.sync"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -201,6 +203,9 @@ procedure Test_Runner is
       end if;
       if Should_Register ("stdlib.os") then
          Add_Test (Result, new OS_Suite.OS_Test);
+      end if;
+      if Should_Register ("stdlib.sync") then
+         Add_Test (Result, new Sync_Suite.Sync_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

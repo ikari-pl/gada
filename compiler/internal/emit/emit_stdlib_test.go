@@ -456,3 +456,23 @@ func TestStdlibOutCallStringResultEmit(t *testing.T) {
 		}
 	}
 }
+
+// TestSyncImportEmit pins the Phase 6 `sync` import mapping: the
+// with-clause and a qualified call lower through goNameToAdaMember.
+func TestSyncImportEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"sync"},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("sync"), Sel: "NewCond"},
+			Args: []ir.Expr{&ir.Lit{Kind: ir.LitNil}},
+		},
+	)
+	for _, want := range []string{
+		"with Gada.Std.Sync;",
+		"Gada.Std.Sync.New_Cond (null);",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}

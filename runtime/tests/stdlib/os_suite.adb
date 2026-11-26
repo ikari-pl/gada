@@ -3,9 +3,12 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 
 with AUnit.Assertions; use AUnit.Assertions;
 
+with Ada.Command_Line;
 with Ada.Containers; use type Ada.Containers.Count_Type;
 with Ada.Directories;
+with Ada.IO_Exceptions;
 with Ada.Streams.Stream_IO;
+with Ada.Strings.Unbounded;
 with Gada.Std.Bytes; use Gada.Std.Bytes;
 with Gada.Std.Errors;
 with Gada.Std.OS; use Gada.Std.OS;
@@ -17,6 +20,7 @@ package body OS_Suite is
    use type Errors.Error_Access;
 
    Tmp_Name : constant String := "os_suite_tmp.bin";
+   Tmp_Dir  : constant String := "os_suite_tmp_dir";
 
    --  Writes Content to the temp file via raw stream I/O so the test
    --  controls the exact bytes (including a 0 byte and a >127 byte).
@@ -53,6 +57,14 @@ package body OS_Suite is
       Register_Routine (T, Test_Read_File_Empty'Access, "ReadFile empty");
       Register_Routine (T, Test_Read_File_Missing'Access,
                         "ReadFile missing file errors");
+      Register_Routine (T, Test_Args'Access, "Args");
+      Register_Routine (T, Test_Env'Access, "Getenv/LookupEnv/Setenv");
+      Register_Routine (T, Test_Open_Missing'Access, "Open missing errors");
+      Register_Routine (T, Test_Create_Write_Stat'Access,
+                        "Create/Write/Close/Stat roundtrip");
+      Register_Routine (T, Test_Stat_Dir_And_Missing'Access,
+                        "Stat dir + missing");
+      Register_Routine (T, Test_Mkdir'Access, "Mkdir + exists error");
    end Register_Tests;
 
    procedure Test_Read_File_Ok (T : in out
@@ -95,5 +107,105 @@ package body OS_Suite is
       Assert (Err /= Errors.No_Error, "missing: error set");
       Assert (Byte_Vectors.Is_Empty (Data), "missing: empty slice");
    end Test_Read_File_Missing;
+
+   procedure Test_Args (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      A : constant Arg_Vectors.Vector := Args;
+   begin
+      Assert (A.Length >= 1, "Args has at least argv[0], got"
+              & Ada.Containers.Count_Type'Image (A.Length));
+      Assert (A (1) = Ada.Strings.Unbounded.To_Unbounded_String
+                (Ada.Command_Line.Command_Name),
+              "Args(1) is the program name (Go os.Args[0])");
+   end Test_Args;
+
+   procedure Test_Env (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      Err : Errors.Error_Access;
+      V   : Ada.Strings.Unbounded.Unbounded_String;
+   begin
+      Err := Set_Env ("GADA_OS_SUITE_VAR", "hello-42");
+      Assert (Err = Errors.No_Error, "Set_Env ok");
+      Assert (Get_Env ("GADA_OS_SUITE_VAR") = "hello-42", "Get_Env hit");
+      Assert (Lookup_Env ("GADA_OS_SUITE_VAR", V)
+              and then Ada.Strings.Unbounded.To_String (V) = "hello-42",
+              "Lookup_Env hit");
+      Assert (not Lookup_Env ("GADA_OS_SUITE_MISSING", V),
+              "Lookup_Env miss");
+      Assert (Get_Env ("GADA_OS_SUITE_MISSING") = "",
+              "Get_Env unset is empty string");
+      Err := Set_Env ("GADA_BAD=KEY", "x");
+      Assert (Err /= Errors.No_Error, "Set_Env rejects '=' in key");
+      Err := Set_Env ("", "x");
+      Assert (Err /= Errors.No_Error, "Set_Env rejects empty key");
+   end Test_Env;
+
+   procedure Test_Open_Missing (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      F   : File_Access;
+      Err : Errors.Error_Access;
+   begin
+      Open ("os_suite_missing_xyz.bin", F, Err);
+      Assert (Err /= Errors.No_Error, "open missing: error set");
+      Assert (F = null, "open missing: null handle");
+   end Test_Open_Missing;
+
+   procedure Test_Create_Write_Stat (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      F      : File_Access;
+      Err    : Errors.Error_Access;
+      Size   : Long_Integer;
+      Is_Dir : Boolean;
+      Data   : Byte_Slice;
+      Raised : Boolean := False;
+   begin
+      Remove_Tmp;
+      Create (Tmp_Name, F, Err);
+      Assert (Err = Errors.No_Error and F /= null, "Create ok");
+      Write (F, To_Bytes ("hello"));
+      Close (F);
+      Assert (F = null, "Close nulls the handle");
+      begin
+         Write (F, To_Bytes ("x"));  --  F is null now
+      exception
+         when Ada.IO_Exceptions.Use_Error =>
+            Raised := True;
+      end;
+      Assert (Raised, "Write on a closed handle raises Use_Error");
+      Stat (Tmp_Name, Size, Is_Dir, Err);
+      Assert (Err = Errors.No_Error and not Is_Dir and Size = 5,
+              "Stat: size 5, not a dir");
+      Read_File (Tmp_Name, Data, Err);
+      Assert (Err = Errors.No_Error and To_String (Data) = "hello",
+              "Create/Write round-trips through ReadFile");
+      Remove_Tmp;
+   end Test_Create_Write_Stat;
+
+   procedure Test_Stat_Dir_And_Missing (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Size   : Long_Integer;
+      Is_Dir : Boolean;
+      Err    : Errors.Error_Access;
+   begin
+      Stat (".", Size, Is_Dir, Err);
+      Assert (Err = Errors.No_Error and Is_Dir, "Stat: cwd is a dir");
+      Stat ("os_suite_missing_xyz.bin", Size, Is_Dir, Err);
+      Assert (Err /= Errors.No_Error, "Stat missing: error set");
+   end Test_Stat_Dir_And_Missing;
+
+   procedure Test_Mkdir (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      Err    : Errors.Error_Access;
+      Size   : Long_Integer;
+      Is_Dir : Boolean;
+   begin
+      if Ada.Directories.Exists (Tmp_Dir) then
+         Ada.Directories.Delete_Directory (Tmp_Dir);
+      end if;
+      Mkdir (Tmp_Dir, Err);
+      Assert (Err = Errors.No_Error, "Mkdir ok");
+      Stat (Tmp_Dir, Size, Is_Dir, Err);
+      Assert (Err = Errors.No_Error and Is_Dir, "Mkdir made a dir");
+      Mkdir (Tmp_Dir, Err);
+      Assert (Err /= Errors.No_Error, "Mkdir on existing errors");
+      Ada.Directories.Delete_Directory (Tmp_Dir);
+   end Test_Mkdir;
 
 end OS_Suite;

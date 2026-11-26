@@ -35,16 +35,13 @@ package body Gada.Std.Time is
    --  fraction printed with trailing zeros trimmed.
    ---------------------------------------------------------------
 
-   --  Appends N as decimal digits (no padding).
+   --  Appends N >= 0 as decimal digits (no padding). Callers pass
+   --  magnitudes only (To_String emits the sign itself).
    procedure Append_Num (B : in out Unbounded_String; N : Long_Integer) is
       Digs : constant String := Long_Integer'Image (N);
    begin
       --  'Image has a leading space for non-negative values.
-      if N >= 0 and then Digs (Digs'First) = ' ' then
-         Append (B, Digs (Digs'First + 1 .. Digs'Last));
-      else
-         Append (B, Digs);
-      end if;
+      Append (B, Digs (Digs'First + 1 .. Digs'Last));
    end Append_Num;
 
    --  Appends R as a Width-digit fraction with trailing zeros trimmed.
@@ -126,13 +123,17 @@ package body Gada.Std.Time is
    function Now return Time is
       R    : constant RT.Time := RT.Clock;
       W    : constant Cal.Time := Cal.Clock;
-      Secs : constant Long_Float :=
-        Long_Float (RT.To_Duration (RT."-" (R, RT.Time_First)));
+      Secs : constant Cal.Day_Duration := Cal.Seconds (W);
+      Frac : constant Cal.Day_Duration :=
+        Secs - Cal.Day_Duration (Natural (Secs));
    begin
+      --  Sub-second part from the wall clock (GNAT Calendar keeps
+      --  millisecond resolution; the 124-year span since Time_First
+      --  would overflow Duration, so don't go through To_Duration).
+      --  Date() carries exact nanoseconds.
       return (Mono => R,
               Wall => W,
-              Ns   => Natural
-                (Long_Integer (Secs * 1.0e9) mod 1_000_000_000),
+              Ns   => Natural (Long_Integer (Long_Float (Frac) * 1.0e9)),
               UTC  => False);
    end Now;
 
@@ -185,7 +186,15 @@ package body Gada.Std.Time is
    function Nanosecond_Of (T : Time) return Natural is (T.Ns);
 
    function Dig2 (N : Natural) return String is
-     (if N < 10 then "0" & Natural'Image (N) else Natural'Image (N));
+      Img : constant String := Natural'Image (N);
+   begin
+      --  'Image has a leading space for non-negative values.
+      if N < 10 then
+         return '0' & Img (Img'Last);
+      else
+         return Img (Img'First + 1 .. Img'Last);
+      end if;
+   end Dig2;
 
    --  "2026-11-26T07:08:09" from the wall clock.
    function Image_Date_Time (T : Time) return String is

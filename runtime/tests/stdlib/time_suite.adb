@@ -18,9 +18,13 @@ package body Time_Suite is
    package Scheduler renames Gada.Async.Scheduler;
    package RT renames Ada.Real_Time;
 
+   --  Cross-task flags: volatile so the poll loops re-read memory.
    Waiter_Flag  : Boolean := False;
+   pragma Volatile (Waiter_Flag);
    Tick_Count   : Natural := 0;
+   pragma Volatile (Tick_Count);
    Watchdog_Hit : Boolean := False;
+   pragma Volatile (Watchdog_Hit);
 
    Waiter_Chan   : Time_Channels.Channel;
    Tick_Chan     : Time_Channels.Channel;
@@ -100,6 +104,8 @@ package body Time_Suite is
       Assert (Second / 4 = 250 * Millisecond, "d / n");
       Assert (Millisecond < Second and Second <= Second
               and Hour > Minute, "comparisons");
+      Assert (Nanoseconds (Hour + 2 * Minute) = 3_720_000_000_000,
+              "Nanoseconds");
    end Test_Duration_Arith;
 
    procedure Test_Now_Since (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -112,6 +118,7 @@ package body Time_Suite is
          Assert (D >= 15 * Millisecond,
                  "Since >= 15ms after a 20ms delay, got " & To_String (D));
          Assert (D < 5 * Second, "Since is sane, got " & To_String (D));
+         Assert (Until_K (T0, T0) = 0, "Until(t, t) = 0");
       end;
    end Test_Now_Since;
 

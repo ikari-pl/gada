@@ -10,17 +10,19 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 
 with AUnit.Assertions; use AUnit.Assertions;
 
+with Ada.Strings;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 with Gada.Async.Scheduler;
-with Gada.Std.Bytes;
+with Gada.Std.Bytes; use Gada.Std.Bytes;
 with Gada.Std.Errors;
 with Gada.Std.Net; use Gada.Std.Net;
-with Gada.Std.Strings;
+with Gada.Std.Strings; use Gada.Std.Strings;
 
 package body Net_Suite is
 
    package Scheduler renames Gada.Async.Scheduler;
+   package Errors renames Gada.Std.Errors;
 
    --  Shared handles for the goroutine acceptor body (Spawn'd
    --  procedures have no closures).
@@ -28,16 +30,16 @@ package body Net_Suite is
    Accept_Done  : Boolean := False;
    pragma Volatile (Accept_Done);
 
-   function Pad (N : Natural) return Bytes.Byte_Slice is
+   function Pad (N : Natural) return Byte_Slice is
       S : String (1 .. N) := (others => ' ');
    begin
-      return Bytes.To_Bytes (S);
+      return To_Bytes (S);
    end Pad;
 
    --  Extract the port from a listener/packet-conn "ip:port" string.
    function Port_Of (Addr : String) return Natural is
       use Ada.Strings.Fixed;
-      C : constant Natural := Index (Addr, ":", Going => Backward);
+      C : constant Natural := Index (Addr, ":", Going => Ada.Strings.Backward);
    begin
       return Natural'Value (Addr (C + 1 .. Addr'Last));
    end Port_Of;
@@ -49,7 +51,7 @@ package body Net_Suite is
    procedure Acceptor_Body is
       C   : Conn;
       Err : Errors.Error_Access;
-      Buf : Bytes.Byte_Slice := Pad (64);
+      Buf : Byte_Slice := Pad (64);
       N   : Natural;
    begin
       The_Listener.all.Accept_K (C, Err);
@@ -173,19 +175,19 @@ package body Net_Suite is
    procedure Test_Lookup_Host (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      Addrs : Strings.String_Slice;
+      Addrs : String_Slice;
       Err   : Errors.Error_Access;
       Found : Boolean := False;
    begin
       Lookup_Host ("localhost", Addrs, Err);
       Assert (Err = Errors.No_Error,
               "localhost must resolve: " & Err_Text (Err));
-      Assert (Strings.String_Vectors.Length (Addrs) >= 1,
+      Assert (String_Vectors.Length (Addrs) >= 1,
               "localhost has >= 1 address");
-      for I in 1 .. Strings.String_Vectors.Length (Addrs) loop
+      for I in 1 .. String_Vectors.Length (Addrs) loop
          declare
             S : constant String := To_String
-              (Strings.String_Vectors.Element (Addrs, I));
+              (String_Vectors.Element (Addrs, I));
          begin
             if S = "127.0.0.1" or else S = "::1" then
                Found := True;
@@ -196,14 +198,14 @@ package body Net_Suite is
 
       Lookup_Host ("127.0.0.1", Addrs, Err);
       Assert (Err = Errors.No_Error
-              and then Strings.String_Vectors.Length (Addrs) = 1
-              and then To_String (Strings.String_Vectors.Element
+              and then String_Vectors.Length (Addrs) = 1
+              and then To_String (String_Vectors.Element
                 (Addrs, 1)) = "127.0.0.1",
               "literal IP resolves to itself");
 
       Lookup_Host ("nonexistent.invalid", Addrs, Err);
       Assert (Err /= Errors.No_Error
-              and then Strings.String_Vectors.Is_Empty (Addrs),
+              and then String_Vectors.Is_Empty (Addrs),
               "unknown host errors with empty list");
    end Test_Lookup_Host;
 
@@ -212,7 +214,7 @@ package body Net_Suite is
       L        : Listener;
       Err      : Errors.Error_Access;
       C        : Conn;
-      Buf      : Bytes.Byte_Slice := Pad (64);
+      Buf      : Byte_Slice := Pad (64);
       N        : Natural;
       Unused_G : Scheduler.Goroutine_Id;
    begin
@@ -231,7 +233,7 @@ package body Net_Suite is
 
       --  empty-buffer read arm: N = 0, no error
       declare
-         Empty : Bytes.Byte_Slice := Bytes.Byte_Vectors.Empty_Vector;
+         Empty : Byte_Slice := Byte_Vectors.Empty_Vector;
       begin
          C.all.Read (Empty, N, Err);
          Assert (N = 0 and then Err = Errors.No_Error,
@@ -240,7 +242,7 @@ package body Net_Suite is
 
       --  write + read the echo
       declare
-         Msg : constant Bytes.Byte_Slice := Bytes.To_Bytes ("hello net");
+         Msg : constant Byte_Slice := To_Bytes ("hello net");
       begin
          C.all.Write (Msg, N, Err);
          Assert (Err = Errors.No_Error and then N = 9,
@@ -270,7 +272,7 @@ package body Net_Suite is
       C.all.Close;
       C.all.Read (Buf, N, Err);
       Assert (Err /= Errors.No_Error, "read on closed must error");
-      C.all.Write (Bytes.To_Bytes ("x"), N, Err);
+      C.all.Write (To_Bytes ("x"), N, Err);
       Assert (Err /= Errors.No_Error, "write on closed must error");
       Assert (C.all.Remote_Addr = "", "remote addr on closed conn");
 
@@ -332,7 +334,7 @@ package body Net_Suite is
       PC1, PC2 : Packet_Conn;
       C        : Conn;
       Err      : Errors.Error_Access;
-      Buf      : Bytes.Byte_Slice := Pad (64);
+      Buf      : Byte_Slice := Pad (64);
       N        : Natural;
       From     : IP;
    begin
@@ -351,7 +353,7 @@ package body Net_Suite is
 
          --  empty-buffer read arm: N = 0, From = nil, no error
          declare
-            Empty : Bytes.Byte_Slice := Bytes.Byte_Vectors.Empty_Vector;
+            Empty : Byte_Slice := Byte_Vectors.Empty_Vector;
          begin
             PC2.all.Read_From (Empty, N, From, Err);
             Assert (N = 0 and then Err = Errors.No_Error
@@ -360,7 +362,7 @@ package body Net_Suite is
          end;
 
          --  pc1 -> pc2 datagram
-         PC1.all.Write_To (Bytes.To_Bytes ("ping"),
+         PC1.all.Write_To (To_Bytes ("ping"),
                            Parse_IP ("127.0.0.1"), P2, N, Err);
          Assert (Err = Errors.No_Error and then N = 4,
                  "write_to failed: " & Err_Text (Err));
@@ -374,7 +376,7 @@ package body Net_Suite is
 
          --  nil-IP Write_To sends to the wildcard address (Linux
          --  routes 0.0.0.0 to loopback)
-         PC1.all.Write_To (Bytes.To_Bytes ("any"), Parse_IP (""), P2,
+         PC1.all.Write_To (To_Bytes ("any"), Parse_IP (""), P2,
                            N, Err);
          Assert (Err = Errors.No_Error and then N = 3,
                  "write_to nil IP failed: " & Err_Text (Err));
@@ -387,7 +389,7 @@ package body Net_Suite is
                C, Err);
          Assert (Err = Errors.No_Error, "udp dial failed: "
                  & Err_Text (Err));
-         C.all.Write (Bytes.To_Bytes ("pong"), N, Err);
+         C.all.Write (To_Bytes ("pong"), N, Err);
          Assert (Err = Errors.No_Error and then N = 4,
                  "udp write failed: " & Err_Text (Err));
          PC1.all.Read_From (Buf, N, From, Err);
@@ -401,7 +403,7 @@ package body Net_Suite is
          PC1.all.Close;
          PC1.all.Read_From (Buf, N, From, Err);
          Assert (Err /= Errors.No_Error, "read on closed must error");
-         PC1.all.Write_To (Bytes.To_Bytes ("x"),
+         PC1.all.Write_To (To_Bytes ("x"),
                            Parse_IP ("127.0.0.1"), P2, N, Err);
          Assert (Err /= Errors.No_Error, "write on closed must error");
          Assert (PC1.all.Addr = "", "addr on closed packet conn");

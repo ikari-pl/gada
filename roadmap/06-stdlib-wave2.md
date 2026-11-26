@@ -64,10 +64,21 @@ mutexes, `time.After`, `os.Args`, and `runtime.NumGoroutine`.
       coverage stays 100% (10 documented excludes: untriggerable
       read-error arm, lcov terminators, argv loop body).
 
-- [ ] **Stdlib package: `runtime`** (introspection on GADA scheduler)
-      *Files:* `stdlib/runtime/`
+- [x] **Stdlib package: `runtime`** (introspection on GADA scheduler)
+      *Files:* `runtime/src/gada-std-runtime.{ads,adb}`, `runtime/tests/stdlib/runtime_suite.{ads,adb}`
       *Verify:* `make stdlib-test PKG=runtime`
       *Done when:* `NumGoroutine`, `GOMAXPROCS`, `GC`, `Gosched` map to GADA scheduler operations; coverage 100%.
+      *Done 2026-11-26:* landed as `Gada.Std.Runtime`. The scheduler
+      gained read-only Live_Goroutines/Live_Workers counters on the run
+      queue; Num_Goroutine = live + 1 (Go counts the main goroutine).
+      GOMAXPROCS resizes only from a non-goroutine context (Shutdown
+      joins in-flight goroutines — a resize from inside one would
+      self-deadlock), returning the previous count. Gosched is Yield,
+      GC is a full Boehm collect (Gada.Core.Memory.Collect). Suite
+      `stdlib.runtime` (3 tests, goroutine-driven) green, 260 total;
+      runtime coverage stays 100% (1 terminator exclude; 2 scheduler
+      excludes re-mapped after the line shift).
+      Compiler: "runtime" joined StdlibPackages.
 
 - [ ] **`timer_pool` example**
       *Files:* `examples/timer_pool/main.go`

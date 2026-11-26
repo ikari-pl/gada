@@ -493,6 +493,14 @@ body never executes there (single-suite `make stdlib-test PKG=...`
 runs do pass one). Open/Create/Stat/Mkdir happy and error paths are
 all covered by OS_Suite, not excluded.
 
+### `runtime/src/gada-std-runtime.adb` (Phase 6 wave 2)
+
+31 — `end Go_Max_Procs;` terminator: lcov 2.4 leaves hit-count 0 on the
+block terminator even though every contained line is hit by
+Runtime_Suite (NumGoroutine/GOMAXPROCS/Gosched+GC all green in the same
+run; the GOMAXPROCS resize arm is covered by the main-task resize
+test). Same misattribution class as gada-std-time.adb.
+
 ---
 
 ### Adding a new exception

@@ -289,7 +289,7 @@ package body Gada.Std.Time is
    --  No discriminants (GNAT rejects discriminant aggregates on task
    --  allocators here); the heap record is handed over via a Set entry.
    task type One_Shot is
-      entry Set (R : Timer_Rec_Access);
+      entry Set (Rec : Timer_Rec_Access);
    end One_Shot;
 
    type One_Shot_Access is access all One_Shot;
@@ -297,8 +297,8 @@ package body Gada.Std.Time is
    task body One_Shot is
       R : Timer_Rec_Access;
    begin
-      accept Set (R_Val : Timer_Rec_Access) do
-         R := R_Val;
+      accept Set (Rec : Timer_Rec_Access) do
+         R := Rec;
       end Set;
       delay until RT."+" (RT.Clock, To_Span (R.Core.D));
       if not R.Core.Stopped then
@@ -307,7 +307,7 @@ package body Gada.Std.Time is
    end One_Shot;
 
    task type Repeater is
-      entry Set (R : Timer_Rec_Access);
+      entry Set (Rec : Timer_Rec_Access);
    end Repeater;
 
    type Repeater_Access is access all Repeater;
@@ -315,8 +315,8 @@ package body Gada.Std.Time is
    task body Repeater is
       R : Timer_Rec_Access;
    begin
-      accept Set (R_Val : Timer_Rec_Access) do
-         R := R_Val;
+      accept Set (Rec : Timer_Rec_Access) do
+         R := Rec;
       end Set;
       loop
          delay until RT."+" (RT.Clock, To_Span (R.Core.D));

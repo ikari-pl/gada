@@ -510,6 +510,44 @@ Runtime_Suite (NumGoroutine/GOMAXPROCS/Gosched+GC all green in the same
 run; the GOMAXPROCS resize arm is covered by the main-task resize
 test). Same misattribution class as gada-std-time.adb.
 
+### `runtime/src/gada-std-net.adb` (Phase 7 wave 3)
+
+82 — `Parse_IPv4`'s `Part < 4 and then Dot = 0` arm. Unreachable:
+the `Count (S, ".") = 3` guard at line 66 guarantees a dot remains
+in the searched suffix for parts 1..3 (each iteration consumes exactly
+one dot and advances Pos past it), so `Index` never returns 0 there.
+92, 96, 141, 176, 230, 279, 280, 472, 1002 — declare-block and
+subprogram terminators; lcov 2.4 no-return-block misattribution class
+documented above (every contained line is hit by Net_Suite's parse,
+TCP, UDP, LookupHost, and error-path tests). 440-442 — `Resolve`'s
+`Addresses_Length (H) = 0` arm: GNAT's `Get_Host_By_Name` wraps
+`gethostbyname(3)`, which on Linux never returns a successful host
+entry with zero addresses; defensive only. The hostname success arm
+(444) is covered by `Test_Listen_Errors`' `localhost:0` control.
+466-469 — `To_IP`'s `Family_Inet6` arm: v1 creates every socket with
+`Family_Inet`, so no Inet6 `Sock_Addr_Type` is ever produced and this
+arm cannot execute (the bracket-parse path in `Split_Address`,
+395-400, IS covered by the `[::1]:80` dial error test — only the
+post-socket conversion arm is excluded). 495 — `Addr_Image`'s
+non-inet family guard, same defensive class. 692, 802, 964 — the
+nested `when others => null` inside the `Socket_Error` cleanup
+handlers of `Dial`/`Listen`/`Listen_Packet`: reachable only if
+`Close_Socket` itself raises during error cleanup, which needs fault
+injection; the handlers themselves (796-808, 958-970) are covered by
+the `192.0.2.1:0` unassigned-bind tests. All other net lines — IP
+parse/format tables, Split_Address, Resolve, Dial/Listen/Listen_Packet
+happy + error paths, Conn/Listener/Packet_Conn ops incl. closed-socket
+and EOF arms, Lookup_Host — are covered by Net_Suite, not excluded.
+
+### `runtime/src/gada-std-bytes.adb` (Phase 7 wave 3 delta)
+
+38, 132, 176 — `end To_String;` (Byte_Slice), `end loop;` in Join's
+`Append_All`, `end To_String;` (Buffer): lcov 2.4 block-terminator
+misattribution; the contained loop bodies are hit by Bytes_Suite and
+Net_Suite. The Phase 5 exclusions for this file (28, 122, 166) were
+superseded when the file was rewritten for Phase 7 and are replaced by
+this entry.
+
 ---
 
 ### Adding a new exception

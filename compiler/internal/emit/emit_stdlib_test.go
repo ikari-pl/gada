@@ -918,3 +918,170 @@ func TestBareRecvUnknownChan(t *testing.T) {
 		t.Fatalf("want unresolvable-chan error, got %v", err)
 	}
 }
+
+// TestNetByteConvMakeSliceEmptyPlainAssign pins the remaining Phase 7
+// emit arms: `[]byte(s)` lowers to `Gada.Std.Bytes.To_Bytes (S)` (and
+// pulls in the Bytes with-clause), `make([]byte)` without a length
+// lowers to the empty vector, and a 2-LHS PLAIN assignment of a
+// net-typed method out-call (`n, err = conn.Read(buf)`) emits the
+// protected dot-call as a statement with the LHS as trailing
+// out-params (no re-declaration).
+func TestNetByteConvMakeSliceEmptyPlainAssign(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"net"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("s")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: "\"hi\""}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("b")},
+			Define: true,
+			RHS: []ir.Expr{&ir.BuiltinCall{
+				Name: "bytes", Args: []ir.Expr{idn("s")},
+			}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("e")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.MakeSlice{Elem: &ir.ByteType{}}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("conn"), idn("err")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:  &ir.Selector{X: idn("net"), Sel: "Dial"},
+				Args: []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: "\"tcp\""}, idn("s")},
+				ResultTypes: []ir.Type{
+					&ir.NamedType{Name: "Conn"}, &ir.ErrorType{},
+				},
+			}},
+		},
+		&ir.Assign{
+			LHS: []ir.Expr{idn("n"), idn("err2")},
+			RHS: []ir.Expr{&ir.Call{
+				Fun:  &ir.Selector{X: idn("conn"), Sel: "Read"},
+				Args: []ir.Expr{idn("b")},
+				ResultTypes: []ir.Type{
+					&ir.IntType{}, &ir.ErrorType{},
+				},
+			}},
+		},
+	)
+	for _, want := range []string{
+		"with Gada.Std.Bytes;",
+		"B : Gada.Std.Bytes.Byte_Slice := Gada.Std.Bytes.To_Bytes (Ada.Strings.Unbounded.To_String (S));",
+		"E : Gada.Std.Bytes.Byte_Slice := Gada.Std.Bytes.Byte_Vectors.Empty_Vector;",
+		"Conn.all.Read (B, N, Err2);",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	// The plain 2-LHS assign must NOT re-declare N/Err2.
+	if strings.Contains(out, "N : ") {
+		t.Errorf("plain assign re-declared N:\n%s", out)
+	}
+}
+
+// TestNetMethodCallDeclineArms pins that netMethodCall declines (and
+// the generic dispatching-call error fires) when: the prefix is not
+// an identifier, the local is not a net type, or a local type shadows
+// the net type name — with the net import present in all three.
+func TestNetMethodCallDeclineArms(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		decls      []ir.Decl
+		stmt       ir.Stmt
+		needsLocal bool
+	}{
+		{
+			name: "non-ident prefix",
+			stmt: &ir.ExprStmt{X: &ir.Call{
+				Fun: &ir.Selector{
+					X:   &ir.Selector{X: idn("a"), Sel: "b"},
+					Sel: "Close",
+				},
+			}},
+		},
+		{
+			name: "non-net local type",
+			decls: []ir.Decl{
+				&ir.TypeDecl{Name: "Time", Underlying: &ir.StructType{}},
+			},
+			stmt: &ir.ExprStmt{X: &ir.Call{
+				Fun: &ir.Selector{X: idn("t"), Sel: "Unix"},
+			}},
+			needsLocal: true,
+		},
+		{
+			name: "shadowed net type name",
+			decls: []ir.Decl{
+				&ir.TypeDecl{Name: "Conn", Underlying: &ir.StructType{}},
+			},
+			stmt: &ir.ExprStmt{X: &ir.Call{
+				Fun:  &ir.Selector{X: idn("c"), Sel: "Read"},
+				Args: []ir.Expr{idn("b")},
+			}},
+			needsLocal: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var body []ir.Stmt
+			if tc.needsLocal {
+				body = append(body, &ir.Assign{
+					LHS:    []ir.Expr{varNameFor(tc.name)},
+					Define: true,
+					RHS: []ir.Expr{&ir.ZeroVal{
+						Type: &ir.NamedType{Name: typeNameFor(tc.name)},
+					}},
+				})
+			}
+			body = append(body, tc.stmt)
+			decls := append([]ir.Decl{}, tc.decls...)
+			decls = append(decls, funcMain(body...))
+			pkg := &ir.Package{Name: "p", Files: []*ir.File{
+				{Name: "x.go", Imports: []string{"net"}, Decls: decls},
+			}}
+			var buf bytes.Buffer
+			err := Package(pkg, &buf)
+			if err == nil {
+				t.Fatalf("emit succeeded, want loud dispatching error; out:\n%s",
+					buf.String())
+			}
+			if !strings.Contains(err.Error(), "dispatching") {
+				t.Fatalf("wrong error: %v", err)
+			}
+			if strings.Contains(buf.String(), ".all.") {
+				t.Fatalf("declined selector was misrouted to a protected dot-call:\n%s",
+					buf.String())
+			}
+		})
+	}
+}
+
+// varNameFor/typeNameFor map a decline-arm case to the local variable
+// and type it declares (the non-ident-prefix case needs no local).
+func varNameFor(caseName string) *ir.Ident {
+	switch caseName {
+	case "non-net local type":
+		return idn("t")
+	case "shadowed net type name":
+		return idn("c")
+	}
+	return idn("x")
+}
+
+// typeNameFor is the declared type behind varNameFor.
+func typeNameFor(caseName string) string {
+	switch caseName {
+	case "non-net local type":
+		return "Time"
+	case "shadowed net type name":
+		return "Conn"
+	}
+	return "T"
+}

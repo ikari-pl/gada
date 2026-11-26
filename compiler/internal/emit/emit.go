@@ -2716,6 +2716,9 @@ func (e *emitter) rhsIRType(x ir.Expr) ir.Type {
 		switch x.Name {
 		case "string":
 			return &ir.StringType{}
+		case "bytes":
+			// []byte(s) conversion (Phase 7).
+			return &ir.SliceType{Elem: &ir.ByteType{}}
 		case "len", "cap":
 			return &ir.IntType{}
 		}
@@ -3318,6 +3321,9 @@ func (e *emitter) inferDeclType(x ir.Expr) (string, error) {
 		switch x.Name {
 		case "string":
 			return "String", nil
+		case "bytes":
+			// []byte(s) conversion (Phase 7).
+			return "Gada.Std.Bytes.Byte_Slice", nil
 		case "len", "cap":
 			return "Integer", nil
 		case "append":

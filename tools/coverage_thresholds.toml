@@ -226,11 +226,6 @@ lines = [54, 55, 100, 143, 253, 314, 390, 400, 440, 509]
 reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
 
 [[exclude]]
-file = "runtime/src/gada-std-bytes.adb"
-lines = [28, 122, 166]
-reason = "gcov terminator artifacts — see runtime/COVERAGE.md"
-
-[[exclude]]
 file = "runtime/src/gada-std-bufio.adb"
 lines = [51, 106, 179, 295]
 reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
@@ -291,3 +286,45 @@ reason = "untriggerable read-error arm + lcov terminators + argv loop — see ru
 file = "runtime/src/gada-std-runtime.adb"
 lines = [31]
 reason = "end Go_Max_Procs terminator — see runtime/COVERAGE.md"
+
+# Phase 7 wave 3 (net): Parse_IPv4's `Part < 4 and then Dot = 0` arm is
+# unreachable — the Count(S, ".") = 3 guard guarantees a dot remains
+# in the suffix for parts 1..3, so Index never returns 0 there.
+# Rationale: runtime/COVERAGE.md (gada-std-net).
+[[exclude]]
+file = "runtime/src/gada-std-net.adb"
+lines = [82]
+reason = "Parse_IPv4 Dot=0 arm unreachable behind Count=3 guard — see runtime/COVERAGE.md"
+
+# gnatcoverage/lcov 2.4 no-return-block misattribution on declare-block
+# and subprogram terminator lines (same class as gada-std-time.adb).
+# Rationale: runtime/COVERAGE.md (gada-std-net, gada-std-bytes).
+[[exclude]]
+file = "runtime/src/gada-std-net.adb"
+lines = [92, 96, 141, 176, 230, 279, 280, 472, 1002]
+reason = "end-of-block/subprogram terminators — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-bytes.adb"
+lines = [38, 132, 176]
+reason = "end To_String / end loop terminators — see runtime/COVERAGE.md"
+
+# Resolve's Addresses_Length = 0 arm: GNAT's Get_Host_By_Name wraps
+# gethostbyname(3), which never returns a successful host entry with
+# zero addresses on Linux CI — defensive only. The Inet6 arm of To_IP
+# is unreachable in v1 because every socket is created AF_INET, so no
+# Inet6 Sock_Addr is ever produced; Addr_Image's non-inet guard is the
+# same defensive class. Rationale: runtime/COVERAGE.md (gada-std-net).
+[[exclude]]
+file = "runtime/src/gada-std-net.adb"
+lines = [440, 441, 442, 466, 467, 468, 469, 495]
+reason = "Resolve zero-address arm + To_IP Inet6 arm + Addr_Image guard: v1 is IPv4-only — see runtime/COVERAGE.md"
+
+# Nested `when others => null` inside the Socket_Error cleanup handlers
+# of Dial/Listen/Listen_Packet: only reachable if Close_Socket itself
+# raises, which needs fault injection — CI cannot trigger it
+# deterministically. Rationale: runtime/COVERAGE.md (gada-std-net).
+[[exclude]]
+file = "runtime/src/gada-std-net.adb"
+lines = [692, 802, 964]
+reason = "Close_Socket failure arm in Socket_Error handlers — see runtime/COVERAGE.md"

@@ -432,3 +432,46 @@ func TestDeclStmtVarWithInit(t *testing.T) {
 		t.Fatalf("RHS = %T, want *ir.Lit", a.RHS[0])
 	}
 }
+
+// TestByteSliceConversion pins the Phase 7 `[]byte(s)` conversion:
+// a CallExpr whose Fun is *ast.ArrayType (byte elem, no length)
+// translates to BuiltinCall{Name: "bytes"} so the emitter can lower
+// it to Gada.Std.Bytes.To_Bytes.
+func TestByteSliceConversion(t *testing.T) {
+	t.Parallel()
+	src := `package p
+
+func f(s string) {
+	b := []byte(s)
+	_ = b
+}
+`
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "x.go", src, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	conf := types.Config{Importer: importer.Default()}
+	info := &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+	}
+	if _, err = conf.Check("p", fset, []*ast.File{af}, info); err != nil {
+		t.Fatalf("typecheck: %v", err)
+	}
+	tr, err := newTranslator(af, info)
+	if err != nil {
+		t.Fatalf("newTranslator: %v", err)
+	}
+	fn := af.Decls[0].(*ast.FuncDecl)
+	assign := fn.Body.List[0].(*ast.AssignStmt)
+	e, err := tr.transExpr(assign.Rhs[0])
+	if err != nil {
+		t.Fatalf("transExpr([]byte(s)): %v", err)
+	}
+	bc, ok := e.(*ir.BuiltinCall)
+	if !ok || bc.Name != "bytes" || len(bc.Args) != 1 {
+		t.Fatalf("[]byte(s) translated to %#v, want BuiltinCall bytes", e)
+	}
+}

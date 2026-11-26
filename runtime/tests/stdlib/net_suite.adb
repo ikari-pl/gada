@@ -89,10 +89,11 @@ package body Net_Suite is
    procedure Test_Parse_IP_V4 (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      type Bad_Array is array (1 .. 8) of String (1 .. 10);
+      type Bad_Array is array (1 .. 10) of String (1 .. 10);
       Bad : constant Bad_Array :=
         ("1.2.3     ", "1.2.3.4.5 ", "256.1.1.1 ", "01.2.3.4  ",
-         "1.2.3.x   ", "1..2.3    ", ".1.2.3    ", "          ");
+         "1.2.3.x   ", "1..2.3    ", ".1.2.3    ", "          ",
+         "1234.1.1.1", "1.2.3.    ");
    begin
       declare
          A : constant IP := Parse_IP ("192.168.0.1");
@@ -124,7 +125,9 @@ package body Net_Suite is
          "1::                                     ",
          "::ffff:127.0.0.1                        ",
          "fe80::a:b:c:d                           ",
-         "1:2:3:4:5:6:7:8                         ");
+         "1:2:3:4:5:6:7:8                         ",
+         "FE80::A:B:C:D                           ",
+         "1:0:2:3:4:5:6:7                         ");
       Want : constant Case_Array :=
          ("::1                                     ",
          "2001:db8::1                             ",
@@ -133,7 +136,9 @@ package body Net_Suite is
          "1::                                     ",
          "::ffff:127.0.0.1                        ",
          "fe80::a:b:c:d                           ",
-         "1:2:3:4:5:6:7:8                         ");
+         "1:2:3:4:5:6:7:8                         ",
+         "fe80::a:b:c:d                           ",
+         "1:0:2:3:4:5:6:7                         ");
       Bad : constant Case_Array :=
          ("1:2:3:4:5:6:7:8:9                       ",
          "1::2::3                                 ",
@@ -142,7 +147,9 @@ package body Net_Suite is
          "1:2:3:4:5:6:7                           ",
          ":1:2                                    ",
          "1:2:                                    ",
-         "gg::1                                   ");
+         "gg::1                                   ",
+         "1.2.3.4:5::                             ",
+         "1:2:3:4:5:6:7:8::                       ");
    begin
       for I in Good'Range loop
          declare
@@ -323,6 +330,20 @@ package body Net_Suite is
       Assert (Err /= Errors.No_Error and then C = null,
               "bad bracket must error");
 
+      --  well-formed bracket parses, then fails: v1 sockets are
+      --  IPv4-only so a v6 literal cannot resolve to a v4 address
+      Dial ("tcp", "[::1]:80", C, Err);
+      Assert (Err /= Errors.No_Error and then C = null,
+              "bracket v6 dial must error in v1");
+
+      --  port too long / non-numeric
+      Dial ("tcp", "127.0.0.1:123456", C, Err);
+      Assert (Err /= Errors.No_Error and then C = null,
+              "too-long port must error");
+      Dial ("tcp", "127.0.0.1:abc", C, Err);
+      Assert (Err /= Errors.No_Error and then C = null,
+              "non-numeric port must error");
+
       --  unresolvable host
       Dial ("tcp", "nonexistent.invalid:80", C, Err);
       Assert (Err /= Errors.No_Error and then C = null,
@@ -455,6 +476,31 @@ package body Net_Suite is
       Listen_Packet ("udp", "nonexistent.invalid:0", PC, Err);
       Assert (Err /= Errors.No_Error and then PC = null,
               "listenpacket unresolvable must error: " & Err_Text (Err));
+
+      --  empty address
+      Listen ("tcp", "", L, Err);
+      Assert (Err /= Errors.No_Error and then L = null,
+              "empty address must error");
+
+      --  bind to an unassigned address: Socket_Error cleanup path
+      Listen ("tcp", "192.0.2.1:0", L, Err);
+      Assert (Err /= Errors.No_Error and then L = null,
+              "unassigned tcp bind must error: " & Err_Text (Err));
+      Listen_Packet ("udp", "192.0.2.1:0", PC, Err);
+      Assert (Err /= Errors.No_Error and then PC = null,
+              "unassigned udp bind must error: " & Err_Text (Err));
+
+      --  positive controls: wildcard host + hostname resolution
+      Listen ("tcp", ":0", L, Err);
+      Assert (Err = Errors.No_Error,
+              "wildcard listen failed: " & Err_Text (Err));
+      Assert (L.all.Addr'Length > 0, "wildcard addr empty");
+      L.all.Close;
+
+      Listen ("tcp", "localhost:0", L, Err);
+      Assert (Err = Errors.No_Error,
+              "localhost listen failed: " & Err_Text (Err));
+      L.all.Close;
    end Test_Listen_Errors;
 
 end Net_Suite;

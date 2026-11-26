@@ -446,15 +446,10 @@ misattributed by lcov 2.4 (same class as above).
 
 ### `runtime/src/gada-std-os.adb` (Phase 5)
 
-Excluded lines: 44-50, 52, 53 — the `when E : Device_Error | End_Error
-| Data_Error` arm of Read_File's read (lines 44-49) needs a failing
-device to trigger, which no portable AUnit test can arrange (the
-missing-file path is covered via the open arm above); lines 50, 52,
-53 are the inner `end;`, declare-block `end;`, and `end Read_File;`
-terminators. Both reachable branches of Read_File are covered by
-OS_Suite (ok/empty/missing-file tests are green in the same run); lcov
-2.4 leaves hit-count 0 on the block terminators, same misattribution
-class as `gada-async-race.adb:80`.
+Superseded by the Phase 6 wave 2 entry below: the Read_File body was
+rewritten (heap buffer + directory guard), so the old Phase-5 line
+numbers no longer exist. The current exclusions for this file are
+documented in the Phase 6 wave 2 section.
 
 ### `runtime/src/gada-std-bytes.adb`, `gada-std-bufio.adb`, `gada-std-io.adb` (Phase 5)
 
@@ -470,29 +465,32 @@ the lcov 2.4 misattribution class documented above.
 
 ### `runtime/src/gada-std-time.adb` (Phase 6 wave 2)
 
-69, 196, 207, 380 — `end Append_Frac;`, `end Dig2;`, `end Image_Date_Time;`,
+69, 231, 242, 455 — `end Append_Frac;`, `end Dig2;`, `end Image_Date_Time;`,
 `end New_Timer;` terminators. Every contained line of these subprograms is
 hit by Time_Suite (Duration.String/Arith, Date + accessors, UTC/Local
 RFC3339, NewTimer + Stop are all green in the same run); lcov 2.4 leaves
 hit-count 0 on the block terminator itself. Same misattribution class as
-`gada-async-race.adb:80` documented above. The genuinely uncovered code
-in this file (timer stop paths, Stop_Channel lookup, the Repeater exit)
-is exercised by the After/Tick/NewTimer tests, not excluded.
+`gada-async-race.adb:80` documented above. The zone-conversion bodies of
+UTC()/Local() (from a Local value) are covered by Test_UTC_Local_Format,
+the public Stop_All wrapper by Test_Stop_All, the Repeater's atomic
+Tick_Fire path by Test_Tick, and the one-shot Try_Fire claim by
+Test_Timer_Stop — none excluded.
 
 ### `runtime/src/gada-std-os.adb` (Phase 6 wave 2)
 
-50, 53, 55, 56 — Read_File's `when Device_Error | End_Error |
-Data_Error` arm: on Linux this IS hit deterministically by
-OS_Suite's Test_Read_File_Dir (open of "." succeeds, read fails
-EISDIR -> Device_Error); the exclude is kept as a belt-and-braces for
-platforms where the open itself fails. 58-59, 131, 150 — `end;` block
-terminators where lcov 2.4 leaves hit-count 0 despite every contained
-line being hit (same misattribution class as gada-std-time.adb).
-71-72 — the `Args` argv loop body; the CI full-suite coverage run
-invokes test_runner with no filter argument (Argument_Count = 0), so
-the loop body never executes there (single-suite `make stdlib-test
-PKG=...` runs do pass one). Open/Create/Stat/Mkdir happy and error
-paths are all covered by OS_Suite, not excluded.
+62-68 — Read_File's `when Device_Error | End_Error | Data_Error` arm.
+The directory case is rejected up front by the `Ada.Directories.Kind`
+guard (covered by OS_Suite's Test_Read_File_Dir, which asserts the
+"is a directory" error); a read failure on a regular file needs a
+failing device, which no portable AUnit test can arrange. 149, 168 —
+`end;` block terminators of the Open/Create error arms where lcov 2.4
+leaves hit-count 0 despite every contained line being hit (same
+misattribution class as gada-std-time.adb). 83-84 — the `Args` argv
+loop body; the CI full-suite coverage run invokes test_runner with no
+filter argument (Argument_Count = 0), so the loop body never executes
+there (single-suite `make stdlib-test PKG=...` runs do pass one).
+Open/Create/Stat/Mkdir happy and error paths are all covered by
+OS_Suite, not excluded.
 
 ### `runtime/src/gada-std-runtime.adb` (Phase 6 wave 2)
 

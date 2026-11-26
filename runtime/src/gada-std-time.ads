@@ -121,6 +121,11 @@ package Gada.Std.Time is
       --  lock — a Stop landing after this returns is a no-op (the
       --  timer already fired, matching Go's Stop returning False).
       procedure Try_Fire;
+      --  Repeater variant: atomic check-and-send that does NOT set the
+      --  stop flag — a Tick channel keeps firing until Stop. Fired is
+      --  False when a Stop won the race (no send), True when the tick
+      --  was delivered.
+      procedure Tick_Fire (Fired : out Boolean);
    private
       Chan : Time_Channels.Channel := Time_Channels.No_Channel;
       Dly  : Duration := 0;

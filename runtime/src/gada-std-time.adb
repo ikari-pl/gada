@@ -295,6 +295,14 @@ package body Gada.Std.Time is
          end if;
       end Try_Fire;
 
+      procedure Tick_Fire (Fired : out Boolean) is
+      begin
+         Fired := not S;
+         if not S then
+            Time_Channels.Send (Chan, True);
+         end if;
+      end Tick_Fire;
+
    end Timer_Core;
 
    function To_Span (D : Duration) return Standard.Duration is
@@ -413,6 +421,7 @@ package body Gada.Std.Time is
       R         : Timer_Rec_Access;
       Remaining : Duration;
       Slice     : Duration;
+      Fired     : Boolean;
    begin
       accept Set (Rec : Timer_Rec_Access) do
          R := Rec;
@@ -425,8 +434,11 @@ package body Gada.Std.Time is
             delay To_Span (Slice);
             Remaining := Remaining - Slice;
          end loop;
-         exit when R.Core.Stopped;
-         R.Core.Try_Fire;
+         --  Atomic check-and-send; a Stop that lands before this call
+         --  suppresses the tick, one that lands after lets it through
+         --  (same race semantics as Go's Ticker.Stop).
+         R.Core.Tick_Fire (Fired);
+         exit when not Fired;
       end loop;
       Keep.Unregister (R.Core.Ch);
    end Repeater;

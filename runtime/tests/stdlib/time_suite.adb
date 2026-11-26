@@ -78,6 +78,7 @@ package body Time_Suite is
       Register_Routine (T, Test_After'Access, "After fires");
       Register_Routine (T, Test_Timer_Stop'Access, "NewTimer + Stop");
       Register_Routine (T, Test_Tick'Access, "Tick repeats");
+      Register_Routine (T, Test_Stop_All'Access, "Stop_All silences timers");
    end Register_Tests;
 
    --  All Duration.String expectations pinned against Go 1.27.
@@ -156,6 +157,20 @@ package body Time_Suite is
                    = "2026-11-26T07:08:09.123456789",
                  "Local date-time part, got " & S);
       end;
+      --  Converting a Local value exercises UTC's wall-shift body;
+      --  Local() on a Local value is the identity early return.
+      declare
+         DL : constant Time := Date (2026, 11, 26, 7, 8, 9, 123_456_789,
+                                     False);
+         U2 : constant Time := UTC (DL);
+         L2 : constant Time := Local (DL);
+      begin
+         Assert (U2.UTC and then not L2.UTC,
+                 "UTC() sets the zone flag, Local() keeps it");
+         Assert (Nanosecond_Of (U2) = 123_456_789
+                   and then Nanosecond_Of (L2) = 123_456_789,
+                 "zone conversion keeps the instant");
+      end;
    end Test_UTC_Local_Format;
 
    procedure Test_After (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -225,5 +240,19 @@ package body Time_Suite is
       Assert (Tick_Count >= 2, "Tick fired at least twice, got"
               & Natural'Image (Tick_Count));
    end Test_Tick;
+
+   procedure Test_Stop_All (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      Tm : constant Timer := New_Timer (30 * Millisecond);
+   begin
+      --  Stop_All is what generated mains call before Scheduler.Shutdown;
+      --  a pending timer must not fire afterwards.
+      Stop_All;
+      for I in 1 .. 150 loop
+         exit when Time_Channels.Length (Chan (Tm)) > 0;
+         delay 0.001;
+      end loop;
+      Assert (Time_Channels.Length (Chan (Tm)) = 0,
+              "Stop_All silenced a pending timer");
+   end Test_Stop_All;
 
 end Time_Suite;

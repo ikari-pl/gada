@@ -240,11 +240,6 @@ file = "runtime/src/gada-std-io.adb"
 lines = [44, 57, 81]
 reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
 
-[[exclude]]
-file = "runtime/src/gada-std-os.adb"
-lines = [44, 45, 46, 47, 48, 49, 50, 52, 53]
-reason = "read-error exception arm is untestable without a failing device + gcov terminator artifacts — see runtime/COVERAGE.md"
-
 # `end Image;` — the fall-through terminator of Gada.Async.Race.Image.
 # Image is a function that always `return`s (single returned conditional
 # expression covering both the no-race and detected arms, both exercised
@@ -272,19 +267,21 @@ reason = "Race.Image fall-through terminator — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-std-time).
 [[exclude]]
 file = "runtime/src/gada-std-time.adb"
-lines = [69, 196, 207, 380]
+lines = [69, 231, 242, 455]
 reason = "end Append_Frac/Dig2/Image_Date_Time/New_Timer terminators — see runtime/COVERAGE.md"
 
-# Read_File's stream-read exception arm (49, 52, 54, 55): Device_Error /
-# End_Error / Data_Error on a regular-file read are not deterministically
-# triggerable in CI. 57-58, 130, 149: `end;`/`end Read_File;` block
-# terminators (lcov 2.4 no-return-block misattribution, same class as
-# gada-std-time.adb). 70-71: the Args argv loop body only runs when the
+# Read_File's stream-read exception arm (62-68): the directory case is
+# now rejected up front by the Ada.Directories.Kind guard (covered by
+# Test_Read_File_Dir), and Device_Error / End_Error / Data_Error on a
+# regular-file read are not deterministically triggerable in CI.
+# 149, 168: `end;` block terminators of the Open/Create error arms
+# (lcov 2.4 no-return-block misattribution, same class as
+# gada-std-time.adb). 83-84: the Args argv loop body only runs when the
 # runner is invoked with CLI args; the CI full-suite coverage run passes
 # no filter (Argument_Count = 0). Rationale: runtime/COVERAGE.md.
 [[exclude]]
 file = "runtime/src/gada-std-os.adb"
-lines = [50, 53, 55, 56, 58, 59, 71, 72, 131, 150]
+lines = [62, 63, 64, 65, 66, 67, 68, 83, 84, 149, 168]
 reason = "untriggerable read-error arm + lcov terminators + argv loop — see runtime/COVERAGE.md"
 
 # `end Go_Max_Procs;` terminator — lcov 2.4 no-return-block

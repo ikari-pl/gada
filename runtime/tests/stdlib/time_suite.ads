@@ -26,5 +26,6 @@ package Time_Suite is
    procedure Test_After (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Timer_Stop (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Tick (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Stop_All (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Time_Suite;

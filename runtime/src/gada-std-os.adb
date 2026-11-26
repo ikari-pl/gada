@@ -22,6 +22,15 @@ package body Gada.Std.OS is
    begin
       Data := Bytes.Byte_Vectors.Empty_Vector;
       Err  := Errors.No_Error;
+      --  Go's os.ReadFile on a directory fails at read time (EISDIR);
+      --  SIO.Size on a directory can report a huge/garbage length that
+      --  would exhaust the heap, so reject directories up front.
+      if Ada.Directories.Exists (Path)
+        and then Ada.Directories.Kind (Path) = Ada.Directories.Directory
+      then
+         Err := Errors.New_K ("read " & Path & ": is a directory");
+         return;
+      end if;
       begin
          SIO.Open (F, SIO.In_File, Path);
       exception

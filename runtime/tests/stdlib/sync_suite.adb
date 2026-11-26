@@ -26,6 +26,9 @@ package body Sync_Suite is
    Once_Counter   : Natural := 0;
    pragma Volatile (Once_Counter);
    Once_Obj       : aliased Once;
+   --  Separate object for the race test: Test_Once's spawned body
+   --  already marks Once_Obj done, and Once is exactly-once per object.
+   Race_Once      : aliased Once;
    Once_Raised    : Boolean := False;
    Cond_Flag      : Boolean := False;
    Cond_Flags     : array (1 .. 2) of Boolean := (others => False);
@@ -87,7 +90,7 @@ package body Sync_Suite is
    --  Racing Do_K body: also signals the WaitGroup.
    procedure Once_Race_Body is
    begin
-      Once_Obj.Do_K (Once_Inc'Access);
+      Race_Once.Do_K (Once_Inc'Access);
       Shared_WG.Done;
    end Once_Race_Body;
 

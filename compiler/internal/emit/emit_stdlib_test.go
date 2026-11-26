@@ -359,3 +359,38 @@ func TestDeclInitHelpers(t *testing.T) {
 		t.Errorf("rhsIRType(len) = %#v", got)
 	}
 }
+
+// TestRhsIRTypeMisses pins rhsIRType's nil returns for shapes without
+// a statically known type.
+func TestRhsIRTypeMisses(t *testing.T) {
+	t.Parallel()
+	e := newEmitter("p", &ir.File{})
+	if got := e.rhsIRType(&ir.Call{}); got != nil {
+		t.Errorf("rhsIRType(call no results) = %#v, want nil", got)
+	}
+	if got := e.rhsIRType(&ir.IndexExpr{X: idn("unknown")}); got != nil {
+		t.Errorf("rhsIRType(index of unknown) = %#v, want nil", got)
+	}
+	if got := e.rhsIRType(&ir.BuiltinCall{Name: "recover"}); got != nil {
+		t.Errorf("rhsIRType(recover) = %#v, want nil", got)
+	}
+	// Out-call decl with a nil result type fails loudly.
+	var buf bytes.Buffer
+	err := Package(&ir.Package{Name: "p", Files: []*ir.File{
+		{Name: "x.go", Imports: []string{"os"}, Decls: []ir.Decl{funcMain(
+			&ir.Assign{
+				LHS: []ir.Expr{idn("a"), idn("b")}, Define: true,
+				RHS: []ir.Expr{&ir.Call{
+					Fun:  &ir.Selector{X: idn("os"), Sel: "ReadFile"},
+					Args: []ir.Expr{idn("p")},
+					ResultTypes: []ir.Type{
+						&ir.SliceType{Elem: &ir.ByteType{}}, nil,
+					},
+				}},
+			},
+		)}},
+	}}, &buf)
+	if err == nil || !strings.Contains(err.Error(), "known result types") {
+		t.Fatalf("nil result type: err = %v", err)
+	}
+}

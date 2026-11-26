@@ -265,6 +265,8 @@ package body Gada.Std.Time is
    package Entry_Vectors is
       new Ada.Containers.Indefinite_Vectors (Positive, Timer_Entry);
 
+   use type Time_Channels.Channel;
+
    protected type Keeper is
       procedure Register (Core : Timer_Core_Access;
                          Ch   : Time_Channels.Channel;
@@ -278,8 +280,9 @@ package body Gada.Std.Time is
       procedure Register (Core : Timer_Core_Access;
                           Ch   : Time_Channels.Channel;
                           Obj  : System.Address) is
+         E : constant Timer_Entry := (Core => Core, Ch => Ch, Obj => Obj);
       begin
-         Items.Append ((Core => Core, Ch => Ch, Obj => Obj));
+         Items.Append (E);
       end Register;
 
       procedure Stop_For (Ch : Time_Channels.Channel) is

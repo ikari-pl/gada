@@ -35,7 +35,7 @@ package body Time_Suite is
       OK : Boolean;
    begin
       Time_Channels.Receive (Waiter_Chan, V, OK);
-      Waiter_Flag := True;
+      Waiter_Flag := OK;
    end Waiter_Body;
 
    procedure Tick_Body is
@@ -44,7 +44,11 @@ package body Time_Suite is
    begin
       for I in 1 .. 2 loop
          Time_Channels.Receive (Tick_Chan, V, OK);
-         Tick_Count := Tick_Count + 1;
+         if OK then
+            Tick_Count := Tick_Count + 1;
+         else
+            exit;  --  channel closed: stop counting
+         end if;
       end loop;
    end Tick_Body;
 
@@ -53,7 +57,7 @@ package body Time_Suite is
       OK : Boolean;
    begin
       Time_Channels.Receive (Watchdog_Chan, V, OK);
-      Watchdog_Hit := True;
+      Watchdog_Hit := OK;
    end Watchdog_Body;
 
    overriding function Name
@@ -148,8 +152,8 @@ package body Time_Suite is
       declare
          S : constant String := RFC3339_Nano (LU);
       begin
-         Assert (S'Length >= 25 and then S (S'First .. S'First + 18)
-                   = "2026-11-26T07:08:09" & ".123456789",
+         Assert (S'Length >= 29 and then S (S'First .. S'First + 28)
+                   = "2026-11-26T07:08:09.123456789",
                  "Local date-time part, got " & S);
       end;
    end Test_UTC_Local_Format;
@@ -170,8 +174,12 @@ package body Time_Suite is
          exit when Waiter_Flag;
          Scheduler.Yield;
       end loop;
-      Scheduler.Shutdown;
+      --  Release the watchdog before Shutdown: stop its timer and
+      --  close its channel so the parked watchdog goroutine wakes
+      --  with OK => False and the drain can finish.
       Stop_Channel (Watchdog_Chan);
+      Time_Channels.Close (Watchdog_Chan);
+      Scheduler.Shutdown;
       Assert (Waiter_Flag, "After(10ms) fired");
       Assert (not Watchdog_Hit, "watchdog did not fire");
    end Test_After;
@@ -204,9 +212,11 @@ package body Time_Suite is
          exit when Tick_Count >= 2;
          Scheduler.Yield;
       end loop;
-      Scheduler.Shutdown;
-      --  Release the repeater task so the runner can exit.
+      --  Release the repeater task and wake a possibly-parked ticker
+      --  goroutine so Shutdown's drain and the runner can exit.
       Stop_Channel (Tick_Chan);
+      Time_Channels.Close (Tick_Chan);
+      Scheduler.Shutdown;
       Assert (Tick_Count >= 2, "Tick fired at least twice, got"
               & Natural'Image (Tick_Count));
    end Test_Tick;

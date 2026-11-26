@@ -121,11 +121,8 @@ package body Gada.Std.Time is
    ---------------------------------------------------------------
 
    function Now return Time is
-      R    : constant RT.Time := RT.Clock;
-      W    : constant Cal.Time := Cal.Clock;
-      Secs : constant Cal.Day_Duration := Cal.Seconds (W);
-      Frac : constant Cal.Day_Duration :=
-        Secs - Cal.Day_Duration (Natural (Secs));
+      R : constant RT.Time := RT.Clock;
+      W : constant Cal.Time := Cal.Clock;
    begin
       --  Sub-second part from the wall clock (GNAT Calendar keeps
       --  millisecond resolution; the 124-year span since Time_First
@@ -133,7 +130,8 @@ package body Gada.Std.Time is
       --  Date() carries exact nanoseconds.
       return (Mono => R,
               Wall => W,
-              Ns   => Natural (Long_Integer (Long_Float (Frac) * 1.0e9)),
+              Ns   => Natural (Long_Float (Cal.Seconds (W)) * 1.0e9)
+                        mod 1_000_000_000,
               UTC  => False);
    end Now;
 

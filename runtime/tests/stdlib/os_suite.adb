@@ -23,7 +23,8 @@ package body OS_Suite is
    procedure Write_Tmp (Content : String) is
       use Ada.Streams;
       F   : Stream_IO.File_Type;
-      Buf : Stream_Element_Array (1 .. Content'Length);
+      Buf : Stream_Element_Array
+        (1 .. Stream_Element_Offset (Content'Length));
    begin
       for I in Content'Range loop
          Buf (Stream_Element_Offset (I - Content'First + 1)) :=

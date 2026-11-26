@@ -1,5 +1,6 @@
 --  Body of Gada.Std.OS — see spec for the port rationale.
 
+with Ada.Exceptions;
 with Ada.IO_Exceptions;
 with Ada.Streams.Stream_IO;
 
@@ -22,11 +23,12 @@ package body Gada.Std.OS is
             | Ada.IO_Exceptions.Use_Error =>
             Err := Errors.New_K
               ("open " & Path & ": "
-               & Ada.IO_Exceptions.Exception_Message (E));
+               & Ada.Exceptions.Exception_Message (E));
             return;
       end;
       declare
-         N    : constant Stream_Element_Count := SIO.Size (F);
+         N    : constant Stream_Element_Offset :=
+           Stream_Element_Offset (SIO.Size (F));
          Buf  : Stream_Element_Array (1 .. N);
          Last : Stream_Element_Offset;
       begin

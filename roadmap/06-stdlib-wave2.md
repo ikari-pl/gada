@@ -29,10 +29,24 @@ mutexes, `time.After`, `os.Args`, and `runtime.NumGoroutine`.
       Compiler: "sync" joined StdlibPackages (Once.Do maps to Do_K —
       "do" is reserved, same _K rule as New_K/Is_K).
 
-- [ ] **Stdlib package: `time`**
-      *Files:* `stdlib/time/`
+- [x] **Stdlib package: `time`**
+      *Files:* `runtime/src/gada-std-time.{ads,adb}`, `runtime/tests/stdlib/time_suite.{ads,adb}`
       *Verify:* `make stdlib-test PKG=time`
       *Done when:* `Now`, `Since`, `After`, `Tick`, `NewTimer`, `Duration` arithmetic all correct; calendar conversions UTC + Local correct; coverage ≥ 95%.
+      *Done 2026-11-26:* landed as `Gada.Std.Time`. Duration is a derived
+      Long_Integer (ns) with Go unit constants; `*`/`/`/unary `-` come from
+      the inherited predefined operators (mixed Long_Integer profiles
+      would be ambiguous). To_String is pinned to Go 1.22 output. Time
+      carries Mono (Real_Time) + Wall (Calendar) + Ns + a UTC display
+      flag; Since/Until_K measure monotonic elapsed (To_Duration on the
+      124-year span since Time_First would overflow Duration's range, so
+      Now takes the sub-second part from the wall clock). Timers are Ada
+      tasks sleeping in <=50ms slices so Stop is noticed promptly (a
+      never-stopped Repeater would block its master); Stop_Channel is a
+      v1 extension for After/Tick's bare channels. Suite `stdlib.time`
+      (8 tests, delay-polled since Yield is a no-op in the main task) all
+      green; runtime coverage stays 100% (4 lcov-terminator excludes).
+      Compiler: "time" joined StdlibPackages.
 
 - [ ] **Stdlib package: `os`**
       *Files:* `stdlib/os/`

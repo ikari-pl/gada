@@ -264,3 +264,13 @@ reason = "read-error exception arm is untestable without a failing device + gcov
 file = "runtime/src/gada-async-race.adb"
 lines = [80]
 reason = "Race.Image fall-through terminator — see runtime/COVERAGE.md"
+
+# lcov 2.4 misattributes the implicit no-return basic block at the
+# bottom of begin/end subprogram bodies to the `end X;` terminator
+# line even when every contained line is hit (same class as
+# gada-async-race.adb:80 and the Phase 5 stdlib terminators).
+# Rationale: runtime/COVERAGE.md (gada-std-time).
+[[exclude]]
+file = "runtime/src/gada-std-time.adb"
+lines = [69, 196, 207, 380]
+reason = "end Append_Frac/Dig2/Image_Date_Time/New_Timer terminators — see runtime/COVERAGE.md"

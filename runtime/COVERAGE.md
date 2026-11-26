@@ -468,6 +468,17 @@ Read_String are covered by the readErr tests, not excluded. io: 44,
 ErrShortWrite arm itself is covered by the short-write test). All in
 the lcov 2.4 misattribution class documented above.
 
+### `runtime/src/gada-std-time.adb` (Phase 6 wave 2)
+
+69, 196, 207, 380 — `end Append_Frac;`, `end Dig2;`, `end Image_Date_Time;`,
+`end New_Timer;` terminators. Every contained line of these subprograms is
+hit by Time_Suite (Duration.String/Arith, Date + accessors, UTC/Local
+RFC3339, NewTimer + Stop are all green in the same run); lcov 2.4 leaves
+hit-count 0 on the block terminator itself. Same misattribution class as
+`gada-async-race.adb:80` documented above. The genuinely uncovered code
+in this file (timer stop paths, Stop_Channel lookup, the Repeater exit)
+is exercised by the After/Tick/NewTimer tests, not excluded.
+
 ---
 
 ### Adding a new exception

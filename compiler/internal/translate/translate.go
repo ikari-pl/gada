@@ -450,7 +450,20 @@ func (tr *translator) transDeclStmt(s *ast.DeclStmt) (ir.Stmt, error) {
 		return nil, fmt.Errorf("translate: unsupported var spec %T", gd.Specs[0])
 	}
 	if len(vs.Values) != 0 {
-		return nil, fmt.Errorf("translate: var with initializer is an assignment, not a DeclStmt")
+		// `var a = 1` is legal Go and equivalent to `a := 1`:
+		// lower it to a normal defining assign.
+		if len(vs.Names) != 1 || len(vs.Values) != 1 {
+			return nil, fmt.Errorf("translate: multi-name/multi-value var decl not supported")
+		}
+		rhs, err := tr.transExpr(vs.Values[0])
+		if err != nil {
+			return nil, err
+		}
+		return &ir.Assign{
+			LHS:    []ir.Expr{&ir.Ident{Name: vs.Names[0].Name}},
+			Define: true,
+			RHS:    []ir.Expr{rhs},
+		}, nil
 	}
 	if len(vs.Names) != 1 {
 		return nil, fmt.Errorf("translate: multi-name var decl not supported")

@@ -596,3 +596,201 @@ func TestLenOsArgsEmit(t *testing.T) {
 		t.Errorf("missing %q in:\n%s", want, out)
 	}
 }
+
+// TestLenOsArgsInIfCond pins that len(os.Args) in ANY expression
+// position (here an if-condition) pulls in `with Gada.Std.Strings;`.
+func TestLenOsArgsInIfCond(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"os"},
+		&ir.If{
+			Cond: &ir.BinOp{
+				Op: ">",
+				X: &ir.BuiltinCall{
+					Name: "len",
+					Args: []ir.Expr{&ir.Selector{X: idn("os"), Sel: "Args"}},
+				},
+				Y: litInt("1"),
+			},
+			Then: []ir.Stmt{&ir.Return{}},
+		},
+	)
+	if !strings.Contains(out, "with Gada.Std.Strings;") {
+		t.Errorf("missing with Gada.Std.Strings; in:\n%s", out)
+	}
+	want := "Integer (Gada.Std.Strings.String_Vectors.Length (Gada.Std.OS.Args))"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing %q in:\n%s", want, out)
+	}
+}
+
+// TestBareRecvStmt pins that a bare `<-c` statement lowers to a real
+// Receive block (value discarded), not a `null;` no-op.
+func TestBareRecvStmt(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, nil,
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("c")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.MakeChan{Elem: &ir.IntType{}, Capacity: litInt("1")}},
+		},
+		&ir.ExprStmt{X: &ir.ChanRecv{Chan: idn("c")}},
+	)
+	want := "Channels_Of_Integer.Receive (C, V, OK);"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing %q in:\n%s", want, out)
+	}
+}
+
+// TestZeroValScalarZero pins Go's zero-value guarantee for
+// `var n int` (and friends): the decl carries an explicit zero
+// initializer, not a bare uninitialized object.
+func TestZeroValScalarZero(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, nil,
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("n")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.IntType{}}},
+		},
+	)
+	if !strings.Contains(out, "N : Integer := 0;") {
+		t.Errorf("missing zero initializer in:\n%s", out)
+	}
+}
+
+// TestUserTimeChanNotMisrouted pins that a LOCAL type named Time never
+// gets routed to Gada.Std.Time.Time_Channels: without the time import
+// `make(chan Time)` fails loudly (unsupported element type), and with
+// the time import present the local type shadows the special case
+// (also a loud failure, never a silent misroute).
+func TestUserTimeChanNotMisrouted(t *testing.T) {
+	t.Parallel()
+	for _, imports := range [][]string{nil, {"time"}} {
+		pkg := &ir.Package{Name: "p", Files: []*ir.File{
+			{Name: "x.go", Imports: imports, Decls: []ir.Decl{
+				&ir.TypeDecl{Name: "Time", Underlying: &ir.StructType{}},
+				funcMain(
+					&ir.Assign{
+						LHS:    []ir.Expr{idn("c")},
+						Define: true,
+						RHS:    []ir.Expr{&ir.MakeChan{Elem: &ir.NamedType{Name: "Time"}}},
+					},
+				),
+			}},
+		}}
+		var buf bytes.Buffer
+		err := Package(pkg, &buf)
+		if err == nil {
+			t.Fatalf("imports=%v: emit succeeded, want loud error; out:\n%s", imports, buf.String())
+		}
+		if strings.Contains(buf.String(), "Time_Channels") {
+			t.Fatalf("imports=%v: local Time misrouted to Time_Channels:\n%s", imports, buf.String())
+		}
+	}
+}
+
+// TestUserMutexNoSyncImport pins that a method call on a LOCAL type
+// named Mutex (no sync import) does NOT take the sync dot-call path —
+// it must fail loudly like any other non-dispatching method call.
+func TestUserMutexNoSyncImport(t *testing.T) {
+	t.Parallel()
+	pkg := &ir.Package{Name: "p", Files: []*ir.File{
+		{Name: "x.go", Decls: []ir.Decl{
+			&ir.TypeDecl{Name: "Mutex", Underlying: &ir.StructType{}},
+			funcMain(
+				&ir.Assign{
+					LHS:    []ir.Expr{idn("mu")},
+					Define: true,
+					RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "Mutex"}}},
+				},
+				&ir.Call{Fun: &ir.Selector{X: idn("mu"), Sel: "Lock"}},
+			),
+		}},
+	}}
+	var buf bytes.Buffer
+	err := Package(pkg, &buf)
+	if err == nil {
+		t.Fatalf("emit succeeded, want loud error; out:\n%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "dispatching") {
+		t.Fatalf("wrong error: %v", err)
+	}
+}
+
+// TestVarDurationZero pins `var d time.Duration`: scalar stdlib value
+// type gets an explicit zero literal and the Duration use-type clause.
+func TestVarDurationZero(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"time"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("d")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "Duration"}}},
+		},
+	)
+	for _, want := range []string{
+		"D : Gada.Std.Time.Duration := 0;",
+		"use type Gada.Std.Time.Duration;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestVarTimeValue pins `var t time.Time`: the struct value type
+// declares bare (records default-initialise).
+func TestVarTimeValue(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"time"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("t")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "Time"}}},
+		},
+	)
+	if !strings.Contains(out, "T : Gada.Std.Time.Time;") {
+		t.Errorf("missing bare Time decl in:\n%s", out)
+	}
+}
+
+// TestSyncWaitGroupArgCall pins the with-args sync dot-call shape:
+// `wg.Add(1)` -> `Wg.Add (1);`.
+func TestSyncWaitGroupArgCall(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"sync"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("wg")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "WaitGroup"}}},
+		},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("wg"), Sel: "Add"},
+			Args: []ir.Expr{litInt("1")},
+		},
+	)
+	for _, want := range []string{
+		"Wg : Gada.Std.Sync.Wait_Group;",
+		"Wg.Add (1);",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestBareRecvUnknownChan pins the loud failure for a bare `<-c`
+// whose operand cannot be resolved to a chan type.
+func TestBareRecvUnknownChan(t *testing.T) {
+	t.Parallel()
+	pkg := &ir.Package{Name: "p", Files: []*ir.File{
+		{Name: "x.go", Decls: []ir.Decl{funcMain(
+			&ir.ExprStmt{X: &ir.ChanRecv{Chan: idn("c")}},
+		)}},
+	}}
+	var buf bytes.Buffer
+	err := Package(pkg, &buf)
+	if err == nil || !strings.Contains(err.Error(), "unresolvable chan") {
+		t.Fatalf("want unresolvable-chan error, got %v", err)
+	}
+}

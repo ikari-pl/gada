@@ -309,8 +309,8 @@ func TestDeclStmtVarErrors(t *testing.T) {
 	}{
 		{"const", "package p\nfunc f() { const c = 1 }\n"},
 		{"multi-spec", "package p\nfunc f() { var (a int; b int) }\n"},
-		{"with-init", "package p\nfunc f() { var a = 1 }\n"},
 		{"multi-name", "package p\nfunc f() { var a, b int }\n"},
+		{"multi-name-init", "package p\nfunc f() { var a, b = 1, 2 }\n"},
 		{"bad-type", "package p\nfunc f() { var a [2]int }\n"},
 	}
 	for _, tc := range cases {
@@ -350,5 +350,20 @@ func TestTransTypeSelectorExpr(t *testing.T) {
 		Sel: &ast.Ident{Name: "C"},
 	}); err == nil {
 		t.Fatal("transType(a.b.C) succeeded, want error")
+	}
+}
+
+// TestDeclStmtVarWithInit pins that `var a = 1` lowers to a normal
+// defining assign (legal Go, equivalent to `a := 1`).
+func TestDeclStmtVarWithInit(t *testing.T) {
+	t.Parallel()
+	pkg := parseSrc(t, "package p\nfunc f() { var a = 1 }\n", nil)
+	fn := pkg.Files[0].Decls[0].(*ir.Function)
+	a, ok := fn.Body[0].(*ir.Assign)
+	if !ok || !a.Define {
+		t.Fatalf("body[0] = %T, want defining Assign", fn.Body[0])
+	}
+	if _, ok := a.RHS[0].(*ir.Lit); !ok {
+		t.Fatalf("RHS = %T, want *ir.Lit", a.RHS[0])
 	}
 }

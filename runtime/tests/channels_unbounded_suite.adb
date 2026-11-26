@@ -45,6 +45,14 @@ package body Channels_Unbounded_Suite is
       Recv_Done := True;
    end Delayed_Sender_Body;
 
+   procedure Delayed_Closer_Body;
+
+   procedure Delayed_Closer_Body is
+   begin
+      delay 0.02;
+      Unbnd.Close (The_Channel);
+   end Delayed_Closer_Body;
+
    ---------------------------------------------------------------
 
    overriding function Name
@@ -116,6 +124,10 @@ package body Channels_Unbounded_Suite is
          "Receive that would park (empty open channel) from the main "
          & "task timed-polls until a goroutine sends — Go main-task "
          & "receive semantics; no orphaned Wait_Slot is allocated");
+      Register_Routine
+        (T, Test_Main_Task_Receive_Poll_Closed_Gives_False'Access,
+         "Main-task Receive polling an empty open channel returns "
+         & "OK = False when a goroutine closes it mid-poll");
    end Register_Tests;
 
    ---------------------------------------------------------------
@@ -499,5 +511,29 @@ package body Channels_Unbounded_Suite is
       Assert (Recv_Done, "sender goroutine did not complete");
       Gada.Async.Scheduler.Shutdown;
    end Test_Main_Task_Receive_Polls_Until_Send;
+
+   procedure Test_Main_Task_Receive_Poll_Closed_Gives_False
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Unused_G : Gada.Async.Scheduler.Goroutine_Id;
+      V        : Integer := 0;
+      OK       : Boolean := False;
+   begin
+      The_Channel := Unbnd.Make;
+      Gada.Async.Scheduler.Shutdown;
+      Gada.Async.Scheduler.Init (Workers => 1);
+
+      --  Empty open channel; a delayed closer goroutine closes it at
+      --  ~20 ms. The main-task Receive timed-polls and must return
+      --  OK = False (Go's closed-channel receive) once closed.
+      Unused_G := Gada.Async.Scheduler.Spawn
+        (Delayed_Closer_Body'Access);
+      Unbnd.Receive (The_Channel, V, OK);
+      Assert (not OK,
+              "main-task poll-receive on a channel closed mid-poll "
+              & "must return OK = False");
+      Gada.Async.Scheduler.Shutdown;
+   end Test_Main_Task_Receive_Poll_Closed_Gives_False;
 
 end Channels_Unbounded_Suite;

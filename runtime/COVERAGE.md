@@ -253,8 +253,10 @@ if Was_Closed then
 end if;
 ```
 
-The main-task timed-poll arm of `Receive` is covered, not excluded:
-`Channels_Unbounded_Suite.Test_Main_Task_Receive_Polls_Until_Send`.
+The main-task timed-poll arm of `Receive` (including the
+poll-sees-closed arm) is covered, not excluded:
+`Channels_Unbounded_Suite.Test_Main_Task_Receive_Polls_Until_Send` and
+`..._Poll_Closed_Gives_False`.
 
 Mirror of the Channels.Bounded Park_Receiver race-recheck above.
 Same single-worker-determinism constraint: the only window for the

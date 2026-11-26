@@ -47,5 +47,7 @@ package Channels_Unbounded_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Main_Task_Receive_Polls_Until_Send
      (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Main_Task_Receive_Poll_Closed_Gives_False
+     (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Channels_Unbounded_Suite;

@@ -190,12 +190,25 @@ package body Gada.Std.Time is
      (Natural (Fmt.Second (T.Wall)));
    function Nanosecond_Of (T : Time) return Natural is (T.Ns);
 
+   function Dig2 (N : Natural) return String is
+     (if N < 10 then "0" & Natural'Image (N) else Natural'Image (N));
+
+   --  "2026-11-26T07:08:09" from the wall clock.
+   function Image_Date_Time (T : Time) return String is
+   begin
+      return Dig2 (Natural (Fmt.Year (T.Wall)))
+        & '-' & Dig2 (Natural (Fmt.Month (T.Wall)))
+        & '-' & Dig2 (Natural (Fmt.Day (T.Wall)))
+        & 'T' & Dig2 (Natural (Fmt.Hour (T.Wall)))
+        & ':' & Dig2 (Natural (Fmt.Minute (T.Wall)))
+        & ':' & Dig2 (Natural (Fmt.Second (T.Wall)));
+   end Image_Date_Time;
+
    --  "2026-11-26T07:08:09.123456789Z" (UTC) or "…+01:00" (Local).
    function RFC3339_Nano (T : Time) return String is
       B : Unbounded_String;
    begin
-      Append (B, Fmt.Image (T.Wall,
-                       Fmt.Picture ("%Y-%m-%dT%H:%M:%S")));
+      Append (B, Image_Date_Time (T));
       Append_Frac (B, Long_Integer (T.Ns), 9);
       if T.UTC then
          Append (B, 'Z');
@@ -207,9 +220,6 @@ package body Gada.Std.Time is
             Sign : constant Character :=
               (if Mins < 0 then '-' else '+');
             A    : constant Natural := (if Mins < 0 then -Mins else Mins);
-            function Dig2 (N : Natural) return String is
-              (if N < 10 then "0" & Natural'Image (N)
-               else Natural'Image (N));
          begin
             Append (B, Sign & Dig2 (A / 60) & ':' & Dig2 (A mod 60));
          end;
@@ -268,20 +278,28 @@ package body Gada.Std.Time is
 
    Keep : Keeper;
 
-   task type One_Shot (Core : Timer_Core_Access) is
+   --  Task discriminants must be access types; the protected core
+   --  rides inside a heap record.
+   type Timer_Rec is record
+      Core : Timer_Core_Access;
+   end record;
+
+   type Timer_Rec_Access is access all Timer_Rec;
+
+   task type One_Shot (R : Timer_Rec_Access) is
    end One_Shot;
 
    type One_Shot_Access is access all One_Shot;
 
    task body One_Shot is
    begin
-      delay until RT."+" (RT.Clock, To_Span (Core.D));
-      if not Core.Stopped then
-         Time_Channels.Send (Core.Ch, True);
+      delay until RT."+" (RT.Clock, To_Span (R.Core.D));
+      if not R.Core.Stopped then
+         Time_Channels.Send (R.Core.Ch, True);
       end if;
    end One_Shot;
 
-   task type Repeater (Core : Timer_Core_Access) is
+   task type Repeater (R : Timer_Rec_Access) is
    end Repeater;
 
    type Repeater_Access is access all Repeater;
@@ -289,15 +307,15 @@ package body Gada.Std.Time is
    task body Repeater is
    begin
       loop
-         delay until RT."+" (RT.Clock, To_Span (Core.D));
-         exit when Core.Stopped;
-         Time_Channels.Send (Core.Ch, True);
+         delay until RT."+" (RT.Clock, To_Span (R.Core.D));
+         exit when R.Core.Stopped;
+         Time_Channels.Send (R.Core.Ch, True);
       end loop;
    end Repeater;
 
    function New_Timer (D : Duration) return Timer is
       Core : constant Timer_Core_Access := new Timer_Core;
-      T    : constant One_Shot_Access := new One_Shot'(Core => Core);
+      T    : constant One_Shot_Access := new One_Shot'(R => new Timer_Rec'(Core => Core));
    begin
       Core.Setup (Time_Channels.Make, D);
       Keep.Add (T.all'Address);
@@ -313,7 +331,7 @@ package body Gada.Std.Time is
 
    function After (D : Duration) return Time_Channels.Channel is
       Core : constant Timer_Core_Access := new Timer_Core;
-      T    : constant One_Shot_Access := new One_Shot'(Core => Core);
+      T    : constant One_Shot_Access := new One_Shot'(R => new Timer_Rec'(Core => Core));
    begin
       Core.Setup (Time_Channels.Make, D);
       Keep.Add (T.all'Address);
@@ -322,7 +340,7 @@ package body Gada.Std.Time is
 
    function Tick (D : Duration) return Time_Channels.Channel is
       Core : constant Timer_Core_Access := new Timer_Core;
-      T    : constant Repeater_Access := new Repeater'(Core => Core);
+      T    : constant Repeater_Access := new Repeater'(R => new Timer_Rec'(Core => Core));
    begin
       Core.Setup (Time_Channels.Make, D);
       Keep.Add (T.all'Address);

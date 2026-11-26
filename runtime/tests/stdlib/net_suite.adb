@@ -142,7 +142,7 @@ package body Net_Suite is
          "1:2:3:4:5:6:7                           ",
          ":1:2                                    ",
          "1:2:                                    ",
-         "gg::1                                   ";
+         "gg::1                                   ");
    begin
       for I in Good'Range loop
          declare

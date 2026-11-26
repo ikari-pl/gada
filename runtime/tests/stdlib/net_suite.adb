@@ -124,7 +124,7 @@ package body Net_Suite is
          "1::                                     ",
          "::ffff:127.0.0.1                        ",
          "fe80::a:b:c:d                           ",
-         "1:2:3:4:5:6:7:8                         ";
+         "1:2:3:4:5:6:7:8                         ");
       Want : constant Case_Array :=
          "::1                                     ",
          "2001:db8::1                             ",
@@ -133,7 +133,7 @@ package body Net_Suite is
          "1::                                     ",
          "::ffff:127.0.0.1                        ",
          "fe80::a:b:c:d                           ",
-         "1:2:3:4:5:6:7:8                         ";
+         "1:2:3:4:5:6:7:8                         ");
       Bad : constant Case_Array :=
          "1:2:3:4:5:6:7:8:9                       ",
          "1::2::3                                 ",

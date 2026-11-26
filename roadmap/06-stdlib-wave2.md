@@ -2,7 +2,7 @@
 
 [← Phase 5](05-stdlib-wave1.md) · [Index](README.md) · Next: [Phase 7 →](07-stdlib-wave3-network.md)
 
-**Status:** `IN_PROGRESS` (opened 2026-11-26)
+**Status:** `DONE` (completed 2026-11-26; CI green on b1b24f1 — 260 AUnit tests, runtime 100%, all 6 examples incl. timer_pool)
 **Prerequisites:** [Phase 3](03-concurrency.md) `DONE`, [Phase 5](05-stdlib-wave1.md) `DONE`
 **Goal:** Port packages that wrap host services: `sync`, `time`, `os`,
 `runtime`. These bridge to Ada equivalents (protected objects,

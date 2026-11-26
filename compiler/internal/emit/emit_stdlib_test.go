@@ -641,6 +641,29 @@ func TestBareRecvStmt(t *testing.T) {
 	}
 }
 
+// TestBareRecvTimeChan pins that a bare `<-timer` on a `chan time.Time`
+// (which rides Gada.Std.Time.Time_Channels, a Boolean-element channel)
+// declares the discard variable as Boolean — not Time — so the emitted
+// Receive call type-checks against the runtime package.
+func TestBareRecvTimeChan(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"time"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("timer")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.MakeChan{Elem: &ir.NamedType{Name: "Time"}}},
+		},
+		&ir.ExprStmt{X: &ir.ChanRecv{Chan: idn("timer")}},
+	)
+	if !strings.Contains(out, "V : Boolean;") {
+		t.Errorf("missing Boolean discard decl in:\n%s", out)
+	}
+	want := "Gada.Std.Time.Time_Channels.Receive (Timer, V, OK);"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing %q in:\n%s", want, out)
+	}
+}
+
 // TestZeroValScalarZero pins Go's zero-value guarantee for
 // `var n int` (and friends): the decl carries an explicit zero
 // initializer, not a bare uninitialized object.

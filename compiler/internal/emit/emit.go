@@ -2943,9 +2943,9 @@ func (e *emitter) emitChanRecvDecl(a *ir.Assign, cr *ir.ChanRecv) {
 		e.fail(fmt.Errorf("emit: ChanRecv on non-chan or non-ident operand not supported in Phase 3"))
 		return
 	}
-	tname, err := e.typeName(elem)
-	if err != nil {
-		e.fail(err)
+	tname, ok := e.chanAdaElemNameOfExpr(cr.Chan)
+	if !ok {
+		e.fail(fmt.Errorf("emit: ChanRecv: unknown element type name"))
 		return
 	}
 	pkg, err := e.chanPkgForT(elem)
@@ -3866,14 +3866,9 @@ func (e *emitter) emitExprStmt(s *ir.ExprStmt) {
 			e.fail(fmt.Errorf("emit: <-c statement on unresolvable chan operand"))
 			return
 		}
-		elem, ok := e.chanElemTypeOfExpr(x.Chan)
+		tName, ok := e.chanAdaElemNameOfExpr(x.Chan)
 		if !ok {
 			e.fail(fmt.Errorf("emit: <-c statement: unknown element type"))
-			return
-		}
-		tName, err := e.typeName(elem)
-		if err != nil {
-			e.fail(err)
 			return
 		}
 		e.println("declare")
@@ -4506,6 +4501,26 @@ func (e *emitter) chanElemTypeOfExpr(x ir.Expr) (ir.Type, bool) {
 		return elem, true
 	}
 	return nil, false
+}
+
+// chanAdaElemNameOfExpr resolves the Ada-side element type name for a
+// chan operand. `chan time.Time` rides Gada.Std.Time.Time_Channels, a
+// Boolean-element channel (the tick payload is a dummy Boolean — see
+// runtime COVERAGE notes), so its Ada element type is Boolean, not Time.
+func (e *emitter) chanAdaElemNameOfExpr(x ir.Expr) (string, bool) {
+	elem, ok := e.chanElemTypeOfExpr(x)
+	if !ok {
+		return "", false
+	}
+	if pkg, err := e.chanPkgForT(elem); err == nil &&
+		pkg == "Gada.Std.Time.Time_Channels" {
+		return "Boolean", true
+	}
+	t, err := e.typeName(elem)
+	if err != nil {
+		return "", false
+	}
+	return t, true
 }
 
 // emitChanSend lowers a `c <- v` SendStmt to `Channels_Of_T.Send (C, V);`.

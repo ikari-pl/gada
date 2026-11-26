@@ -286,26 +286,38 @@ package body Gada.Std.Time is
 
    type Timer_Rec_Access is access all Timer_Rec;
 
-   task type One_Shot (R : Timer_Rec_Access) is
+   --  No discriminants (GNAT rejects discriminant aggregates on task
+   --  allocators here); the heap record is handed over via a Set entry.
+   task type One_Shot is
+      entry Set (R : Timer_Rec_Access);
    end One_Shot;
 
    type One_Shot_Access is access all One_Shot;
 
    task body One_Shot is
+      R : Timer_Rec_Access;
    begin
+      accept Set (R_Val : Timer_Rec_Access) do
+         R := R_Val;
+      end Set;
       delay until RT."+" (RT.Clock, To_Span (R.Core.D));
       if not R.Core.Stopped then
          Time_Channels.Send (R.Core.Ch, True);
       end if;
    end One_Shot;
 
-   task type Repeater (R : Timer_Rec_Access) is
+   task type Repeater is
+      entry Set (R : Timer_Rec_Access);
    end Repeater;
 
    type Repeater_Access is access all Repeater;
 
    task body Repeater is
+      R : Timer_Rec_Access;
    begin
+      accept Set (R_Val : Timer_Rec_Access) do
+         R := R_Val;
+      end Set;
       loop
          delay until RT."+" (RT.Clock, To_Span (R.Core.D));
          exit when R.Core.Stopped;
@@ -316,9 +328,10 @@ package body Gada.Std.Time is
    function New_Timer (D : Duration) return Timer is
       Core : constant Timer_Core_Access := new Timer_Core;
       Rec : constant Timer_Rec_Access := new Timer_Rec'(Core => Core);
-      T   : constant One_Shot_Access := new One_Shot'(Rec);
+      T   : constant One_Shot_Access := new One_Shot;
    begin
       Core.Setup (Time_Channels.Make, D);
+      T.Set (Rec);
       Keep.Add (T.all'Address);
       return (C => Core.Ch, Core => Core);
    end New_Timer;
@@ -333,9 +346,10 @@ package body Gada.Std.Time is
    function After (D : Duration) return Time_Channels.Channel is
       Core : constant Timer_Core_Access := new Timer_Core;
       Rec : constant Timer_Rec_Access := new Timer_Rec'(Core => Core);
-      T   : constant One_Shot_Access := new One_Shot'(Rec);
+      T   : constant One_Shot_Access := new One_Shot;
    begin
       Core.Setup (Time_Channels.Make, D);
+      T.Set (Rec);
       Keep.Add (T.all'Address);
       return Core.Ch;
    end After;
@@ -343,9 +357,10 @@ package body Gada.Std.Time is
    function Tick (D : Duration) return Time_Channels.Channel is
       Core : constant Timer_Core_Access := new Timer_Core;
       Rec : constant Timer_Rec_Access := new Timer_Rec'(Core => Core);
-      T   : constant Repeater_Access := new Repeater'(Rec);
+      T   : constant Repeater_Access := new Repeater;
    begin
       Core.Setup (Time_Channels.Make, D);
+      T.Set (Rec);
       Keep.Add (T.all'Address);
       return Core.Ch;
    end Tick;

@@ -12,10 +12,22 @@ mutexes, `time.After`, `os.Args`, and `runtime.NumGoroutine`.
 
 ## Items
 
-- [ ] **Stdlib package: `sync`**
-      *Files:* `stdlib/sync/`
+- [x] **Stdlib package: `sync`**
+      *Files:* `runtime/src/gada-std-sync.{ads,adb}`, `runtime/tests/stdlib/sync_suite.{ads,adb}`
       *Verify:* `make stdlib-test PKG=sync`
       *Done when:* `Mutex`, `RWMutex`, `WaitGroup`, `Once`, `Cond` all correct on top of Ada protected objects; coverage 100%.
+      *Done 2026-11-26:* landed as `Gada.Std.Sync`. Mutex/RWMutex are
+      protected types (entries with barriers for blocking Lock/RLock,
+      procedures for Unlock/TryLock); misuse raises Constraint_Error
+      where Go panics (unlock-of-unlocked, RUnlock with no readers,
+      WaitGroup underflow). WaitGroup.Wait is an entry barrier on the
+      counter; Once.Do_K runs f exactly once and marks done even when f
+      raises (Go's defer). Cond is a Mutex_Access + unbounded channel +
+      protected waiter counter, so Signal never leaves a stale token and
+      Wait releases/reacquires L. Suite `stdlib.sync` (7 tests,
+      goroutine-driven) all green; runtime coverage stays 100%.
+      Compiler: "sync" joined StdlibPackages (Once.Do maps to Do_K —
+      "do" is reserved, same _K rule as New_K/Is_K).
 
 - [ ] **Stdlib package: `time`**
       *Files:* `stdlib/time/`

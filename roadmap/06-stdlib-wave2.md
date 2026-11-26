@@ -48,10 +48,21 @@ mutexes, `time.After`, `os.Args`, and `runtime.NumGoroutine`.
       green; runtime coverage stays 100% (4 lcov-terminator excludes).
       Compiler: "time" joined StdlibPackages.
 
-- [ ] **Stdlib package: `os`**
-      *Files:* `stdlib/os/`
+- [x] **Stdlib package: `os`**
+      *Files:* `runtime/src/gada-std-os.{ads,adb}`, `runtime/tests/stdlib/os_suite.{ads,adb}`
       *Verify:* `make stdlib-test PKG=os`
       *Done when:* `Args`, `Getenv`, `Setenv`, `Open`, `Create`, `Stat`, `Mkdir` correct; coverage ≥ 90%.
+      *Done 2026-11-26:* wave 2 landed in `Gada.Std.OS` (Read_File was
+      wave 1). Args over Ada.Command_Line (Args(1) = program name);
+      Lookup_Env/Get_Env/Set_Env over Ada.Environment_Variables with
+      Go's invalid-key rejection (empty or containing '='). File is a
+      limited record wrapping Stream_IO.File_Type behind a heap access
+      (Go's *os.File); Open/Create return (handle, Err) out-params,
+      Write raises Use_Error on a closed handle, Close nulls it. Stat
+      reports size/dir via Ada.Directories; Mkdir errors on existing.
+      Suite `stdlib.os` (10 tests) all green (257 total); runtime
+      coverage stays 100% (10 documented excludes: untriggerable
+      read-error arm, lcov terminators, argv loop body).
 
 - [ ] **Stdlib package: `runtime`** (introspection on GADA scheduler)
       *Files:* `stdlib/runtime/`

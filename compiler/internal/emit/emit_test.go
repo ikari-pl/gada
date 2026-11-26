@@ -606,7 +606,8 @@ func TestVarDeclTypeInference(t *testing.T) {
 		want string
 	}{
 		{"int", &ir.Lit{Kind: ir.LitInt, Value: "1"}, "X : Integer := 1;"},
-		{"string", &ir.Lit{Kind: ir.LitString, Value: `"hi"`}, `X : String := "hi";`},
+		// (line-wrapped at 80 cols in real output; match the tail)
+		{"string", &ir.Lit{Kind: ir.LitString, Value: `"hi"`}, `Ada.Strings.Unbounded.To_Unbounded_String ("hi");`},
 		{"bool", &ir.Lit{Kind: ir.LitBool, Value: "true"}, "X : Boolean := True;"},
 		{"float", &ir.Lit{Kind: ir.LitFloat, Value: "1.5"}, "X : Long_Float := 1.5;"},
 	}

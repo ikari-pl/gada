@@ -14,26 +14,33 @@ package body P is
    procedure F (Path : String) is
       Data : Gada.Std.Bytes.Byte_Slice := Gada.Std.Bytes.Byte_Vectors.Empty;
       Err : Gada.Std.Errors.Error_Access;
-      Text : String := "";
+      Text : Ada.Strings.Unbounded.Unbounded_String :=
+            Ada.Strings.Unbounded.To_Unbounded_String ("");
       Words : Gada.Std.Strings.String_Slice :=
             Gada.Std.Strings.String_Vectors.Empty;
       N : Integer;
-      W : String := "";
-      W2 : String := "";
+      W : Ada.Strings.Unbounded.Unbounded_String :=
+            Ada.Strings.Unbounded.To_Unbounded_String ("");
+      W2 : Ada.Strings.Unbounded.Unbounded_String :=
+            Ada.Strings.Unbounded.To_Unbounded_String ("");
    begin
       Gada.Std.OS.Read_File (Path, Data, Err);
-      Text := Gada.Std.Bytes.To_String (Data);
-      Words := Gada.Std.Strings.Fields (Text);
+      Text := Ada.Strings.Unbounded.To_Unbounded_String
+            (Gada.Std.Bytes.To_String (Data));
+      Words := Gada.Std.Strings.Fields (Ada.Strings.Unbounded.To_String (Text));
       N := Integer (Gada.Std.Strings.String_Vectors.Length (Words));
-      W := Ada.Strings.Unbounded.To_String
-            (Gada.Std.Strings.String_Vectors.Element (Words, 0 + 1));
-      W2 := Gada.Std.Strings.Trim_Space (W);
+      W := Ada.Strings.Unbounded.To_Unbounded_String
+            (Ada.Strings.Unbounded.To_String
+            (Gada.Std.Strings.String_Vectors.Element (Words, 0 + 1)));
+      W2 := Ada.Strings.Unbounded.To_Unbounded_String
+            (Gada.Std.Strings.Trim_Space (Ada.Strings.Unbounded.To_String (W)));
       Gada.Std.Strings.String_Vectors.Replace_Element (Words, 0 + 1,
-            Ada.Strings.Unbounded.To_Unbounded_String (W2));
+            Ada.Strings.Unbounded.To_Unbounded_String
+            (Ada.Strings.Unbounded.To_String (W2)));
       if Err /= null then
          Panic_Of_Integer.Do_Panic ("read failed");
       end if;
-      if (N > 0) and (W2 /= "") then
+      if (N > 0) and (Ada.Strings.Unbounded.To_String (W2) /= "") then
          Panic_Of_Integer.Do_Panic ("nonempty");
       end if;
    exception

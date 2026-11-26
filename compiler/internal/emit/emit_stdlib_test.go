@@ -61,9 +61,9 @@ func TestStdlibOutCallEmit(t *testing.T) {
 	for _, want := range []string{
 		"Data : Gada.Std.Bytes.Byte_Slice := Gada.Std.Bytes.Byte_Vectors.Empty;",
 		"Err : Gada.Std.Errors.Error_Access;",
-		`Text : String := "";`,
+		`Text : Ada.Strings.Unbounded.Unbounded_String := Ada.Strings.Unbounded.To_Unbounded_String ("");`,
+		`Text := Ada.Strings.Unbounded.To_Unbounded_String (Gada.Std.Bytes.To_String (Data));`,
 		`Gada.Std.OS.Read_File ("f.txt", Data, Err);`,
-		"Text := Gada.Std.Bytes.To_String (Data);",
 		"if Err /= null then",
 	} {
 		if !strings.Contains(out, want) {
@@ -110,8 +110,8 @@ func TestStringSliceEmit(t *testing.T) {
 	for _, want := range []string{
 		"Words : Gada.Std.Strings.String_Slice := Gada.Std.Strings.Fields (Text);",
 		"N : Integer := Integer (Gada.Std.Strings.String_Vectors.Length (Words));",
-		"W : String := Ada.Strings.Unbounded.To_String (Gada.Std.Strings.String_Vectors.Element (Words, 0 + 1));",
-		"Gada.Std.Strings.String_Vectors.Replace_Element (Words, 0 + 1, Ada.Strings.Unbounded.To_Unbounded_String (W));",
+		"W : Ada.Strings.Unbounded.Unbounded_String := Ada.Strings.Unbounded.To_Unbounded_String (Ada.Strings.Unbounded.To_String (Gada.Std.Strings.String_Vectors.Element (Words, 0 + 1)));",
+		"Gada.Std.Strings.String_Vectors.Replace_Element (Words, 0 + 1, Ada.Strings.Unbounded.To_Unbounded_String (Ada.Strings.Unbounded.To_String (W)));",
 		"with Ada.Strings.Unbounded;",
 		"with Gada.Std.Strings;",
 	} {
@@ -342,8 +342,8 @@ func TestDeclInitHelpers(t *testing.T) {
 	if got := vectorEmptyInit(&ir.SliceType{Elem: &ir.IntType{}}); got != "" {
 		t.Errorf("vectorEmptyInit([]int) = %q, want empty", got)
 	}
-	if got := declInit(&ir.StringType{}); got != `""` {
-		t.Errorf("declInit(string) = %q", got)
+	if got := declInit(&ir.StringType{}); got != "" {
+		t.Errorf("declInit(string) = %q (string locals are Unbounded_String; handled by emitVarDecl)", got)
 	}
 	if got := declInit(&ir.IntType{}); got != "" {
 		t.Errorf("declInit(int) = %q, want empty", got)
@@ -392,5 +392,67 @@ func TestRhsIRTypeMisses(t *testing.T) {
 	}}, &buf)
 	if err == nil || !strings.Contains(err.Error(), "known result types") {
 		t.Fatalf("nil result type: err = %v", err)
+	}
+}
+
+// TestUnboundedStringAssignEmit pins the local-string-variable
+// lowering: head `w := "a"` declares W as Unbounded_String, and a later
+// `w = "b"` assigns the bare l-value (never `To_String (W) := ...`)
+// with the RHS wrapped back into Unbounded_String.
+func TestUnboundedStringAssignEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, nil,
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("w")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"a"`}},
+		},
+		&ir.Assign{
+			LHS: []ir.Expr{idn("w")},
+			RHS: []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"b"`}},
+		},
+	)
+	for _, want := range []string{
+		"W : Ada.Strings.Unbounded.Unbounded_String := Ada.Strings.Unbounded.To_Unbounded_String (\"a\");",
+		"W := Ada.Strings.Unbounded.To_Unbounded_String (\"b\");",
+		"with Ada.Strings.Unbounded;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "To_String (W) :=") {
+		t.Errorf("assignment LHS must stay a bare l-value:\n%s", out)
+	}
+}
+
+// TestStdlibOutCallStringResultEmit pins the 2-LHS out-call whose first
+// result is a string: the target is declared as Unbounded_String so the
+// out-param write is not length-constrained.
+func TestStdlibOutCallStringResultEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"os"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("s"), idn("err")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:  &ir.Selector{X: idn("os"), Sel: "ReadFile"},
+				Args: []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"f.txt"`}},
+				ResultTypes: []ir.Type{
+					&ir.StringType{},
+					&ir.ErrorType{},
+				},
+			}},
+		},
+	)
+	for _, want := range []string{
+		"S : Ada.Strings.Unbounded.Unbounded_String := Ada.Strings.Unbounded.To_Unbounded_String (\"\");",
+		"Err : Gada.Std.Errors.Error_Access;",
+		"Gada.Std.OS.Read_File (\"f.txt\", S, Err);",
+		"with Ada.Strings.Unbounded;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
 	}
 }

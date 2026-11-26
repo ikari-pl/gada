@@ -187,6 +187,7 @@ type emitter struct {
 	needsStdBytes       bool                      // a []byte value (os.ReadFile result, string([]byte)) is used → `with Gada.Std.Bytes;`
 	pendingHead         []pendingHeadInit         // per-subprogram queue of head-of-body defines whose *initialisation* must run at the top of the body in source order (2-LHS stdlib out-calls, and any := whose RHS references an out-call result — Go evaluates RHS at the := point, but Ada declarative initialisers run before the body, so these are declared bare and initialised in the body). Drained by emitPendingHead at body top. Reset per subprogram.
 	deferredDecls       map[string]bool           // names whose decl initialiser was deferred to the body (out-call targets and anything referencing them).
+	unboundedStrings    map[string]bool           // local string vars, declared as Unbounded_String (Ada String objects are bound-constrained; Go strings are variable-length).
 	pendingRecvs        []pendingChanRecv         // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
 	pendingAsserts      []pendingTypeAssert       // per-subprogram queue of `v, ok := x.(T)` (comma-ok, item 6b) defines whose body-side membership-test + guarded-conversion block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order (same "RHS evaluates at the := point" rule). Reset at every emitSubprogram call.
 	err                 error
@@ -216,6 +217,7 @@ type pendingOutCall struct {
 type pendingHeadInit struct {
 	outCall *pendingOutCall
 	lhs     string
+	name    string // Go spelling of lhs, for unboundedStrings lookups
 	rhs     ir.Expr
 }
 
@@ -257,6 +259,8 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		dispatchMethodNames: map[string]bool{},
 		emptyInterfaceNames: map[string]bool{},
 		stdlibImports:       map[string]string{},
+		deferredDecls:       map[string]bool{},
+		unboundedStrings:    map[string]bool{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
@@ -768,6 +772,16 @@ func (e *emitter) collectWiths() []string {
 }
 
 func (e *emitter) run() error {
+	// Pre-pass over every subprogram so with-driving flags that
+	// populateLocals sets (needsUnbounded for local string vars,
+	// 2-LHS string out-call results) are known before the with-clause
+	// is printed. emitSubprogram / emitMainProc re-run populateLocals
+	// per subprogram, which resets the per-subprogram maps.
+	for _, d := range e.file.Decls {
+		if fn, ok := d.(*ir.Function); ok {
+			e.populateLocals(fn)
+		}
+	}
 	withs := e.collectWiths()
 	// A `package main` file that declares interface types cannot nest
 	// them in `procedure Main` — Ada only allows abstract/dispatching
@@ -1408,6 +1422,7 @@ func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
 		e.pendingAsserts = nil
 		e.pendingHead = nil
 		e.deferredDecls = map[string]bool{}
+		e.unboundedStrings = map[string]bool{}
 		e.populateLocals(main)
 	}
 	for _, a := range mainDecls {
@@ -1682,6 +1697,10 @@ func (e *emitter) populateLocals(fn *ir.Function) {
 				for i, lhs := range a.LHS {
 					if id, ok := lhs.(*ir.Ident); ok && c.ResultTypes[i] != nil {
 						e.localTypes[id.Name] = c.ResultTypes[i]
+						if _, isStr := c.ResultTypes[i].(*ir.StringType); isStr {
+							e.unboundedStrings[id.Name] = true
+							e.needsUnbounded = true
+						}
 					}
 				}
 			}
@@ -1700,6 +1719,16 @@ func (e *emitter) populateLocals(fn *ir.Function) {
 			// `v := s[i]` binds the element type.
 			if elem, ok := e.sliceElemForExpr(ix.X); ok {
 				e.localTypes[id.Name] = elem
+			}
+		}
+		// Local Go string vars are declared as Unbounded_String on
+		// the Ada side: a `String` object is bound-constrained by its
+		// initializer, so `s := ""` would reject any later non-empty
+		// assignment with a length check.
+		if t := e.rhsIRType(a.RHS[0]); t != nil {
+			if _, isStr := t.(*ir.StringType); isStr {
+				e.unboundedStrings[id.Name] = true
+				e.needsUnbounded = true
 			}
 		}
 	}
@@ -1762,6 +1791,18 @@ func (e *emitter) emitStdlibOutCallDecl(a *ir.Assign, c *ir.Call) {
 			e.fail(err)
 			return
 		}
+		if rt := c.ResultTypes[i]; rt != nil {
+			if _, isStr := rt.(*ir.StringType); isStr {
+				typ = "Ada.Strings.Unbounded.Unbounded_String"
+				e.unboundedStrings[id.Name] = true
+				e.needsUnbounded = true
+				decl := adaIdent(id.Name) + " : " + typ +
+					` := Ada.Strings.Unbounded.To_Unbounded_String ("")`
+				e.println(decl + ";")
+				lhs = append(lhs, adaIdent(id.Name))
+				continue
+			}
+		}
 		decl := adaIdent(id.Name) + " : " + typ
 		if init := declInit(c.ResultTypes[i]); init != "" {
 			decl += " := " + init
@@ -1796,7 +1837,11 @@ func (e *emitter) emitPendingHead() {
 			args = append(args, po.lhs...)
 			e.println(e.emitExpr(po.call.Fun) + " (" + strings.Join(args, ", ") + ");")
 		} else {
-			e.println(ph.lhs + " := " + e.emitExpr(ph.rhs) + ";")
+			rhs := e.emitExpr(ph.rhs)
+			if e.unboundedStrings[ph.name] {
+				rhs = "Ada.Strings.Unbounded.To_Unbounded_String (" + rhs + ")"
+			}
+			e.println(ph.lhs + " := " + rhs + ";")
 		}
 	}
 	e.pendingHead = nil
@@ -1898,6 +1943,7 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	e.pendingAsserts = nil
 	e.pendingHead = nil
 	e.deferredDecls = map[string]bool{}
+	e.unboundedStrings = map[string]bool{}
 	e.populateLocals(fn)
 	header, name, ok := e.subpHeader(fn)
 	if !ok {
@@ -2489,10 +2535,6 @@ func declInit(t ir.Type) string {
 	if init := vectorEmptyInit(t); init != "" {
 		return init
 	}
-	switch t.(type) {
-	case *ir.StringType:
-		return `""`
-	}
 	return ""
 }
 
@@ -2653,22 +2695,32 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 		e.fail(err)
 		return
 	}
+	// Local string vars are Unbounded_String (see populateLocals).
+	rhsT := e.rhsIRType(a.RHS[0])
+	if _, isStr := rhsT.(*ir.StringType); isStr {
+		typ = "Ada.Strings.Unbounded.Unbounded_String"
+	}
 	// If the RHS reads an out-call result (or anything derived from
 	// one), the value is not available until the body runs — declare
 	// bare and queue the initialiser for the top of the body.
 	if e.refsDeferred(a.RHS[0]) {
 		decl := adaIdent(id.Name) + " : " + typ
-		if init := declInit(e.rhsIRType(a.RHS[0])); init != "" {
+		if _, isStr := rhsT.(*ir.StringType); isStr {
+			decl += ` := Ada.Strings.Unbounded.To_Unbounded_String ("")`
+		} else if init := declInit(rhsT); init != "" {
 			decl += " := " + init
 		}
 		e.println(decl + ";")
 		e.pendingHead = append(e.pendingHead, pendingHeadInit{
-			lhs: adaIdent(id.Name), rhs: a.RHS[0],
+			lhs: adaIdent(id.Name), name: id.Name, rhs: a.RHS[0],
 		})
 		e.deferredDecls[id.Name] = true
 		return
 	}
 	rhs := e.emitExpr(a.RHS[0])
+	if _, isStr := rhsT.(*ir.StringType); isStr {
+		rhs = "Ada.Strings.Unbounded.To_Unbounded_String (" + rhs + ")"
+	}
 	e.println(adaIdent(id.Name) + " : " + typ + " := " + rhs + ";")
 }
 
@@ -3209,8 +3261,16 @@ func (e *emitter) emitAssign(a *ir.Assign) {
 			return
 		}
 	}
+	// The LHS of an assignment is an l-value: never wrap it in
+	// To_String even when it is an unbounded string local.
 	lhs := e.emitExpr(a.LHS[0])
+	if id, ok := a.LHS[0].(*ir.Ident); ok && e.unboundedStrings[id.Name] {
+		lhs = adaIdent(id.Name)
+	}
 	rhs := e.emitExpr(a.RHS[0])
+	if id, ok := a.LHS[0].(*ir.Ident); ok && e.unboundedStrings[id.Name] {
+		rhs = "Ada.Strings.Unbounded.To_Unbounded_String (" + rhs + ")"
+	}
 	e.println(lhs + " := " + rhs + ";")
 }
 
@@ -3590,7 +3650,11 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 	}
 	switch x := x.(type) {
 	case *ir.Ident:
-		return adaIdent(x.Name)
+		name := adaIdent(x.Name)
+		if e.unboundedStrings[x.Name] {
+			return "Ada.Strings.Unbounded.To_String (" + name + ")"
+		}
+		return name
 	case *ir.Lit:
 		return e.emitLit(x)
 	case *ir.BinOp:

@@ -117,7 +117,7 @@ package body Net_Suite is
       pragma Unreferenced (T);
       type Case_Array is array (Positive range <>) of String (1 .. 40);
       Good : constant Case_Array :=
-         "::1                                     ",
+         ("::1                                     ",
          "2001:db8::1                             ",
          "2001:0db8:0000:0000:0000:ff00:0042:8329 ",
          "::                                      ",
@@ -126,7 +126,7 @@ package body Net_Suite is
          "fe80::a:b:c:d                           ",
          "1:2:3:4:5:6:7:8                         ");
       Want : constant Case_Array :=
-         "::1                                     ",
+         ("::1                                     ",
          "2001:db8::1                             ",
          "2001:db8::ff00:42:8329                  ",
          "::                                      ",
@@ -135,7 +135,7 @@ package body Net_Suite is
          "fe80::a:b:c:d                           ",
          "1:2:3:4:5:6:7:8                         ");
       Bad : constant Case_Array :=
-         "1:2:3:4:5:6:7:8:9                       ",
+         ("1:2:3:4:5:6:7:8:9                       ",
          "1::2::3                                 ",
          "12345::                                 ",
          "::ffff:256.1.1.1                        ",

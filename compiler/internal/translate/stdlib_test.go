@@ -133,6 +133,8 @@ func TestGoTypesToIR(t *testing.T) {
 		{"[]string", types.NewSlice(types.Typ[types.String]), "SliceType"},
 		{"[]byte", types.NewSlice(types.Typ[types.Byte]), "SliceType"},
 		{"error", errType, "ErrorType"},
+		{"chan int", types.NewChan(types.SendRecv, types.Typ[types.Int]), "ChanType"},
+		{"named Time", types.NewNamed(types.NewTypeName(0, nil, "Time", nil), nil, nil), "NamedType"},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -293,5 +295,60 @@ func f(s string) []string { return strings.Fields(s) }
 	}, nil)
 	if got := (&translator{}).goOneToIR(iface); got == nil || got.NodeKind() != "ErrorType" {
 		t.Fatalf("goOneToIR(bare error iface) = %#v", got)
+	}
+}
+
+// TestDeclStmtVarErrors pins the rejection paths of Phase 6's `var x T`
+// DeclStmt handling: only single-name, no-initializer var specs of a
+// single spec group are accepted.
+func TestDeclStmtVarErrors(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"const", "package p\nfunc f() { const c = 1 }\n"},
+		{"multi-spec", "package p\nfunc f() { var (a int; b int) }\n"},
+		{"with-init", "package p\nfunc f() { var a = 1 }\n"},
+		{"multi-name", "package p\nfunc f() { var a, b int }\n"},
+		{"bad-type", "package p\nfunc f() { var a [2]int }\n"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fset := token.NewFileSet()
+			af, err := parser.ParseFile(fset, "x.go", tc.src, parser.AllErrors)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if _, err := File(af, nil); err == nil {
+				t.Fatalf("File(%s) succeeded, want error", tc.name)
+			}
+		})
+	}
+}
+
+// TestTransTypeSelectorExpr pins qualified type expressions:
+// `sync.Mutex` becomes NamedType{"Mutex"}; a non-ident qualifier is
+// rejected.
+func TestTransTypeSelectorExpr(t *testing.T) {
+	t.Parallel()
+	tr := &translator{}
+	got, err := tr.transType(&ast.SelectorExpr{
+		X:   &ast.Ident{Name: "sync"},
+		Sel: &ast.Ident{Name: "Mutex"},
+	})
+	if err != nil {
+		t.Fatalf("transType(sync.Mutex): %v", err)
+	}
+	if nt, ok := got.(*ir.NamedType); !ok || nt.Name != "Mutex" {
+		t.Fatalf("transType(sync.Mutex) = %#v, want NamedType{Mutex}", got)
+	}
+	if _, err := tr.transType(&ast.SelectorExpr{
+		X:   &ast.SelectorExpr{X: &ast.Ident{Name: "a"}, Sel: &ast.Ident{Name: "b"}},
+		Sel: &ast.Ident{Name: "C"},
+	}); err == nil {
+		t.Fatal("transType(a.b.C) succeeded, want error")
 	}
 }

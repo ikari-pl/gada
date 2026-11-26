@@ -123,6 +123,16 @@ package body Strconv_Suite is
       Assert (Format_Float (123.456, 'g', 4) = "123.5", "g prec 4 rounds");
       Assert (Format_Float (123456.0, 'g', 8) = "123456", "g prec 8 Eprec");
       Assert (Format_Float (0.000123, 'g', 2) = "0.00012", "g small exp");
+      --  'g' fixed form strips zeros even when the value has fewer
+      --  significant digits than the exponent needs (Go-verified).
+      Assert (Format_Float (1.0e6, 'g', 8) = "1000000", "g 1e6 prec 8");
+      Assert (Format_Float (9.999, 'g', 3) = "10", "g 9.999 prec 3");
+      Assert (Format_Float (100.0, 'g', 6) = "100", "g 100 prec 6");
+      Assert (Format_Float (1.0e21, 'g', 25) =
+                "1000000000000000000000", "g 1e21 prec 25");
+      --  Shortest-mode tie-to-even must pick the even last digit.
+      Assert (Format_Float (8.111033711064938e+13) =
+                "8.111033711064938e+13", "g shortest tie-to-even");
       --  Specials via Parse_Float (Go's exact spellings).
       Parse_Float ("nan", Nan, E);
       Assert (E = Errors.No_Error and Nan /= Nan, "parse nan");
@@ -158,6 +168,18 @@ package body Strconv_Suite is
       --  Zero-case rounding at the 10^-Aft position (DP + Aft < 1).
       Assert (Format_Float (0.06, 'f', 1) = "0.1", "0.06 rounds up");
       Assert (Format_Float (0.04, 'f', 1) = "0.0", "0.04 rounds down");
+      --  DP + Aft < 0: the digit at 10^-Aft is an implicit 0, so the
+      --  value is below half a unit and must round DOWN (Go-verified).
+      Assert (Format_Float (0.06, 'f', 0) = "0", "0.06 f 0 rounds down");
+      Assert (Format_Float (0.05, 'f', 0) = "0", "0.05 f 0 tie down");
+      Assert (Format_Float (0.006, 'f', 1) = "0.0", "0.006 f 1 rounds down");
+      Assert (Format_Float (9.999e-05, 'f', 2) = "0.00", "9.999e-5 f 2");
+      --  Half-to-even tests the least significant KEPT digit (R (1)),
+      --  not the MSB (Go-verified).
+      Assert (Format_Float (199.125, 'f', 2) = "199.12", "199.125 f 2 even");
+      Assert (Format_Float (0.125, 'f', 2) = "0.12", "0.125 f 2 even");
+      Assert (Format_Float (0.375, 'f', 2) = "0.38", "0.375 f 2 odd up");
+      Assert (Format_Float (1.25, 'e', 1) = "1.2e+00", "1.25 e 1 even");
       --  Fmt_F zero-padding branches.
       Assert (Format_Float (0.0001, 'f', 6) = "0.000100", "f lead zeros");
       Assert (Format_Float (123.0, 'f', 3) = "123.000", "f int + pad");
@@ -202,6 +224,10 @@ package body Strconv_Suite is
       Assert (Errors.Is_K (E, Err_Syntax), "bare exponent: syntax");
       Parse_Float ("--1", V, E);
       Assert (Errors.Is_K (E, Err_Syntax), "double sign: syntax");
+      Parse_Float ("-nan", V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "-nan: syntax (Go rejects)");
+      Parse_Float ("+nan", V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "+nan: syntax (Go rejects)");
       Parse_Float ("1_000", V, E);
       Assert (Errors.Is_K (E, Err_Syntax), "underscores rejected in v1");
       Parse_Float ("1e999", V, E);
@@ -341,7 +367,8 @@ package body Strconv_Suite is
                 = "strconv.Atoi: parsing ""x"": invalid syntax",
               "Num_Error.Message format, got: "
                 & Errors.Message (E.all));
-      Assert (Errors.Unwrap (E) = Err_Syntax, "NumError Unwrap = sentinel");
+      Assert (Errors.Unwrap (E.all) = Err_Syntax,
+              "NumError Unwrap = sentinel");
    end Test_Num_Error_Is_As;
 
    procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class) is

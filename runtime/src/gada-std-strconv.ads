@@ -73,6 +73,9 @@ package Gada.Std.Strconv is
    procedure Parse_Float (S : String; Value : out Long_Float;
                           Err : out Gada.Std.Errors.Error_Access);
 
+   --  Go: func QuoteRune(c rune) string — single-quoted Go char literal.
+   function Quote_Rune (C : Character) return String;
+
    --  Go: func Quote(s string) string — double-quoted Go literal with
    --  \a \b \f \n \r \t \v \\ \" and \xNN for other control bytes.
    function Quote (S : String) return String;

@@ -275,8 +275,10 @@ package body Gada.Std.Strconv is
          end loop;
          --  Round up if the dropped part exceeds half, or is exactly
          --  half and the kept LSB is odd (round half to even).
+         --  R is LSB-first, so the least significant *kept* digit is
+         --  R (1); round half to even tests that one, not the MSB.
          if Top > 5
-           or else (Top = 5 and then (Lower or else R (N) mod 2 = 1))
+           or else (Top = 5 and then (Lower or else R (1) mod 2 = 1))
          then
             declare
                Carry : Natural := 1;
@@ -323,7 +325,13 @@ package body Gada.Std.Strconv is
                Lower := True;
             end if;
          end loop;
-         if B (Len) > 5 or else (B (Len) = 5 and then Lower) then
+         --  B (Len) is the MSB at place 10^(DP-1); it is the first
+         --  dropped digit only when DP + Aft = 0. When DP + Aft < 0
+         --  the digit at 10^-Aft is an implicit 0 and the value is
+         --  below half a unit: always round down.
+         if DP + Aft = 0
+           and then (B (Len) > 5 or else (B (Len) = 5 and then Lower))
+         then
             R (1) := 1;  --  round up to 10^-Aft (kept 0 is even: ties down)
          else
             R (1) := 0;
@@ -671,9 +679,6 @@ package body Gada.Std.Strconv is
                   return Fmt_E (Neg, R, RN, RDP,
                                 Natural'Min (K, Nd) - 1, Fmt = 'G');
                end if;
-               declare
-                  N_Sig : constant Natural :=
-                    (if Shortest then Nd else Eprec);
                begin
                   --  'g' strips trailing zeros; R is LSB-first, so they
                   --  sit at low indices. Compact to Nd significant digits
@@ -685,7 +690,7 @@ package body Gada.Std.Strconv is
                      RN := Nd;
                   end if;
                   return Fmt_F (Neg, R, RN, RDP,
-                                Natural'Max (0, N_Sig - 1 - Exp10));
+                                Natural'Max (0, Nd - 1 - Exp10));
                end;
             end;
       end case;
@@ -718,7 +723,11 @@ package body Gada.Std.Strconv is
             else S);
          Neg  : constant Boolean := S (S'First) = '-';
       begin
-         if Equal_Ignore_Case (Core, "nan") then
+         --  Go accepts only unsigned "nan"; the sign is allowed for
+         --  inf/infinity alone.
+         if S (S'First) /= '+' and then S (S'First) /= '-'
+           and then Equal_Ignore_Case (Core, "nan")
+         then
             Value := NaN_Float;
             return;
          end if;
@@ -758,14 +767,15 @@ package body Gada.Std.Strconv is
       end;
    end Parse_Float;
 
-   function Quote (S : String) return String is
+   --  Shared core: quotes S with the given delimiter, escaping the
+   --  delimiter itself, the backslash, and control chars (Go's Quote
+   --  and QuoteRune differ only in the delimiter).
+   function Quote_Core (S : String; Delim : Character) return String is
       B : Unbounded_String;
    begin
-      Append (B, DQUOTE);
+      Append (B, Delim);
       for C of S loop
          case C is
-            when DQUOTE =>
-               Append (B, '\' & DQUOTE);  --  \"
             when BSLASH =>
                Append (B, BSLASH & BSLASH);     --  \\
             when Character'Val (7) =>
@@ -783,16 +793,24 @@ package body Gada.Std.Strconv is
             when Character'Val (13) =>
                Append (B, "\r");
             when others =>
-               if C < ' ' or else C = Character'Val (127) then
+               if C = Delim then
+                  Append (B, BSLASH & Delim);
+               elsif C < ' ' or else C = Character'Val (127) then
                   Append (B, "\x" & Hex2 (C));
                else
                   Append (B, C);
                end if;
          end case;
       end loop;
-      Append (B, DQUOTE);
+      Append (B, Delim);
       return To_String (B);
-   end Quote;
+   end Quote_Core;
+
+   function Quote (S : String) return String is
+     (Quote_Core (S, DQUOTE));
+
+   function Quote_Rune (C : Character) return String is
+     (Quote_Core (String'(1 => C), Character'Val (39)));
 
    procedure Unquote (S : String; Value : out Unbounded_String;
                       Err : out Errors.Error_Access) is

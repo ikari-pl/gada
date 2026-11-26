@@ -51,8 +51,12 @@ package Gada.Std.Errors is
    --  a subprogram cannot share the type's name (homograph rule).
    function Message (E : Error) return String;
 
-   --  errors.Unwrap(err) — the cause, or No_Error.
-   function Unwrap (E : Error_Access) return Error_Access;
+   --  errors.Unwrap(err) — a *dispatching* primitive of Error, so a
+   --  derived error type can override it exactly like Go's
+   --  `Unwrap() error` method; the default returns the Cause (or
+   --  No_Error). Call it on the access as `Unwrap (E.all)`; a null
+   --  access (Go's Unwrap(nil)) is handled by Is_K/As directly.
+   function Unwrap (E : Error) return Error_Access;
 
    --  errors.Is(err, target): true iff target is null and err is null,
    --  or some error in err's unwrap chain is the *same* error value as

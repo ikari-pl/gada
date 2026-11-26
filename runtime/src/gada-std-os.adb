@@ -32,13 +32,24 @@ package body Gada.Std.OS is
          Buf  : Stream_Element_Array (1 .. N);
          Last : Stream_Element_Offset;
       begin
-         SIO.Read (F, Buf, Last);
-         for I in Buf'First .. Last loop
-            Bytes.Byte_Vectors.Append
-              (Data, Character'Val (Buf (I)));
-         end loop;
+         begin
+            SIO.Read (F, Buf, Last);
+            for I in Buf'First .. Last loop
+               Bytes.Byte_Vectors.Append
+                 (Data, Character'Val (Buf (I)));
+            end loop;
+         exception
+            --  Go returns an error value; a raw Ada exception from
+            --  the stream read must not escape (and must not leak F).
+            when E : Ada.IO_Exceptions.Device_Error
+               | Ada.IO_Exceptions.End_Error
+               | Ada.IO_Exceptions.Data_Error =>
+               Err := Errors.New_K
+                 ("read " & Path & ": "
+                  & Ada.Exceptions.Exception_Message (E));
+         end;
+         SIO.Close (F);
       end;
-      SIO.Close (F);
    end Read_File;
 
 end Gada.Std.OS;

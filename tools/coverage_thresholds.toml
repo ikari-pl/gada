@@ -242,8 +242,8 @@ reason = "gcov end-block artifacts — see runtime/COVERAGE.md"
 
 [[exclude]]
 file = "runtime/src/gada-std-os.adb"
-lines = [40, 42]
-reason = "gcov declare-block end / fall-through terminator artifacts — see runtime/COVERAGE.md"
+lines = [44, 45, 46, 47, 48, 49, 50, 52, 53]
+reason = "read-error exception arm is untestable without a failing device + gcov terminator artifacts — see runtime/COVERAGE.md"
 
 # `end Image;` — the fall-through terminator of Gada.Async.Race.Image.
 # Image is a function that always `return`s (single returned conditional

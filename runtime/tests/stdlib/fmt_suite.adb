@@ -44,7 +44,13 @@ package body Fmt_Suite is
       Assert (Sprintf ("%x", (1 => A (255))) = "ff", "%x");
       Assert (Sprintf ("%X", (1 => A (255))) = "FF", "%X");
       Assert (Sprintf ("%#x", (1 => A (255))) = "0xff", "%#x");
-      Assert (Sprintf ("%#08x", (1 => A (255))) = "0x0000ff", "%#08x");
+      --  Go: with 0+#+x the width pads the DIGITS and 0x rides on top;
+      --  with space padding the prefix counts toward the width.
+      Assert (Sprintf ("%#08x", (1 => A (255))) = "0x000000ff", "%#08x");
+      Assert (Sprintf ("%08x", (1 => A (255))) = "000000ff", "%08x");
+      Assert (Sprintf ("%#8x", (1 => A (255))) = "    0xff", "%#8x");
+      Assert (Sprintf ("%+08d", (1 => A (255))) = "+0000255", "%+08d");
+      Assert (Sprintf ("%08d", (1 => A (-255))) = "-0000255", "%08d neg");
       Assert (Sprintf ("%b", (1 => A (5))) = "101", "%b");
       Assert (Sprintf ("%o", (1 => A (8))) = "10", "%o");
       Assert (Sprintf ("%c", (1 => A (65))) = "A", "%c");
@@ -92,6 +98,13 @@ package body Fmt_Suite is
       Assert (Sprintf ("%d", (1 .. 0 => A (0))) = "%!(NOVERB)",
               "missing arg");
       Assert (Sprintf ("%c", (1 => A ('x'))) = "x", "%c char arg");
+      --  Go: %q of a rune is a SINGLE-quoted literal.
+      Assert (Sprintf ("%q", (1 => A ('x'))) = "'x'", "%q char");
+      Assert (Sprintf ("%q", (1 => A (Character'Val (10)))) = "'\n'",
+              "%q LF char");
+      --  Go: %w is Errorf-only; in Sprintf it is a bad verb.
+      Assert (Sprintf ("%w", (1 => A (E))) = "%!w(BADVERB)",
+              "%w in Sprintf is BADVERB");
    end Test_Sprintf_Misc;
 
    procedure Test_Errorf (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -100,11 +113,16 @@ package body Fmt_Suite is
    begin
       Err := Errorf ("bad %d", (1 => A (1)));
       Assert (Errors.Message (Err.all) = "bad 1", "Errorf message");
-      Assert (Errors.Unwrap (Err) = Errors.No_Error, "no %w: no cause");
+      Assert (Errors.Unwrap (Err.all) = Errors.No_Error, "no %w: no cause");
       Err := Errorf ("wrap: %w", (1 => A (E)));
       Assert (Errors.Message (Err.all) = "wrap: root cause",
               "Errorf %w message");
       Assert (Errors.Is_K (Err, E), "%w wraps as the cause");
+      --  Go: %% is a literal percent — Errorf("%%w", e) does NOT wrap.
+      Err := Errorf ("100%%w", (1 => A (E)));
+      Assert (Errors.Message (Err.all) = "100%w", "%%w is literal");
+      Assert (Errors.Unwrap (Err.all) = Errors.No_Error,
+              "%%w does not wrap");
    end Test_Errorf;
 
    procedure Test_Sscanf (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -150,8 +168,8 @@ package body Fmt_Suite is
       Assert (Sprintf ("%05d", (1 => A (42))) = "00042", "%05d no sign");
       Assert (Sprintf ("%p", (1 => A (System.Null_Address))) = "0x0",
               "%p of null");
-      Assert (Sprintf ("%q", (1 => A ('x'))) = '"' & 'x' & '"',
-              "%q of char");
+      --  f24fd14 pinned the wrong value here; Go single-quotes runes.
+      Assert (Sprintf ("%q", (1 => A ('x'))) = "'x'", "%q of char");
       --  One bad verb per argument kind (each kind's others arm).
       Assert (Sprintf ("%s", (1 => A (1.5))) = "%!s(BADVERB)", "float %s");
       Assert (Sprintf ("%d", (1 => A ("x"))) = "%!d(BADVERB)", "str %d");

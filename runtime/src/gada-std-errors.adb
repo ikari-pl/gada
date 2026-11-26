@@ -23,8 +23,11 @@ package body Gada.Std.Errors is
    function Message (E : Error) return String is
      (To_String (E.Message));
 
-   function Unwrap (E : Error_Access) return Error_Access is
-     (if E = null then No_Error else E.Cause);
+   --  Default Unwrap: the stored Cause. Primitive of Error, so derived
+   --  types (e.g. strconv's Num_Error) may override it — Go's
+   --  `Unwrap() error` method hook.
+   function Unwrap (E : Error) return Error_Access is
+     (E.Cause);
 
    function Is_K (Err, Target : Error_Access) return Boolean is
    begin
@@ -40,9 +43,9 @@ package body Gada.Std.Errors is
             if X = Target then
                return True;
             end if;
-            --  Dispatching call: derived error types (e.g. strconv's
-            --  Num_Error) override Unwrap to expose their own cause.
-            X := Unwrap (X);
+            --  Dispatching call: derived error types can override
+            --  Unwrap to expose their own cause chain.
+            X := Unwrap (X.all);
          end loop;
          return False;
       end;
@@ -57,7 +60,7 @@ package body Gada.Std.Errors is
             Target.all := X.all;
             return True;
          end if;
-         X := Unwrap (X);
+         X := Unwrap (X.all);
       end loop;
       return False;
    end As;

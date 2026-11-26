@@ -59,10 +59,10 @@ package body Errors_Suite is
       AUnit.Test_Cases.Test_Case'Class) is
       E : constant Error_Access := New_K ("boom");
    begin
-      Assert (Unwrap (E) = No_Error,
+      Assert (Unwrap (E.all) = No_Error,
               "Unwrap of a causeless error must be No_Error");
-      Assert (Unwrap (No_Error) = No_Error,
-              "Unwrap of No_Error must be No_Error");
+      --  Go's Unwrap(nil) = nil; with Unwrap a tagged primitive the
+      --  null case is handled by Is_K's nil matrix (tested above).
    end Test_Unwrap_No_Cause;
 
    procedure Test_Unwrap_Chain (T : in out
@@ -71,10 +71,10 @@ package body Errors_Suite is
       Mid  : constant Error_Access := With_Cause ("mid", Root);
       Top  : constant Error_Access := With_Cause ("top", Mid);
    begin
-      Assert (Message (Unwrap (Top).all) = "mid", "Top unwraps to Mid");
-      Assert (Message (Unwrap (Unwrap (Top)).all) = "root",
+      Assert (Message (Unwrap (Top.all).all) = "mid", "Top unwraps to Mid");
+      Assert (Message (Unwrap (Unwrap (Top.all).all).all) = "root",
               "Top unwraps twice to Root");
-      Assert (Unwrap (Unwrap (Unwrap (Top))) = No_Error,
+      Assert (Unwrap (Unwrap (Unwrap (Top.all).all).all) = No_Error,
               "chain ends at No_Error");
    end Test_Unwrap_Chain;
 

@@ -1,4 +1,4 @@
---  Acc of Gada.Std.Fmt — see spec and docs/fmt_verb_support.md.
+--  Body of Gada.Std.Fmt — see spec and docs/fmt_verb_support.md.
 
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 with Ada.Text_IO;
@@ -7,13 +7,11 @@ with Interfaces;
 with Gada.Core.IO;
 with Gada.Std.Errors;
 with Gada.Std.Strconv;
-with Gada.Std.Strings;
 
 package body Gada.Std.Fmt is
 
    package Errors renames Gada.Std.Errors;
    package Strconv renames Gada.Std.Strconv;
-   package Strings renames Gada.Std.Strings;
 
    use type Errors.Error_Access;
 
@@ -76,18 +74,18 @@ package body Gada.Std.Fmt is
       end if;
    end Parse_Spec;
 
-   function Int_Base (V : Long_Integer; Base : Natural;
-                      Upper : Boolean) return String is
+   function Int_Base_U (V : Interfaces.Unsigned_64; Base : Natural;
+                        Upper : Boolean) return String is
       Digs : constant String := (if Upper then Hex_Upper else Hex_Lower);
       B      : Unbounded_String;
-      M      : Long_Integer := V;
+      M      : Interfaces.Unsigned_64 := V;
    begin
       if M = 0 then
          return "0";
       end if;
       while M > 0 loop
-         Append (B, Digs (1 + Natural (M mod Long_Integer (Base))));
-         M := M / Long_Integer (Base);
+         Append (B, Digs (1 + Natural (M mod Interfaces.Unsigned_64 (Base))));
+         M := M / Interfaces.Unsigned_64 (Base);
       end loop;
       --  B is LSB-first; reverse it.
       declare
@@ -99,7 +97,11 @@ package body Gada.Std.Fmt is
          end loop;
          return R;
       end;
-   end Int_Base;
+   end Int_Base_U;
+
+   function Int_Base (V : Long_Integer; Base : Natural;
+                      Upper : Boolean) return String is
+     (Int_Base_U (Interfaces.Unsigned_64 (V), Base, Upper));
 
    function Hex_Addr (P : System.Address) return String is
       V : constant U64 := To_U64 (P);
@@ -107,7 +109,7 @@ package body Gada.Std.Fmt is
       if V = 0 then
          return "0x0";
       end if;
-      return "0x" & Int_Base (Long_Integer (V), 16, False);
+      return "0x" & Int_Base_U (V, 16, False);
    end Hex_Addr;
 
    function Bool_Text (B : Boolean) return String is
@@ -152,7 +154,11 @@ package body Gada.Std.Fmt is
             declare
                V    : constant Long_Integer := Long_Integer (X.I);
                Neg  : constant Boolean := V < 0;
-               Mag  : constant Long_Integer := (if Neg then -V else V);
+               --  Unsigned magnitude: -Long_Integer'First would raise
+               --  (Go prints the min int without complaint).
+               Mag  : constant Interfaces.Unsigned_64 :=
+                 (if Neg then 0 - Interfaces.Unsigned_64 (V)
+                  else Interfaces.Unsigned_64 (V));
                Sign : constant String :=
                  (if Neg then "-"
                   elsif Sp.Plus then "+"
@@ -162,19 +168,19 @@ package body Gada.Std.Fmt is
             begin
                case Sp.Verb is
                   when 'd' | 'v' =>
-                     Append (Acc, Int_Base (Mag, 10, False));
+                     Append (Acc, Int_Base_U (Mag, 10, False));
                   when 'b' =>
                      if Sp.Hash then Append (Acc, "0b"); end if;
-                     Append (Acc, Int_Base (Mag, 2, False));
+                     Append (Acc, Int_Base_U (Mag, 2, False));
                   when 'o' =>
                      if Sp.Hash then Append (Acc, "0o"); end if;
-                     Append (Acc, Int_Base (Mag, 8, False));
+                     Append (Acc, Int_Base_U (Mag, 8, False));
                   when 'x' =>
                      if Sp.Hash then Append (Acc, "0x"); end if;
-                     Append (Acc, Int_Base (Mag, 16, False));
+                     Append (Acc, Int_Base_U (Mag, 16, False));
                   when 'X' =>
                      if Sp.Hash then Append (Acc, "0X"); end if;
-                     Append (Acc, Int_Base (Mag, 16, True));
+                     Append (Acc, Int_Base_U (Mag, 16, True));
                   when 'c' =>
                      return Pad (String'(1 => Character'Val (X.I)),
                                  Sp, False);
@@ -184,13 +190,19 @@ package body Gada.Std.Fmt is
                end case;
                declare
                   S    : constant String := Sign & To_String (Acc);
-                  --  Zero padding goes after the sign and any base
-                  --  prefix (Go: %#08x of 255 is 0x0000ff).
+                  --  Base prefix length. Go: with the 0 flag the width
+                  --  pads the digits and the prefix rides on top
+                  --  (%#08x of 255 = "0x000000ff"); with space padding
+                  --  the prefix counts toward the width (%#8x = 4sp+0xff).
                   Plen : constant Natural :=
                     (if Sp.Hash and then Sp.Verb in 'b' | 'o' | 'x' | 'X'
                      then 2 else 0);
+                  Sp2  : Spec := Sp;
                begin
-                  return Pad (S, Sp, True, Sign'Length + Plen);
+                  if Sp.Zero and then Plen > 0 then
+                     Sp2.Width := Sp.Width + Plen;
+                  end if;
+                  return Pad (S, Sp2, True, Sign'Length + Plen);
                end;
             end;
          when Float_Arg =>
@@ -248,8 +260,7 @@ package body Gada.Std.Fmt is
                when 'c' | 'v' =>
                   return Pad (String'(1 => X.C), Sp, False);
                when 'q' =>
-                  return Pad (Strconv.Quote (String'(1 => X.C)),
-                              Sp, False);
+                  return Pad (Strconv.Quote_Rune (X.C), Sp, False);
                when others =>
                   Bad := True;
                   return "%!" & Sp.Verb & "(BADVERB)";
@@ -264,7 +275,7 @@ package body Gada.Std.Fmt is
             end case;
          when Err_Arg =>
             case Sp.Verb is
-               when 's' | 'v' | 'w' =>
+               when 's' | 'v' =>
                   return Pad
                     ((if X.E = null then "<nil>"
                       else Errors.Message (X.E.all)),
@@ -331,21 +342,57 @@ package body Gada.Std.Fmt is
       Gada.Core.IO.Print (Sprintf (Format, Args));
    end Printf;
 
+   --  Scans Format for a real %w verb; %% is a literal percent and
+   --  must not trigger wrapping (Go: Errorf("%%w", e) does not wrap).
+   --  W_Pos is the verb's position when found.
+   function Has_W_Verb (Format : String; W_Pos : out Integer)
+      return Boolean is
+      I : Integer := Format'First;
+   begin
+      W_Pos := 0;
+      while I <= Format'Last loop
+         if Format (I) = '%' and then I < Format'Last then
+            if Format (I + 1) = '%' then
+               I := I + 2;
+            else
+               declare
+                  Sp : Spec;
+               begin
+                  Parse_Spec (Format, I, Sp);
+                  if Sp.Verb = 'w' then
+                     W_Pos := I - 1;
+                     return True;
+                  end if;
+               end;
+            end if;
+         else
+            I := I + 1;
+         end if;
+      end loop;
+      return False;
+   end Has_W_Verb;
+
    function Errorf (Format : String; Args : Arg_Array)
       return Errors.Error_Access is
-      --  %w wraps the error argument as the cause (Go 1.13).
-      function Has_W return Boolean is
-      begin
-         return Format'Length > 0
-           and then Strings.Contains (Format, "%w");
-      end Has_W;
-      Msg : constant String := Sprintf (Format, Args);
+      W_Pos : Integer;
+      Has_W : constant Boolean := Has_W_Verb (Format, W_Pos);
+      F2    : String (Format'Range) := Format;
    begin
-      if Has_W and then Args'Length = 1 and then Args (Args'First).K = Err_Arg
-      then
-         return Errors.With_Cause (Msg, Args (Args'First).E);
+      --  %w wraps the error argument as the cause (Go 1.13); in the
+      --  message itself it formats like %v.
+      if Has_W then
+         F2 (W_Pos) := 'v';
       end if;
-      return Errors.New_K (Msg);
+      declare
+         Msg : constant String := Sprintf (F2, Args);
+      begin
+         if Has_W and then Args'Length = 1
+           and then Args (Args'First).K = Err_Arg
+         then
+            return Errors.With_Cause (Msg, Args (Args'First).E);
+         end if;
+         return Errors.New_K (Msg);
+      end;
    end Errorf;
 
    --  Splits S into whitespace-separated tokens.

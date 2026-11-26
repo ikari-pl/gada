@@ -449,11 +449,15 @@ misattributed by lcov 2.4 (same class as above).
 
 ### `runtime/src/gada-std-os.adb` (Phase 5)
 
-Excluded lines: 40, 42 — the `end;` of Read_File's inner declare
-block and the `end Read_File;` fall-through terminator. Both branches
-of Read_File are covered by OS_Suite (ok/empty/missing-file tests
-are green in the same run); lcov 2.4 leaves hit-count 0 on the block
-terminators, same misattribution class as `gada-async-race.adb:80`.
+Excluded lines: 44-50, 52, 53 — the `when E : Device_Error | End_Error
+| Data_Error` arm of Read_File's read (lines 44-49) needs a failing
+device to trigger, which no portable AUnit test can arrange (the
+missing-file path is covered via the open arm above); lines 50, 52,
+53 are the inner `end;`, declare-block `end;`, and `end Read_File;`
+terminators. Both reachable branches of Read_File are covered by
+OS_Suite (ok/empty/missing-file tests are green in the same run); lcov
+2.4 leaves hit-count 0 on the block terminators, same misattribution
+class as `gada-async-race.adb:80`.
 
 ### `runtime/src/gada-std-bytes.adb`, `gada-std-bufio.adb`, `gada-std-io.adb` (Phase 5)
 

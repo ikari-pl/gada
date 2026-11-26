@@ -17,6 +17,8 @@
 --  with Err : out Error_Access throughout.
 
 with Ada.Streams.Stream_IO;
+with Ada.Strings;
+with Ada.Strings.Unbounded;
 with Gada.Std.Bytes;
 with Gada.Std.Errors;
 with Gada.Std.Strings;

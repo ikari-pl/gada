@@ -664,6 +664,107 @@ func TestBareRecvTimeChan(t *testing.T) {
 	}
 }
 
+// TestNetDialAndMethodCalls pins the Phase 7 net lowering:
+// `conn, err := net.Dial("tcp", addr)` is a 2-LHS out-call declaring
+// `Conn : Gada.Std.Net.Conn;`, `n, err2 := conn.Read(buf)` lowers to the
+// protected dot-call `Conn.all.Read (Buf, N, Err2);`, statement method
+// calls lower to `Conn.all.Write (Buf);` / `Conn.all.Close;`, and
+// `ip.String()` on a value IP maps to `Ip.To_String`.
+func TestNetDialAndMethodCalls(t *testing.T) {
+	t.Parallel()
+	str := func(v string) *ir.Lit {
+		return &ir.Lit{Kind: ir.LitString, Value: "\"" + v + "\""}
+	}
+	out := emitMain(t, []string{"net"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("conn"), idn("err")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:  &ir.Selector{X: idn("net"), Sel: "Dial"},
+				Args: []ir.Expr{str("tcp"), idn("addr")},
+				ResultTypes: []ir.Type{
+					&ir.NamedType{Name: "Conn"}, &ir.ErrorType{},
+				},
+			}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("buf")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.MakeSlice{Elem: &ir.ByteType{}, Len: litInt("64")}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("n"), idn("err2")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:  &ir.Selector{X: idn("conn"), Sel: "Read"},
+				Args: []ir.Expr{idn("buf")},
+				ResultTypes: []ir.Type{
+					&ir.IntType{}, &ir.ErrorType{},
+				},
+			}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("ip")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("net"), Sel: "ParseIP"},
+				Args:        []ir.Expr{str("127.0.0.1")},
+				ResultTypes: []ir.Type{&ir.NamedType{Name: "IP"}},
+			}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("s")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("ip"), Sel: "String"},
+				ResultTypes: []ir.Type{&ir.StringType{}},
+			}},
+		},
+		&ir.ExprStmt{X: &ir.Call{
+			Fun:  &ir.Selector{X: idn("conn"), Sel: "Write"},
+			Args: []ir.Expr{idn("buf")},
+		}},
+		&ir.ExprStmt{X: &ir.Call{
+			Fun: &ir.Selector{X: idn("conn"), Sel: "Close"},
+		}},
+	)
+	for _, want := range []string{
+		"Gada.Std.Net.Dial (\"tcp\", Addr, Conn, Err);",
+		"Conn : Gada.Std.Net.Conn;",
+		"Buf : Gada.Std.Bytes.Byte_Slice := Gada.Std.Bytes.New_Bytes (64);",
+		"Conn.all.Read (Buf, N, Err2);",
+		"Conn.all.Write (Buf);",
+		"Conn.all.Close;",
+		"Ip : Gada.Std.Net.IP := Gada.Std.Net.Parse_IP (\"127.0.0.1\");",
+		"Gada.Std.Net.Parse_IP (\"127.0.0.1\")",
+		"Ip.To_String",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestMakeSliceNonByteRejected pins that `make ([]T, N)` with a
+// non-byte element fails loudly in Phase 7 rather than mis-emitting.
+func TestMakeSliceNonByteRejected(t *testing.T) {
+	t.Parallel()
+	pkg := &ir.Package{Name: "p", Files: []*ir.File{
+		{Name: "x.go", Decls: []ir.Decl{funcMain(
+			&ir.Assign{
+				LHS:    []ir.Expr{idn("v")},
+				Define: true,
+				RHS:    []ir.Expr{&ir.MakeSlice{Elem: &ir.IntType{}, Len: litInt("3")}},
+			},
+		)}},
+	}}
+	var buf bytes.Buffer
+	err := Package(pkg, &buf)
+	if err == nil || !strings.Contains(err.Error(), "only []byte") {
+		t.Fatalf("expected loud []byte-only failure, got %v", err)
+	}
+}
+
 // TestZeroValScalarZero pins Go's zero-value guarantee for
 // `var n int` (and friends): the decl carries an explicit zero
 // initializer, not a bare uninitialized object.

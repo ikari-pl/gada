@@ -32,6 +32,16 @@ package body Bytes_Suite is
    begin
       Assert (To_String (To_Bytes ("hello")) = "hello", "round-trip");
       Assert (To_String (To_Bytes ("")) = "", "empty round-trip");
+      --  make([]byte, N): N zero bytes
+      declare
+         B : constant Byte_Slice := New_Bytes (4);
+      begin
+         Assert (Byte_Vectors.Length (B) = 4, "New_Bytes length");
+         Assert (To_String (B) = Character'Val (0) & Character'Val (0)
+                 & Character'Val (0) & Character'Val (0),
+                 "New_Bytes zero-filled");
+      end;
+      Assert (Byte_Vectors.Is_Empty (New_Bytes (0)), "New_Bytes 0 empty");
       Assert (Byte_Vectors.Length (To_Bytes ("abc")) = 3, "length 3");
    end Test_Conversions;
 

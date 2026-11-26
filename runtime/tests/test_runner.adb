@@ -60,6 +60,7 @@ with Std_IO_Suite;
 with Bufio_Suite;
 with Fmt_Suite;
 with OS_Suite;
+with Net_Suite;
 
 procedure Test_Runner is
 
@@ -105,6 +106,7 @@ procedure Test_Runner is
       or else Pkg = "stdlib.runtime"
       or else Pkg = "stdlib.sync"
       or else Pkg = "stdlib.time"
+      or else Pkg = "stdlib.net"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -216,6 +218,9 @@ procedure Test_Runner is
       end if;
       if Should_Register ("stdlib.time") then
          Add_Test (Result, new Time_Suite.Time_Test);
+      end if;
+      if Should_Register ("stdlib.net") then
+         Add_Test (Result, new Net_Suite.Net_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

@@ -19,4 +19,5 @@ var StdlibPackages = map[string]string{
 	"sync":    "Gada.Std.Sync",
 	"time":    "Gada.Std.Time",
 	"runtime": "Gada.Std.Runtime",
+	"net":     "Gada.Std.Net",
 }

@@ -9,6 +9,16 @@ package body Gada.Std.Bytes is
 
    use type Ada.Containers.Count_Type;
 
+   function New_Bytes (N : Natural) return Byte_Slice is
+      V : Byte_Slice := Byte_Vectors.Empty_Vector;
+   begin
+      Byte_Vectors.Reserve_Capacity (V, Ada.Containers.Count_Type (N));
+      for I in 1 .. N loop
+         Byte_Vectors.Append (V, Character'Val (0));
+      end loop;
+      return V;
+   end New_Bytes;
+
    function To_Bytes (S : String) return Byte_Slice is
       R : Byte_Slice;
    begin

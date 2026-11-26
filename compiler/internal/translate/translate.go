@@ -898,6 +898,35 @@ func (tr *translator) tryMakeChan(c *ast.CallExpr) (*ir.MakeChan, bool, error) {
 	return mc, true, nil
 }
 
+// tryMakeSlice returns (ms, true, nil) iff c is `make ([]T, N)` or
+// `make ([]T)`. Maps/arrays/other make shapes fall through (false).
+func (tr *translator) tryMakeSlice(c *ast.CallExpr) (*ir.MakeSlice, bool, error) {
+	id, ok := c.Fun.(*ast.Ident)
+	if !ok || id.Name != "make" {
+		return nil, false, nil
+	}
+	if len(c.Args) < 1 || len(c.Args) > 2 {
+		return nil, false, nil
+	}
+	arr, isArr := c.Args[0].(*ast.ArrayType)
+	if !isArr || arr.Len != nil {
+		return nil, false, nil
+	}
+	elem, err := tr.transType(arr.Elt)
+	if err != nil {
+		return nil, false, err
+	}
+	ms := &ir.MakeSlice{Elem: elem}
+	if len(c.Args) == 2 {
+		ln, err := tr.transExpr(c.Args[1])
+		if err != nil {
+			return nil, false, err
+		}
+		ms.Len = ln
+	}
+	return ms, true, nil
+}
+
 func (tr *translator) tryBuiltinCall(c *ast.CallExpr) (*ir.BuiltinCall, bool, error) {
 	id, ok := c.Fun.(*ast.Ident)
 	if !ok || !builtinNames[id.Name] {
@@ -1035,7 +1064,14 @@ func (tr *translator) transCall(c *ast.CallExpr) (*ir.Call, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ir.Call{Fun: fun, Args: args}, nil
+	call := &ir.Call{Fun: fun, Args: args}
+	// Method calls (e.g. `conn.Read(buf)`) need result types too, so the
+	// emitter can lower `n, err := conn.Read(buf)` as a 2-LHS out-call.
+	// Stdlib package calls get the same treatment via stdlibCall.
+	if tr.info != nil {
+		call.ResultTypes = tr.goTypesToIR(tr.info.TypeOf(c))
+	}
+	return call, nil
 }
 
 // --- expressions ----------------------------------------------------------
@@ -1081,6 +1117,17 @@ func (tr *translator) transExpr(e ast.Expr) (ir.Expr, error) {
 	case *ast.TypeAssertExpr:
 		return tr.transTypeAssert(e)
 	case *ast.CallExpr:
+		// Phase 7: `[]byte(s)` conversion — the Fun is the type
+		// expression *ast.ArrayType (byte elem, no length).
+		if at, isConv := e.Fun.(*ast.ArrayType); isConv && at.Len == nil {
+			if id, isByte := at.Elt.(*ast.Ident); isByte && id.Name == "byte" {
+				args, aerr := tr.transExprList(e.Args)
+				if aerr != nil {
+					return nil, aerr
+				}
+				return &ir.BuiltinCall{Name: "bytes", Args: args}, nil
+			}
+		}
 		// Phase 3 channel-emit sub-item (b): `make (chan T, N)` and
 		// `make (chan T)` are intercepted *before* tryBuiltinCall
 		// because their first argument is a type expression, not an
@@ -1091,6 +1138,13 @@ func (tr *translator) transExpr(e ast.Expr) (ir.Expr, error) {
 			return nil, err
 		} else if ok {
 			return mc, nil
+		}
+		// Phase 7: `make ([]T, N)` / `make ([]T)` ride a dedicated
+		// *ir.MakeSlice node (element Type + optional Len Expr).
+		if ms, ok, err := tr.tryMakeSlice(e); err != nil {
+			return nil, err
+		} else if ok {
+			return ms, nil
 		}
 		// Phase 5 wave 1: a call whose Fun is a stdlib package
 		// selector (`strings.Fields(s)`, `os.ReadFile(p)`) is a
@@ -1112,6 +1166,14 @@ func (tr *translator) transExpr(e ast.Expr) (ir.Expr, error) {
 			return nil, err
 		}
 		if !ok {
+			// With *types.Info present a general call's type is
+			// known, so method calls (`conn.Read(buf)`) ride
+			// transCall — Phase 7 needs their ResultTypes for the
+			// 2-LHS out-call lowering. Without info the Phase 2
+			// restriction stands.
+			if tr.info != nil {
+				return tr.transCall(e)
+			}
 			return nil, fmt.Errorf("translate: general call-as-expression not supported in Phase 2 (only builtin calls and stdlib package calls are)")
 		}
 		return b, nil

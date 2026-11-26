@@ -237,6 +237,71 @@ func TestStdlibCallRejections(t *testing.T) {
 	}
 }
 
+// TestNetMethodCallResultTypes pins the Phase 7 translate change:
+// a method call (`conn.Read(buf)`) on a net.Conn-typed local gets its
+// result types from *types.Info (so emit can lower `n, err :=
+// conn.Read(buf)` as a 2-LHS out-call), and `make ([]byte, 64)`
+// translates to *ir.MakeSlice.
+func TestNetMethodCallResultTypes(t *testing.T) {
+	t.Parallel()
+	src := `package p
+
+import "net"
+
+func f() {
+	var conn net.Conn
+	buf := make([]byte, 64)
+	n, err := conn.Read(buf)
+	_, _ = n, err
+	_ = conn
+}
+`
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "x.go", src, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	conf := types.Config{Importer: importer.Default()}
+	info := &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+	}
+	if _, err = conf.Check("p", fset, []*ast.File{af}, info); err != nil {
+		t.Fatalf("typecheck: %v", err)
+	}
+	tr, err := newTranslator(af, info)
+	if err != nil {
+		t.Fatalf("newTranslator: %v", err)
+	}
+	fn := af.Decls[1].(*ast.FuncDecl)
+	// buf := make([]byte, 64)
+	bufAssign := fn.Body.List[1].(*ast.AssignStmt)
+	ms, msErr := transExpr(bufAssign.Rhs[0])
+	if msErr != nil {
+		t.Fatalf("make([]byte, 64) did not translate: %v", msErr)
+	}
+	mk, isMS := ms.(*ir.MakeSlice)
+	if !isMS || mk.Elem.NodeKind() != "ByteType" || mk.Len == nil {
+		t.Fatalf("MakeSlice = %#v", ms)
+	}
+	// n, err := conn.Read(buf)
+	readAssign := fn.Body.List[2].(*ast.AssignStmt)
+	call, err := tr.transExpr(readAssign.Rhs[0])
+	if err != nil {
+		t.Fatalf("transExpr(conn.Read): %v", err)
+	}
+	c, isCall := call.(*ir.Call)
+	if !isCall {
+		t.Fatalf("conn.Read translated to %T, want *ir.Call", call)
+	}
+	if len(c.ResultTypes) != 2 ||
+		c.ResultTypes[0].NodeKind() != "IntType" ||
+		c.ResultTypes[1].NodeKind() != "ErrorType" {
+		t.Fatalf("method-call ResultTypes = %#v", c.ResultTypes)
+	}
+}
+
 // TestTranslatorMiscArms covers the remaining stdlib.go branches: the
 // transExpr test wrapper, stdlibCall arg-error propagation, the
 // info-backed ResultTypes path, and a bare (unnamed) error interface.

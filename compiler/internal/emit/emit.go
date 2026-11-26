@@ -294,10 +294,10 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		if imp == "strings" {
 			e.needsUnbounded = true
 		}
-		if imp == "os" || imp == "errors" {
+		if imp == "os" || imp == "errors" || imp == "net" {
 			e.needsStdErrors = true
 		}
-		if imp == "os" || imp == "bytes" {
+		if imp == "os" || imp == "bytes" || imp == "net" {
 			e.needsStdBytes = true
 		}
 	}
@@ -685,6 +685,19 @@ func (e *emitter) walkExpr(x ir.Expr) {
 		if x.Capacity != nil {
 			e.walkExpr(x.Capacity)
 		}
+	case *ir.MakeSlice:
+		// Phase 7: `make ([]byte, N)` rides Gada.Std.Bytes.Byte_Slice
+		// (needsStdBytes); other element types record their slice
+		// instantiation seam like a slice literal.
+		if _, isByte := x.Elem.(*ir.ByteType); isByte {
+			e.needsStdBytes = true
+		} else {
+			e.recordSliceElem(x.Elem)
+			e.recordTypeInTree(x.Elem)
+		}
+		if x.Len != nil {
+			e.walkExpr(x.Len)
+		}
 	case *ir.ChanRecv:
 		// `<-c` doesn't itself declare an element type — its operand
 		// (a chan-typed Ident) was registered when the chan was
@@ -726,6 +739,10 @@ func (e *emitter) walkExpr(x ir.Expr) {
 		e.walkExpr(x.Low)
 		e.walkExpr(x.High)
 	case *ir.BuiltinCall:
+		if x.Name == "bytes" {
+			// Phase 7: []byte(s) conversion needs the Bytes package.
+			e.needsStdBytes = true
+		}
 		if x.Name == "len" && len(x.Args) == 1 {
 			if sel, ok := x.Args[0].(*ir.Selector); ok {
 				if xid, ok := sel.X.(*ir.Ident); ok && xid.Name == "os" &&
@@ -1159,6 +1176,18 @@ var syncTypeNames = map[string]bool{
 	"Cond": true,
 }
 
+// netTypeNames are the Gada.Std.Net types whose methods lower to
+// dot-calls on the value (`ip.String()` -> `Ip.To_String`). The
+// access-to-protected ones (Conn, Listener, Packet_Conn) get an
+// explicit `.all` in the emitted call; IP is a plain record.
+var netTypeNames = map[string]bool{
+	"Conn": true, "Listener": true, "PacketConn": true, "IP": true,
+}
+
+var netAccessTypeNames = map[string]bool{
+	"Conn": true, "Listener": true, "PacketConn": true,
+}
+
 // stdlibValueType maps a translated named type to its qualified Ada
 // type when the corresponding stdlib import is present, so
 // `var mu sync.Mutex` declares `Mu : Gada.Std.Sync.Mutex;`.
@@ -1173,6 +1202,9 @@ func (e *emitter) stdlibValueType(name string) (string, bool) {
 		case "Time":
 			return "Gada.Std.Time.Time", true
 		}
+	}
+	if _, ok := e.stdlibImports["net"]; ok && netTypeNames[name] {
+		return "Gada.Std.Net." + goNameToAdaMember(name), true
 	}
 	return "", false
 }
@@ -1913,6 +1945,8 @@ func inferRHSType(x ir.Expr) (ir.Type, bool) {
 		}
 	case *ir.SliceLit:
 		return &ir.SliceType{Elem: x.Elem}, true
+	case *ir.MakeSlice:
+		return &ir.SliceType{Elem: x.Elem}, true
 	case *ir.MapLit:
 		return &ir.MapType{Key: x.Key, Value: x.Value}, true
 	case *ir.TypeAssert:
@@ -2047,6 +2081,8 @@ func (e *emitter) refsDeferred(x ir.Expr) bool {
 		return false
 	case *ir.MakeChan:
 		return e.refsDeferred(x.Capacity)
+	case *ir.MakeSlice:
+		return e.refsDeferred(x.Len)
 	case *ir.TypeAssert:
 		return e.refsDeferred(x.X)
 	case *ir.IndexExpr:
@@ -3255,6 +3291,8 @@ func (e *emitter) inferDeclType(x ir.Expr) (string, error) {
 			return "", err
 		}
 		return pkg + ".Channel", nil
+	case *ir.MakeSlice:
+		return e.typeName(&ir.SliceType{Elem: x.Elem})
 	case *ir.StructLit:
 		// The literal names its own record type; no *types.Info needed.
 		return adaIdent(x.TypeName), nil
@@ -3411,6 +3449,23 @@ func (e *emitter) emitAssign(a *ir.Assign) {
 	if a.Define {
 		e.fail(fmt.Errorf("emit: := outside head of function body not supported in Phase 1"))
 		return
+	}
+	// Phase 7: a 2-LHS plain assignment of an out-call
+	// (`n, err = conn.Read(buf)`) emits the call statement with the
+	// LHS as trailing out-params — same shape as the head-of-body
+	// define, minus the declarations.
+	if len(a.LHS) == 2 && len(a.RHS) == 1 {
+		if c, ok := a.RHS[0].(*ir.Call); ok && len(c.ResultTypes) == 2 {
+			args := make([]string, 0, len(c.Args)+2)
+			for _, arg := range c.Args {
+				args = append(args, e.emitExpr(arg))
+			}
+			for _, l := range a.LHS {
+				args = append(args, e.emitExpr(l))
+			}
+			e.println(e.emitExpr(c.Fun) + " (" + strings.Join(args, ", ") + ");")
+			return
+		}
 	}
 	if len(a.LHS) != 1 || len(a.RHS) != 1 {
 		e.fail(fmt.Errorf("emit: multi-value assignment not supported in Phase 1"))
@@ -3789,6 +3844,21 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 				return
 			}
 		}
+		// Phase 7: a method call on a Gada.Std.Net value
+		// (`conn.Write(b)`) lowers to the routed protected dot-call
+		// `Conn.all.Write (B);` — same shape as the sync branch above.
+		if netFun, ok := e.netMethodCall(sel); ok {
+			args := make([]string, 0, len(c.Args))
+			for _, a := range c.Args {
+				args = append(args, e.emitExpr(a))
+			}
+			if len(args) == 0 {
+				e.println(netFun + ";")
+			} else {
+				e.println(netFun + " (" + strings.Join(args, ", ") + ");")
+			}
+			return
+		}
 		// Otherwise `x.M(args)` is a method call (package-qualified calls
 		// other than stdlib ones are not supported). It emits as the Ada
 		// prefixed-view `X.M`, which is a valid primitive-operation call
@@ -3917,6 +3987,8 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		return e.emitStructLit(x)
 	case *ir.MakeChan:
 		return e.emitMakeChan(x)
+	case *ir.MakeSlice:
+		return e.emitMakeSlice(x)
 	case *ir.TypeAssert:
 		return e.emitTypeAssert(x)
 	case *ir.IndexExpr:
@@ -3988,6 +4060,20 @@ func (e *emitter) emitSliceLit(s *ir.SliceLit) string {
 // `Channels_Of_<T>.Make (1)` per the runtime's documented
 // behavioural approximation for unbuffered channels (see
 // `runtime/src/gada-async-channels-bounded.ads` § Make rationale).
+// emitMakeSlice lowers `make ([]T, N)` — Phase 7 supports the
+// `make ([]byte, N)` read-buffer shape as `Gada.Std.Bytes.New_Bytes (N)`
+// (and `make ([]byte)` as the empty vector).
+func (e *emitter) emitMakeSlice(x *ir.MakeSlice) string {
+	if _, isByte := x.Elem.(*ir.ByteType); !isByte {
+		e.fail(fmt.Errorf("emit: make ([]T, N) supports only []byte in Phase 7, got elem %s", x.Elem.NodeKind()))
+		return ""
+	}
+	if x.Len == nil {
+		return "Gada.Std.Bytes.Byte_Vectors.Empty_Vector"
+	}
+	return "Gada.Std.Bytes.New_Bytes (" + e.emitExpr(x.Len) + ")"
+}
+
 func (e *emitter) emitMakeChan(m *ir.MakeChan) string {
 	pkg, err := e.chanPkgForT(m.Elem)
 	if err != nil {
@@ -4279,6 +4365,14 @@ func (e *emitter) emitBuiltinCall(b *ir.BuiltinCall) string {
 		return e.emitSliceBuiltin(b)
 	case "delete":
 		return e.emitMapBuiltin(b)
+	case "bytes":
+		// []byte(x) conversion: only []byte(string) is supported
+		// (→ Gada.Std.Bytes.To_Bytes).
+		if len(b.Args) != 1 {
+			e.fail(fmt.Errorf("emit: []byte() takes exactly 1 arg, got %d", len(b.Args)))
+			return ""
+		}
+		return "Gada.Std.Bytes.To_Bytes (" + e.emitExpr(b.Args[0]) + ")"
 	case "string":
 		// string(x) conversion. Only string([]byte) is supported
 		// (→ Gada.Std.Bytes.To_String); other conversions ride a
@@ -4933,6 +5027,36 @@ func (e *emitter) emitUnaryOp(u *ir.UnaryOp) string {
 	return s
 }
 
+// netMethodCall renders a method call on a Gada.Std.Net-typed local:
+// `conn.Read(buf)` -> `Conn.all.Read`, `ip.String()` -> `Ip.To_String`.
+// The net import must be present and no local type may shadow the
+// name (same misroute guard as the sync dot-call path). ok=false when
+// the prefix is not a net-typed local.
+func (e *emitter) netMethodCall(s *ir.Selector) (string, bool) {
+	id, ok := s.X.(*ir.Ident)
+	if !ok {
+		return "", false
+	}
+	if _, netImported := e.stdlibImports["net"]; !netImported {
+		return "", false
+	}
+	nt, ok := e.localTypes[id.Name].(*ir.NamedType)
+	if !ok || !netTypeNames[nt.Name] {
+		return "", false
+	}
+	if e.localTypeNames[nt.Name] {
+		return "", false
+	}
+	member := adaIdent(s.Sel)
+	if s.Sel == "String" {
+		member = "To_String"
+	}
+	if netAccessTypeNames[nt.Name] {
+		return e.emitExpr(s.X) + ".all." + member, true
+	}
+	return e.emitExpr(s.X) + "." + member, true
+}
+
 // emitSelector special-cases `fmt.Println` (the only stdlib symbol
 // the Phase 1 corpus uses). Every other selector falls through to a
 // dotted Ada reference; that path is exercised in error tests but
@@ -4946,6 +5070,11 @@ func (e *emitter) emitSelector(s *ir.Selector) string {
 		if pkg, ok := e.stdlibImports[id.Name]; ok {
 			return pkg + "." + goNameToAdaMember(s.Sel)
 		}
+	}
+	// Phase 7: a method call on a Gada.Std.Net value (`conn.Read(b)`,
+	// `ip.String()`) lowers to the routed dot-call above.
+	if netFun, ok := e.netMethodCall(s); ok {
+		return netFun
 	}
 	// `fmt.Println` in statement position is intercepted by emitCallStmt
 	// (-> emitFmtPrintln), so it never reaches here. Any other selector

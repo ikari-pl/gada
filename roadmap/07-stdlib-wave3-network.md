@@ -14,7 +14,7 @@ reflection end-to-end, `net/http` exercises everything.
 ## Items
 
 - [ ] **Stdlib package: `net`**
-      *Files:* `stdlib/net/`
+      *Files:* `runtime/src/gada-std-net.{ads,adb}`, `runtime/tests/stdlib/net_suite.{ads,adb}`, `compiler/internal/{ir/stdlib.go,emit/emit.go,translate/translate.go}`
       *Verify:* `make stdlib-test PKG=net`
       *Done when:* `Dial`, `Listen`, TCP and UDP, `LookupHost`, `IP` parsing all correct; coverage ≥ 90%.
 

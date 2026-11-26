@@ -30,6 +30,10 @@ package Gada.Std.Bytes is
 
    subtype Byte_Slice_List is Byte_Slice_Vectors.Vector;
 
+   --  Go `make ([]byte, N)`: a slice of N zero bytes (Phase 7 read
+   --  buffers for net.Conn.Read and friends).
+   function New_Bytes (N : Natural) return Byte_Slice;
+
    --  Conversions between Go string and []byte (a plain copy in Go).
    function To_Bytes (S : String) return Byte_Slice;
    function To_String (B : Byte_Slice) return String;

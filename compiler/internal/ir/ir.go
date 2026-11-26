@@ -287,6 +287,18 @@ type MakeChan struct {
 func (*MakeChan) irExpr()          {}
 func (*MakeChan) NodeKind() string { return "MakeChan" }
 
+// MakeSlice is Go `make ([]T, N)` and `make ([]T)` (the latter has a
+// nil Len). Phase 7 adds it for `make ([]byte, N)` read buffers.
+type MakeSlice struct {
+	Elem Type
+	Len  Expr // nil for `make ([]T)` — zero length
+}
+
+func (*MakeSlice) irExpr() {}
+
+// NodeKind returns the JSON envelope tag for MakeSlice.
+func (*MakeSlice) NodeKind() string { return "MakeSlice" }
+
 // IndexExpr is `X[Index]`. The same node shape covers slice indexing
 // (`s[i]`) and map lookup (`m[k]`); the emitter resolves the
 // distinction by inspecting the static type of X via its declaration.
@@ -902,6 +914,12 @@ func unmarshalExpr(raw json.RawMessage) (Expr, error) {
 		return &n, nil
 	case "MakeChan":
 		var n MakeChan
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
+	case "MakeSlice":
+		var n MakeSlice
 		if err := json.Unmarshal(raw, &n); err != nil {
 			return nil, err
 		}
@@ -1807,6 +1825,42 @@ func (e *MakeChan) MarshalJSON() ([]byte, error) {
 		Elem     Type   `json:"elem"`
 		Capacity Expr   `json:"capacity,omitempty"`
 	}{"MakeChan", e.Elem, e.Capacity})
+}
+
+// MarshalJSON emits the tagged envelope for MakeSlice.
+func (e *MakeSlice) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Elem Type   `json:"elem"`
+		Len  Expr   `json:"len,omitempty"`
+	}{"MakeSlice", e.Elem, e.Len})
+}
+
+// UnmarshalJSON parses the tagged envelope for MakeSlice.
+func (e *MakeSlice) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Elem json.RawMessage `json:"elem"`
+		Len  json.RawMessage `json:"len,omitempty"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
+		return fmt.Errorf("ir: MakeSlice missing elem")
+	}
+	elem, err := unmarshalType(aux.Elem)
+	if err != nil {
+		return err
+	}
+	e.Elem = elem
+	if len(aux.Len) != 0 && string(aux.Len) != "null" {
+		ln, err := unmarshalExpr(aux.Len)
+		if err != nil {
+			return err
+		}
+		e.Len = ln
+	}
+	return nil
 }
 
 func (e *MakeChan) UnmarshalJSON(b []byte) error {

@@ -251,8 +251,8 @@ package body Net_Suite is
       C.all.Read (Buf, N, Err);
       Assert (Err = Errors.No_Error and then N = 9,
               "read failed: " & Err_Text (Err));
-      Assert (Bytes.To_String (Buf) = "hello net",
-              "echo mismatch: '" & Bytes.To_String (Buf) & "'");
+      Assert (To_String (Buf) = "hello net",
+              "echo mismatch: '" & To_String (Buf) & "'");
       Assert (C.all.Remote_Addr'Length > 0, "remote addr empty");
 
       --  wait for the acceptor (it closes the conn after the echo)
@@ -369,8 +369,8 @@ package body Net_Suite is
          PC2.all.Read_From (Buf, N, From, Err);
          Assert (Err = Errors.No_Error and then N = 4,
                  "read_from failed: " & Err_Text (Err));
-         Assert (Bytes.To_String (Buf) = "ping",
-                 "datagram mismatch: '" & Bytes.To_String (Buf) & "'");
+         Assert (To_String (Buf) = "ping",
+                 "datagram mismatch: '" & To_String (Buf) & "'");
          Assert (Equal (From, Parse_IP ("127.0.0.1")),
                  "From must be 127.0.0.1, got " & To_String (From));
 
@@ -394,7 +394,7 @@ package body Net_Suite is
                  "udp write failed: " & Err_Text (Err));
          PC1.all.Read_From (Buf, N, From, Err);
          Assert (Err = Errors.No_Error and then N = 4
-                 and then Bytes.To_String (Buf) = "pong",
+                 and then To_String (Buf) = "pong",
                  "udp echo failed: " & Err_Text (Err));
          C.all.Close;
 

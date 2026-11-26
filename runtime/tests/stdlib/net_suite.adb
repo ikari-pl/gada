@@ -52,7 +52,7 @@ package body Net_Suite is
       Buf : Bytes.Byte_Slice := Pad (64);
       N   : Natural;
    begin
-      The_Listener.all.Accept (C, Err);
+      The_Listener.all.Accept_K (C, Err);
       if Err = Errors.No_Error then
          C.all.Read (Buf, N, Err);
          if Err = Errors.No_Error and then N > 0 then
@@ -279,7 +279,7 @@ package body Net_Suite is
       declare
          C2 : Conn;
       begin
-         L.all.Accept (C2, Err);
+         L.all.Accept_K (C2, Err);
          Assert (Err /= Errors.No_Error and then C2 = null,
                  "accept on closed listener must error");
       end;

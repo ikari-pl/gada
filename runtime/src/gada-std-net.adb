@@ -701,7 +701,7 @@ package body Gada.Std.Net is
          Sock := S;
       end Set;
 
-      procedure Accept (C : out Conn; Err : out Errors.Error_Access) is
+      procedure Accept_K (C : out Conn; Err : out Errors.Error_Access) is
          S : GS.Socket_Type;
          A : GS.Sock_Addr_Type;
       begin
@@ -720,7 +720,7 @@ package body Gada.Std.Net is
                Err := Errors.New_K
                  ("accept: " & Ada.Exceptions.Exception_Message (E));
          end;
-      end Accept;
+      end Accept_K;
 
       procedure Close is
       begin

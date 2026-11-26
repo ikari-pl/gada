@@ -87,8 +87,8 @@ package Gada.Std.Net is
    ---------------------------------------------------------------
 
    protected type Listener_Impl is
-      --  Go listener.Accept(): blocks until a connection arrives.
-      procedure Accept (C : out Conn; Err : out Errors.Error_Access);
+      --  Go listener.Accept() [Accept_K]: blocks until a connection arrives.
+      procedure Accept_K (C : out Conn; Err : out Errors.Error_Access);
       procedure Close;
       --  Go listener.Addr().String(): the bound "ip:port" (useful with
       --  port 0, where the OS picks an ephemeral port).

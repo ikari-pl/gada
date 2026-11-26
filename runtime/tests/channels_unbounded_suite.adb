@@ -34,6 +34,17 @@ package body Channels_Unbounded_Suite is
       Recv_Done := True;
    end Receiver_Body_Receive_Once;
 
+   --  Sleeps 20 ms so a main-task Receive has to enter its timed-poll
+   --  loop (a main task has no cothread to park) before this sends.
+   procedure Delayed_Sender_Body;
+
+   procedure Delayed_Sender_Body is
+   begin
+      delay 0.02;
+      Unbnd.Send (The_Channel, 99);
+      Recv_Done := True;
+   end Delayed_Sender_Body;
+
    ---------------------------------------------------------------
 
    overriding function Name
@@ -101,11 +112,10 @@ package body Channels_Unbounded_Suite is
          & "directly into the receiver's slot without growing the "
          & "buffer — Length stays 0 across the round-trip");
       Register_Routine
-        (T, Test_Receive_Park_From_Non_Goroutine_Raises'Access,
-         "Receive that would park (empty buffer + open channel) "
-         & "from a non-goroutine context raises Program_Error "
-         & "rather than allocating an orphaned Wait_Slot — mirror "
-         & "of the Channels.Bounded.Receive guard");
+        (T, Test_Main_Task_Receive_Polls_Until_Send'Access,
+         "Receive that would park (empty open channel) from the main "
+         & "task timed-polls until a goroutine sends — Go main-task "
+         & "receive semantics; no orphaned Wait_Slot is allocated");
    end Register_Tests;
 
    ---------------------------------------------------------------
@@ -464,29 +474,30 @@ package body Channels_Unbounded_Suite is
 
    ---------------------------------------------------------------
 
-   procedure Test_Receive_Park_From_Non_Goroutine_Raises
+   procedure Test_Main_Task_Receive_Polls_Until_Send
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      C      : constant Unbnd.Channel := Unbnd.Make;
-      V      : Integer := 0;
-      OK     : Boolean;
-      Raised : Boolean := False;
+      Unused_G : Gada.Async.Scheduler.Goroutine_Id;
+      V        : Integer := 0;
+      OK       : Boolean := False;
    begin
-      --  Channel is empty AND open: Receive must park. Calling from
-      --  the main task (Scheduler.Current = No_Goroutine) trips the
-      --  guard added in 8e0bf22 and raises Program_Error before
-      --  Slot allocation.
-      begin
-         Unbnd.Receive (C, V, OK);
-         Assert (False,
-                 "Unbnd.Receive on empty open channel from main "
-                 & "task should have raised Program_Error");
-      exception
-         when Program_Error =>
-            Raised := True;
-      end;
-      Assert (Raised, "Program_Error must propagate");
-   end Test_Receive_Park_From_Non_Goroutine_Raises;
+      The_Channel := Unbnd.Make;
+      Recv_Done := False;
+      Gada.Async.Scheduler.Shutdown;
+      Gada.Async.Scheduler.Init (Workers => 1);
+
+      --  Empty open channel; a delayed sender goroutine sends 99 after
+      --  ~20 ms. The main task cannot park, so this Receive takes the
+      --  timed-poll path until the value arrives.
+      Unused_G := Gada.Async.Scheduler.Spawn
+        (Delayed_Sender_Body'Access);
+      Unbnd.Receive (The_Channel, V, OK);
+      Assert (OK and then V = 99,
+              "main-task poll-receive expected (99, True), got ("
+              & V'Image & "," & OK'Image & ")");
+      Assert (Recv_Done, "sender goroutine did not complete");
+      Gada.Async.Scheduler.Shutdown;
+   end Test_Main_Task_Receive_Polls_Until_Send;
 
 end Channels_Unbounded_Suite;

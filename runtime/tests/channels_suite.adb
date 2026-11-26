@@ -57,6 +57,27 @@ package body Channels_Suite is
    procedure Receiver_Body_Receive_Once;
    procedure Sender_Body_Then_Mark_Closed;
    procedure Receiver_Body_Park_Then_Drain;
+   procedure Delayed_Sender_Body;
+   procedure Delayed_Drainer_Body;
+
+   --  Delayed bodies for the main-task poll tests: they sleep 20 ms
+   --  so the main task's blocking Send/Receive has to enter its
+   --  timed-poll loop (a main task has no cothread to park).
+   procedure Delayed_Sender_Body is
+   begin
+      delay 0.02;
+      Bound.Send (The_Channel, 99);
+      Send_Done := True;
+   end Delayed_Sender_Body;
+
+   procedure Delayed_Drainer_Body is
+      V  : Integer;
+      OK : Boolean;
+   begin
+      delay 0.02;
+      Bound.Receive (The_Channel, V, OK);
+      Recv_Done := True;
+   end Delayed_Drainer_Body;
 
    --  ## Sender_Body_Send_42
    --
@@ -182,17 +203,15 @@ package body Channels_Suite is
          & "Constraint_Error on No_Channel — the same shape as the "
          & "blocking Send/Receive minus the parking branch");
       Register_Routine
-        (T, Test_Send_Park_From_Non_Goroutine_Raises'Access,
-         "Send that would park (full buffer + no parked receiver) "
-         & "from a non-goroutine context raises Program_Error "
-         & "rather than allocating an orphaned Wait_Slot — guards "
-         & "against the use-after-free shape Gemini PR #6 R2 flagged");
+        (T, Test_Main_Task_Send_Polls_When_Full'Access,
+         "Send that would park (full buffer) from the main task "
+         & "timed-polls until a goroutine drains a slot — Go main-"
+         & "task send semantics; no orphaned Wait_Slot is allocated");
       Register_Routine
-        (T, Test_Receive_Park_From_Non_Goroutine_Raises'Access,
-         "Receive that would park (empty buffer + open channel) "
-         & "from a non-goroutine context raises Program_Error "
-         & "rather than allocating an orphaned Wait_Slot — mirror "
-         & "of the Send-side guard");
+        (T, Test_Main_Task_Receive_Polls_Until_Send'Access,
+         "Receive that would park (empty open channel) from the main "
+         & "task timed-polls until a goroutine sends — Go main-task "
+         & "receive semantics; no orphaned Wait_Slot is allocated");
    end Register_Tests;
 
    ---------------------------------------------------------------
@@ -738,54 +757,60 @@ package body Channels_Suite is
 
    ---------------------------------------------------------------
 
-   procedure Test_Send_Park_From_Non_Goroutine_Raises
+   procedure Test_Main_Task_Send_Polls_When_Full
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      C      : constant Bound.Channel := Bound.Make (Capacity => 1);
-      Raised : Boolean := False;
+      Unused_G : Gada.Async.Scheduler.Goroutine_Id;
    begin
-      --  Fill the buffer so the next Send hits the parking path.
-      Bound.Send (C, 1);
-      --  This Send would park (buffer full, no parked receiver). We
-      --  are calling from the main task — Scheduler.Current ==
-      --  No_Goroutine. The guard added in 8e0bf22 must raise
-      --  Program_Error before allocating Slot.
-      begin
-         Bound.Send (C, 2);
-         Assert (False,
-                 "Bound.Send on full buffer from main task should "
-                 & "have raised Program_Error (parking outside a "
-                 & "goroutine context is meaningless)");
-      exception
-         when Program_Error =>
-            Raised := True;
-      end;
-      Assert (Raised, "Program_Error must propagate");
-   end Test_Send_Park_From_Non_Goroutine_Raises;
+      The_Channel := Bound.Make (Capacity => 1);
+      Send_Done := False;
+      Recv_Done := False;
+      Gada.Async.Scheduler.Shutdown;
+      Gada.Async.Scheduler.Init (Workers => 1);
 
-   procedure Test_Receive_Park_From_Non_Goroutine_Raises
+      --  Fill the buffer from main; a delayed drainer goroutine frees
+      --  a slot ~20 ms later. The main task cannot park (no cothread),
+      --  so this Send takes the timed-poll path until there is room.
+      Bound.Send (The_Channel, 1);
+      Unused_G := Gada.Async.Scheduler.Spawn
+        (Delayed_Drainer_Body'Access);
+      Bound.Send (The_Channel, 2);
+      Assert (Bound.Length (The_Channel) = 1,
+              "poll-send stored only after the drainer freed a slot");
+
+      for Attempt in 1 .. 100 loop
+         exit when Recv_Done;
+         delay 0.001;
+      end loop;
+      Assert (Recv_Done, "drainer goroutine did not run");
+      Gada.Async.Scheduler.Shutdown;
+   end Test_Main_Task_Send_Polls_When_Full;
+
+   procedure Test_Main_Task_Receive_Polls_Until_Send
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      C      : constant Bound.Channel := Bound.Make (Capacity => 1);
-      V      : Integer := 0;
-      OK     : Boolean;
-      Raised : Boolean := False;
+      Unused_G : Gada.Async.Scheduler.Goroutine_Id;
+      V        : Integer := 0;
+      OK       : Boolean := False;
    begin
-      --  Channel is empty AND open: Receive must park. Calling from
-      --  the main task (Scheduler.Current == No_Goroutine) trips the
-      --  guard and raises Program_Error.
-      begin
-         Bound.Receive (C, V, OK);
-         Assert (False,
-                 "Bound.Receive on empty open channel from main "
-                 & "task should have raised Program_Error");
-      exception
-         when Program_Error =>
-            Raised := True;
-      end;
-      Assert (Raised, "Program_Error must propagate");
-   end Test_Receive_Park_From_Non_Goroutine_Raises;
+      The_Channel := Bound.Make (Capacity => 1);
+      Send_Done := False;
+      Gada.Async.Scheduler.Shutdown;
+      Gada.Async.Scheduler.Init (Workers => 1);
+
+      --  Empty open channel; a delayed sender goroutine sends 99 after
+      --  ~20 ms. The main task cannot park, so this Receive takes the
+      --  timed-poll path until the value arrives.
+      Unused_G := Gada.Async.Scheduler.Spawn
+        (Delayed_Sender_Body'Access);
+      Bound.Receive (The_Channel, V, OK);
+      Assert (OK and then V = 99,
+              "main-task poll-receive expected (99, True), got ("
+              & V'Image & "," & OK'Image & ")");
+      Assert (Send_Done, "sender goroutine did not complete");
+      Gada.Async.Scheduler.Shutdown;
+   end Test_Main_Task_Receive_Polls_Until_Send;
 
 end Channels_Suite;

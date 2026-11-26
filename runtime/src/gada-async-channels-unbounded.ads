@@ -81,9 +81,10 @@ package Gada.Async.Channels.Unbounded is
 
    --  Receive from C. Returns (head_of_buffer, OK => True) on
    --  success; blocks (parks) on empty-open; returns (default
-   --  Element_Type, OK => False) on empty-closed. The blocking path
-   --  is only meaningful inside a goroutine; a non-goroutine Receive
-   --  on an empty open channel would hang.
+   --  Element_Type, OK => False) on empty-closed. The parking path
+   --  is only meaningful inside a goroutine; from a non-goroutine
+   --  context an empty-open Receive timed-polls until a value arrives
+   --  or the channel closes — Go's main-task receive semantics.
    procedure Receive
      (C  : Channel;
       V  : in out Element_Type;

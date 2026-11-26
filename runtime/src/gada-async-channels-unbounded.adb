@@ -392,11 +392,22 @@ package body Gada.Async.Channels.Unbounded is
       --  Park_Receiver (which enqueues the slot on the parked-
       --  receivers list), and then returning without an actual Park
       --  leaves Slot orphaned for a later Send or Close to write
-      --  through. Raise before allocation so the contract violation
-      --  surfaces at the call site rather than as delayed memory
-      --  corruption. Mirror of the same guard in Channels.Bounded.
+      --  through. Poll with a timed delay instead (a main task has no
+      --  cothread to park): Go allows a main-task receive to block.
+      --  Mirror of the poll arm in Channels.Bounded.
       if Scheduler.Current = Scheduler.No_Goroutine then
-         raise Program_Error with "Gada.Async.Channels.Unbounded.Receive: cannot park outside a goroutine context (call from a Scheduler.Spawn body, not from a top-level task or main)";
+         loop
+            C.Ref.State.Try_Receive (V, Got, Was_Closed);
+            if Got then
+               OK := True;
+               return;
+            end if;
+            if Was_Closed then
+               OK := False;
+               return;
+            end if;
+            delay 0.001;
+         end loop;
       end if;
       Slot := new Wait_Slot;
       Slot.G := Scheduler.Current;

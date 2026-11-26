@@ -130,8 +130,9 @@ package body Gada.Std.Time is
       --  Date() carries exact nanoseconds.
       return (Mono => R,
               Wall => W,
-              Ns   => Natural (Long_Float (Cal.Seconds (W)) * 1.0e9)
-                        mod 1_000_000_000,
+              Ns   => Natural
+                (Long_Integer (Long_Float (Cal.Seconds (W)) * 1.0e9)
+                 mod 1_000_000_000),
               UTC  => False);
    end Now;
 

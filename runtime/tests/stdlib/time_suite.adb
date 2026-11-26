@@ -169,10 +169,11 @@ package body Time_Suite is
       Scheduler.Init (Workers => 1);
       Unused_G := Scheduler.Spawn (Waiter_Body'Access);
       Unused_G := Scheduler.Spawn (Watchdog_Body'Access);
-      --  Poll with Yield so the single worker can run the waiter.
-      for I in 1 .. 100_000 loop
+      --  Poll with a real delay: Yield is a no-op outside a goroutine,
+      --  so only a timed wait gives the worker task CPU time.
+      for I in 1 .. 5_000 loop
          exit when Waiter_Flag;
-         Scheduler.Yield;
+         delay 0.001;
       end loop;
       --  Release the watchdog before Shutdown: stop its timer and
       --  close its channel so the parked watchdog goroutine wakes
@@ -192,8 +193,8 @@ package body Time_Suite is
       --  have sent anything.
       Scheduler.Shutdown;
       Scheduler.Init (Workers => 1);
-      for I in 1 .. 1_000 loop
-         Scheduler.Yield;
+      for I in 1 .. 100 loop
+         delay 0.001;
       end loop;
       Scheduler.Shutdown;
       Assert (Time_Channels.Length (Chan (Tm)) = 0,
@@ -208,9 +209,9 @@ package body Time_Suite is
       Scheduler.Shutdown;
       Scheduler.Init (Workers => 1);
       Unused_G := Scheduler.Spawn (Tick_Body'Access);
-      for I in 1 .. 200_000 loop
+      for I in 1 .. 5_000 loop
          exit when Tick_Count >= 2;
-         Scheduler.Yield;
+         delay 0.001;
       end loop;
       --  Release the repeater task and wake a possibly-parked ticker
       --  goroutine so Shutdown's drain and the runner can exit.

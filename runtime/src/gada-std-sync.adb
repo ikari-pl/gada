@@ -98,15 +98,15 @@ package body Gada.Std.Sync is
 
    protected body Wait_Group is
 
-      procedure Add (Delta : Integer) is
+      procedure Add (Amount : Integer) is
       begin
          --  Go: Add with a negative delta that would drive the counter
          --  below zero panics ("sync: negative WaitGroup counter").
-         if Delta < 0 and then Integer (N) + Delta < 0 then
+         if Amount < 0 and then Integer (N) + Amount < 0 then
             raise Constraint_Error
               with "sync: negative WaitGroup counter";
          end if;
-         N := N + Delta;
+         N := N + Amount;
       end Add;
 
       procedure Done is

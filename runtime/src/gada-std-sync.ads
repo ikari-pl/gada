@@ -72,9 +72,9 @@ package Gada.Std.Sync is
    ---------------------------------------------------------------
 
    protected type Wait_Group is
-      --  Go: Add(delta) — negative delta may not drive the counter
+      --  Go: Add(delta) — a negative delta may not drive the counter
       --  below zero (Go panics).
-      procedure Add (Delta : Integer);
+      procedure Add (Amount : Integer);
       --  Go: Done() == Add(-1).
       procedure Done;
       --  Go: Wait() — blocks until the counter reaches zero.

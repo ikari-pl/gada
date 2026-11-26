@@ -133,7 +133,7 @@ package body Gada.Std.Time is
       R    : constant RT.Time := RT.Clock;
       W    : constant Cal.Time := Cal.Clock;
       Secs : constant Long_Float :=
-        RT.To_Duration (RT."-" (R, RT.Time_First));
+        Long_Float (RT.To_Duration (RT."-" (R, RT.Time_First)));
    begin
       return (Mono => R,
               Wall => W,
@@ -145,15 +145,14 @@ package body Gada.Std.Time is
    function Date (Year : Cal.Year_Number;
                   Month : Cal.Month_Number;
                   Day : Cal.Day_Number;
-                  Hour : Cal.Hour_Number;
-                  Minute : Cal.Minute_Number;
-                  Second : Cal.Second_Number;
+                  Hour, Minute, Second : Natural;
                   Ns : Natural;
                   In_UTC : Boolean) return Time is
    begin
       return (Mono => RT.Clock,
-              Wall => Cal.Time_Of (Year, Month, Day,
-                                   Hour, Minute, Second),
+              Wall => Cal.Time_Of
+                (Year, Month, Day,
+                 Cal.Day_Duration (Hour * 3600 + Minute * 60 + Second)),
               Ns   => Ns,
               UTC  => In_UTC);
    end Date;
@@ -161,19 +160,21 @@ package body Gada.Std.Time is
    function Since (T : Time) return Duration is
    begin
       return Duration
-        (Long_Integer (RT.To_Duration (RT."-" (RT.Clock, T.Mono))
-                        * 1_000_000_000.0));
+        (Long_Integer (Long_Float (RT.To_Duration
+           (RT."-" (RT.Clock, T.Mono))) * 1_000_000_000.0));
    end Since;
 
    function Until_K (T : Time; U : Time) return Duration is
    begin
       return Duration
-        (Long_Integer (RT.To_Duration (RT."-" (U.Mono, T.Mono))
-                        * 1_000_000_000.0));
+        (Long_Integer (Long_Float (RT.To_Duration
+           (RT."-" (U.Mono, T.Mono))) * 1_000_000_000.0));
    end Until_K;
 
-   function UTC (T : Time) return Time is (T with UTC => True);
-   function Local (T : Time) return Time is (T with UTC => False);
+   function UTC (T : Time) return Time is
+     (Mono => T.Mono, Wall => T.Wall, Ns => T.Ns, UTC => True);
+   function Local (T : Time) return Time is
+     (Mono => T.Mono, Wall => T.Wall, Ns => T.Ns, UTC => False);
 
    function Year (T : Time) return Cal.Year_Number is
      (Cal.Year (T.Wall));
@@ -181,12 +182,12 @@ package body Gada.Std.Time is
      (Cal.Month (T.Wall));
    function Day (T : Time) return Cal.Day_Number is
      (Cal.Day (T.Wall));
-   function Hour (T : Time) return Cal.Hour_Number is
-     (Cal.Hour (T.Wall));
-   function Minute (T : Time) return Cal.Minute_Number is
-     (Cal.Minute (T.Wall));
-   function Second (T : Time) return Cal.Second_Number is
-     (Cal.Second (T.Wall));
+   function Hour_Of (T : Time) return Natural is
+     (Natural (Cal.Split (T.Wall).Seconds) / 3600);
+   function Minute_Of (T : Time) return Natural is
+     (Natural (Cal.Split (T.Wall).Seconds) / 60 mod 60);
+   function Second_Of (T : Time) return Natural is
+     (Natural (Cal.Split (T.Wall).Seconds) mod 60);
    function Nanosecond (T : Time) return Natural is (T.Ns);
 
    --  "2026-11-26T07:08:09.123456789Z" (UTC) or "…+01:00" (Local).
@@ -228,7 +229,8 @@ package body Gada.Std.Time is
    end Stop_Flag;
 
    function To_Span (D : Duration) return RT.Time_Span is
-     (RT.To_Duration (Long_Float (Long_Integer (D)) / 1.0e9));
+     (RT.To_Time_Span
+        (Standard.Duration (Long_Float (Long_Integer (D)) / 1.0e9)));
 
    --  Keeps heap task objects reachable so the GC never collects a
    --  live timer task (After/Tick return only the channel).

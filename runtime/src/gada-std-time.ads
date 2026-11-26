@@ -66,9 +66,7 @@ package Gada.Std.Time is
    function Date (Year : Ada.Calendar.Year_Number;
                   Month : Ada.Calendar.Month_Number;
                   Day : Ada.Calendar.Day_Number;
-                  Hour : Ada.Calendar.Hour_Number;
-                  Minute : Ada.Calendar.Minute_Number;
-                  Second : Ada.Calendar.Second_Number;
+                  Hour, Minute, Second : Natural;
                   Ns : Natural;
                   In_UTC : Boolean) return Time;
 
@@ -86,9 +84,11 @@ package Gada.Std.Time is
    function Year (T : Time) return Ada.Calendar.Year_Number;
    function Month (T : Time) return Ada.Calendar.Month_Number;
    function Day (T : Time) return Ada.Calendar.Day_Number;
-   function Hour (T : Time) return Ada.Calendar.Hour_Number;
-   function Minute (T : Time) return Ada.Calendar.Minute_Number;
-   function Second (T : Time) return Ada.Calendar.Second_Number;
+   --  (Hour_Of/Minute_Of/Second_Of: the plain names are taken by the
+   --  Duration unit constants Hour/Minute/Second.)
+   function Hour_Of (T : Time) return Natural;
+   function Minute_Of (T : Time) return Natural;
+   function Second_Of (T : Time) return Natural;
    function Nanosecond (T : Time) return Natural;
 
    --  Go: t.Format(time.RFC3339Nano) — v1 fixes the layout.

@@ -122,7 +122,7 @@ package body Time_Suite is
    begin
       Assert (Year (D) = 2026 and Month (D) = 11 and Day (D) = 26,
               "date y/m/d");
-      Assert (Hour (D) = 7 and Minute (D) = 8 and Second (D) = 9,
+      Assert (Hour_Of (D) = 7 and Minute_Of (D) = 8 and Second_Of (D) = 9,
               "date h/m/s");
       Assert (Nanosecond (D) = 123_456_789, "nanosecond");
    end Test_Date_Accessors;

@@ -212,18 +212,18 @@ reason = "Selector defensive/unreachable arms — see runtime/COVERAGE.md"
 
 [[exclude]]
 file = "runtime/src/gada-std-strconv.adb"
-lines = [397, 398, 407, 408, 409, 410, 423, 424, 443, 444, 514, 689, 690, 692, 731, 736, 742, 744, 746, 747, 827, 850, 872, 884]
-reason = "gcov terminator/artifact lines + unreachable Shortest_K/Constraint_Error arms — see runtime/COVERAGE.md"
+lines = [405, 406, 415, 416, 417, 418, 431, 432, 451, 452, 522, 694, 695, 697, 740, 745, 751, 753, 755, 756, 845, 868, 890, 902]
+reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
 
 [[exclude]]
 file = "runtime/src/gada-std-strings.adb"
-lines = [142, 212, 244, 247, 248, 371, 380, 389, 495, 517]
-reason = "gcov terminator/declare artifacts (executed by Split/Case tests) — see runtime/COVERAGE.md"
+lines = [249, 377, 386, 395, 522, 544]
+reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
 
 [[exclude]]
 file = "runtime/src/gada-std-fmt.adb"
-lines = [55, 56, 101, 140, 237, 299, 389, 458]
-reason = "unreachable flag `when others` + gcov end/declare artifacts — see runtime/COVERAGE.md"
+lines = [54, 100, 143, 253, 314, 390, 400, 440, 509]
+reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
 
 [[exclude]]
 file = "runtime/src/gada-std-bytes.adb"
@@ -232,13 +232,13 @@ reason = "gcov terminator artifacts — see runtime/COVERAGE.md"
 
 [[exclude]]
 file = "runtime/src/gada-std-bufio.adb"
-lines = [43, 82, 142, 245]
-reason = "gcov terminator/declare artifacts (245 executed by Scanner final-token test) — see runtime/COVERAGE.md"
+lines = [51, 107, 180, 296]
+reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
 
 [[exclude]]
 file = "runtime/src/gada-std-io.adb"
-lines = [37, 50, 74]
-reason = "gcov end-block artifacts — see runtime/COVERAGE.md"
+lines = [44, 57, 81]
+reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
 
 [[exclude]]
 file = "runtime/src/gada-std-os.adb"

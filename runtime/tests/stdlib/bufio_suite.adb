@@ -147,6 +147,10 @@ package body Bufio_Suite is
                         "CRLF straddling the buffer boundary");
       Register_Routine (T, Test_Flush_Short_Write'Access,
                         "Flush short write = ErrShortWrite, tail kept");
+      Register_Routine (T, Test_Read_Line_Stored_Error'Access,
+                        "ReadLine returns buffered data + stored error");
+      Register_Routine (T, Test_Read_String_Hard_Error'Access,
+                        "ReadString fill error on first call");
       Register_Routine (T, Test_Scanner'Access, "Scanner lines");
       Register_Routine (T, Test_Scanner_Long_And_Error'Access,
                         "Scanner long line + error");
@@ -300,6 +304,40 @@ package body Bufio_Suite is
       Assert (Len (B) = 3, "unwritten tail stays buffered, got"
               & Integer'Image (Len (B)));
    end Test_Flush_Short_Write;
+
+   procedure Test_Read_Line_Stored_Error (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      --  Flaky_Reader delivers ("abc", boom) together: the fill stores
+      --  the error AND buffers the data, so Read_Line returns the data
+      --  with the stored error (Go's ReadSlice returns buffer+readErr).
+      R    : Reader := New_Reader
+        (new Flaky_Reader'(IO.Reader with Data => To_Unbounded_String
+                             ("abc"),
+                           Pos => 1, Boom => True));
+      Line : Unbounded_String;
+      Pre  : Boolean;
+      E    : Errors.Error_Access;
+   begin
+      Read_Line (R, Line, Pre, E);
+      Assert (To_String (Line) = "abc" and then not Pre
+              and then E /= Errors.No_Error
+              and then not Errors.Is_K (E, IO.EOF),
+              "buffered data + stored hard error");
+      Read_Line (R, Line, Pre, E);
+      Assert (Length (Line) = 0 and then Errors.Is_K (E, IO.EOF),
+              "then clean EOF");
+   end Test_Read_Line_Stored_Error;
+
+   procedure Test_Read_String_Hard_Error (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      R : Reader := New_Reader (new Fail_Reader);
+      S : Unbounded_String;
+      E : Errors.Error_Access;
+   begin
+      Read_String (R, ':', S, E);
+      Assert (E /= Errors.No_Error and then not Errors.Is_K (E, IO.EOF),
+              "ReadString first-call fill error");
+   end Test_Read_String_Hard_Error;
 
    procedure Test_Scanner (T : in out AUnit.Test_Cases.Test_Case'Class) is
       S : Scanner := New_Scanner

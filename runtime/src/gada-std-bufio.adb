@@ -160,15 +160,10 @@ package body Gada.Std.Bufio is
             Is_Prefix := True;
             return;
          end if;
-         declare
-            FE : Errors.Error_Access;
-         begin
-            Fill (R, FE);
-            if FE /= Errors.No_Error then
-               Err := FE;
-               return;
-            end if;
-         end;
+         --  A hard fill error is stored in Saved_Err (Go's b.err); the
+         --  stored-error check at the top of the next iteration
+         --  delivers it — with any buffered data — exactly once.
+         Fill (R, Err);
       end loop;
    end Read_Line;
 
@@ -210,15 +205,8 @@ package body Gada.Std.Bufio is
             Err := IO.EOF;
             return;
          end if;
-         declare
-            FE : Errors.Error_Access;
-         begin
-            Fill (R, FE);
-            if FE /= Errors.No_Error then
-               Err := FE;
-               return;
-            end if;
-         end;
+         --  Same stored-error delivery as Read_Line (see above).
+         Fill (R, Err);
       end loop;
    end Read_String;
 

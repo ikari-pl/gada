@@ -52,7 +52,8 @@ package body Gada.Std.Bufio is
 
    procedure Read (R : in out Reader; Data : out String;
                    N : out Natural; Err : out Errors.Error_Access) is
-      M : Natural;
+      M  : Natural;
+      FE : Errors.Error_Access;
    begin
       N := 0;
       Err := Errors.No_Error;
@@ -64,8 +65,15 @@ package body Gada.Std.Bufio is
             return;
          end if;
          if not R.At_EOF then
-            Fill (R, Err);
-            if Err /= Errors.No_Error then
+            Fill (R, FE);
+            --  A fill that delivered data returns it with a nil error
+            --  (Go); the stored hard error surfaces on the next call.
+            --  A fill that delivered nothing surfaces it now.
+            if Length (R.Buf) = 0
+              and then R.Saved_Err /= Errors.No_Error
+            then
+               Err := R.Saved_Err;
+               R.Saved_Err := Errors.No_Error;
                return;
             end if;
          end if;

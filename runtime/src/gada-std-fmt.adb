@@ -157,8 +157,12 @@ package body Gada.Std.Fmt is
                Neg  : constant Boolean := V < 0;
                --  Unsigned magnitude: -Long_Integer'First would raise
                --  (Go prints the min int without complaint).
+               --  Compute the magnitude in the signed domain first
+               --  (X.I is a 32-bit Integer, so 0 - V cannot overflow),
+               --  then convert the non-negative result — converting a
+               --  negative through U64 trips GNAT's overflow check.
                Mag  : constant U64 :=
-                 (if Neg then 0 - U64 (V) else U64 (V));
+                 (if Neg then U64 (0 - V) else U64 (V));
                Sign : constant String :=
                  (if Neg then "-"
                   elsif Sp.Plus then "+"

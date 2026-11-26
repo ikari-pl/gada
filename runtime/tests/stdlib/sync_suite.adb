@@ -29,6 +29,7 @@ package body Sync_Suite is
    Cond_Flag      : Boolean := False;
    Cond_Flags     : array (1 .. 2) of Boolean := (others => False);
    Cond_Obj       : Cond_Access;
+   Cond_Mutex     : aliased Mutex;
 
    overriding function Name
      (T : Sync_Test) return AUnit.Message_String is
@@ -83,7 +84,7 @@ package body Sync_Suite is
    procedure Waiter_Body is
    begin
       Cond_Obj.L.all.Lock;
-      Cond_Obj.all.Wait;
+      Wait (Cond_Obj.all);
       --  Wait reacquired the lock on return.
       Cond_Flag := True;
       Cond_Obj.L.all.Unlock;
@@ -93,7 +94,7 @@ package body Sync_Suite is
    procedure Waiter_Body_1 is
    begin
       Cond_Obj.L.all.Lock;
-      Cond_Obj.all.Wait;
+      Wait (Cond_Obj.all);
       Cond_Flags (1) := True;
       Cond_Obj.L.all.Unlock;
       Shared_WG.Done;
@@ -102,7 +103,7 @@ package body Sync_Suite is
    procedure Waiter_Body_2 is
    begin
       Cond_Obj.L.all.Lock;
-      Cond_Obj.all.Wait;
+      Wait (Cond_Obj.all);
       Cond_Flags (2) := True;
       Cond_Obj.L.all.Unlock;
       Shared_WG.Done;
@@ -256,11 +257,10 @@ package body Sync_Suite is
 
    procedure Test_Cond_Signal (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      M        : aliased Mutex;
       Unused_G : Scheduler.Goroutine_Id;
    begin
       Cond_Flag := False;
-      Cond_Obj := New_Cond (M'Access);
+      Cond_Obj := New_Cond (Cond_Mutex'Access);
       Shared_WG.Add (1);
       Scheduler.Shutdown;
       Scheduler.Init (Workers => 1);
@@ -269,7 +269,7 @@ package body Sync_Suite is
       while Cond_Obj.Waiters.Value = 0 loop
          Scheduler.Yield;
       end loop;
-      Cond_Obj.all.Signal;
+      Signal (Cond_Obj.all);
       Shared_WG.Wait;
       Scheduler.Shutdown;
       Assert (Cond_Flag, "Signal woke the waiter");
@@ -277,11 +277,10 @@ package body Sync_Suite is
 
    procedure Test_Cond_Broadcast (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      M        : aliased Mutex;
       Unused_G : Scheduler.Goroutine_Id;
    begin
       Cond_Flags := (others => False);
-      Cond_Obj := New_Cond (M'Access);
+      Cond_Obj := New_Cond (Cond_Mutex'Access);
       Shared_WG.Add (2);
       Scheduler.Shutdown;
       Scheduler.Init (Workers => 1);
@@ -290,7 +289,7 @@ package body Sync_Suite is
       while Cond_Obj.Waiters.Value < 2 loop
          Scheduler.Yield;
       end loop;
-      Cond_Obj.all.Broadcast;
+      Broadcast (Cond_Obj.all);
       Shared_WG.Wait;
       Scheduler.Shutdown;
       Assert (Cond_Flags (1) and Cond_Flags (2),

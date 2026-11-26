@@ -164,6 +164,7 @@ package body Time_Suite is
          Scheduler.Yield;
       end loop;
       Scheduler.Shutdown;
+      Stop_Channel (Watchdog_Chan);
       Assert (Waiter_Flag, "After(10ms) fired");
       Assert (not Watchdog_Hit, "watchdog did not fire");
    end Test_After;
@@ -197,6 +198,8 @@ package body Time_Suite is
          Scheduler.Yield;
       end loop;
       Scheduler.Shutdown;
+      --  Release the repeater task so the runner can exit.
+      Stop_Channel (Tick_Chan);
       Assert (Tick_Count >= 2, "Tick fired at least twice, got"
               & Natural'Image (Tick_Count));
    end Test_Tick;

@@ -138,4 +138,9 @@ package Gada.Std.Time is
    --  Go: time.Tick(d) <-chan Time — repeating (leaky by design in Go).
    function Tick (D : Duration) return Time_Channels.Channel;
 
+   --  v1 extension (Go's After/Tick expose no handle): stops the timer
+   --  feeding Ch so its task terminates promptly. No-op if Ch is
+   --  unknown or already stopped.
+   procedure Stop_Channel (Ch : Time_Channels.Channel);
+
 end Gada.Std.Time;

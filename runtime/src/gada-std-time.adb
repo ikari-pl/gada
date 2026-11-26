@@ -246,28 +246,50 @@ package body Gada.Std.Time is
 
    end Timer_Core;
 
-   function To_Span (D : Duration) return RT.Time_Span is
-     (RT.To_Time_Span
-        (Standard.Duration (Long_Float (Long_Integer (D)) / 1.0e9)));
+   function To_Span (D : Duration) return Standard.Duration is
+     (Standard.Duration (Long_Float (Long_Integer (D)) / 1.0e9));
 
-   --  Keeps heap task objects reachable so the GC never collects a
-   --  live timer task (After/Tick return only the channel).
-   use type System.Address;
+   --  Timer tasks sleep in slices of at most Slice_Limit so a Stop
+   --  is noticed within that bound and the task can terminate (a
+   --  never-stopped Repeater would block its master's completion).
+   Slice_Limit : constant Duration := 50 * Millisecond;
 
-   package Address_Vectors is
-      new Ada.Containers.Indefinite_Vectors (Positive, System.Address);
+   --  Registry of live timers: pins the heap task objects for the GC
+   --  and lets Stop_Channel find the timer feeding a bare channel.
+   type Timer_Entry is record
+      Core : Timer_Core_Access;
+      Ch   : Time_Channels.Channel;
+      Obj  : System.Address;
+   end record;
+
+   package Entry_Vectors is
+      new Ada.Containers.Indefinite_Vectors (Positive, Timer_Entry);
 
    protected type Keeper is
-      procedure Add (A : System.Address);
+      procedure Register (Core : Timer_Core_Access;
+                         Ch   : Time_Channels.Channel;
+                         Obj  : System.Address);
+      procedure Stop_For (Ch : Time_Channels.Channel);
    private
-      Items : Address_Vectors.Vector;
+      Items : Entry_Vectors.Vector;
    end Keeper;
 
    protected body Keeper is
-      procedure Add (A : System.Address) is
+      procedure Register (Core : Timer_Core_Access;
+                          Ch   : Time_Channels.Channel;
+                          Obj  : System.Address) is
       begin
-         Items.Append (A);
-      end Add;
+         Items.Append ((Core => Core, Ch => Ch, Obj => Obj));
+      end Register;
+
+      procedure Stop_For (Ch : Time_Channels.Channel) is
+      begin
+         for E of Items loop
+            if E.Ch = Ch then
+               E.Core.Stop;
+            end if;
+         end loop;
+      end Stop_For;
    end Keeper;
 
    Keep : Keeper;
@@ -289,12 +311,20 @@ package body Gada.Std.Time is
    type One_Shot_Access is access all One_Shot;
 
    task body One_Shot is
-      R : Timer_Rec_Access;
+      R         : Timer_Rec_Access;
+      Remaining : Duration;
+      Slice     : Duration;
    begin
       accept Set (Rec : Timer_Rec_Access) do
          R := Rec;
       end Set;
-      delay until RT."+" (RT.Clock, To_Span (R.Core.D));
+      Remaining := R.Core.D;
+      while Remaining > 0 and then not R.Core.Stopped loop
+         Slice := (if Remaining < Slice_Limit then Remaining
+                   else Slice_Limit);
+         delay To_Span (Slice);
+         Remaining := Remaining - Slice;
+      end loop;
       if not R.Core.Stopped then
          Time_Channels.Send (R.Core.Ch, True);
       end if;
@@ -307,13 +337,21 @@ package body Gada.Std.Time is
    type Repeater_Access is access all Repeater;
 
    task body Repeater is
-      R : Timer_Rec_Access;
+      R         : Timer_Rec_Access;
+      Remaining : Duration;
+      Slice     : Duration;
    begin
       accept Set (Rec : Timer_Rec_Access) do
          R := Rec;
       end Set;
       loop
-         delay until RT."+" (RT.Clock, To_Span (R.Core.D));
+         Remaining := R.Core.D;
+         while Remaining > 0 and then not R.Core.Stopped loop
+            Slice := (if Remaining < Slice_Limit then Remaining
+                      else Slice_Limit);
+            delay To_Span (Slice);
+            Remaining := Remaining - Slice;
+         end loop;
          exit when R.Core.Stopped;
          Time_Channels.Send (R.Core.Ch, True);
       end loop;
@@ -326,7 +364,7 @@ package body Gada.Std.Time is
    begin
       Core.Setup (Time_Channels.Make, D);
       T.Set (Rec);
-      Keep.Add (T.all'Address);
+      Keep.Register (Core, Core.Ch, T.all'Address);
       return (C => Core.Ch, Core => Core);
    end New_Timer;
 
@@ -337,6 +375,11 @@ package body Gada.Std.Time is
 
    function Chan (T : Timer) return Time_Channels.Channel is (T.C);
 
+   procedure Stop_Channel (Ch : Time_Channels.Channel) is
+   begin
+      Keep.Stop_For (Ch);
+   end Stop_Channel;
+
    function After (D : Duration) return Time_Channels.Channel is
       Core : constant Timer_Core_Access := new Timer_Core;
       Rec : constant Timer_Rec_Access := new Timer_Rec'(Core => Core);
@@ -344,7 +387,7 @@ package body Gada.Std.Time is
    begin
       Core.Setup (Time_Channels.Make, D);
       T.Set (Rec);
-      Keep.Add (T.all'Address);
+      Keep.Register (Core, Core.Ch, T.all'Address);
       return Core.Ch;
    end After;
 
@@ -355,7 +398,7 @@ package body Gada.Std.Time is
    begin
       Core.Setup (Time_Channels.Make, D);
       T.Set (Rec);
-      Keep.Add (T.all'Address);
+      Keep.Register (Core, Core.Ch, T.all'Address);
       return Core.Ch;
    end Tick;
 

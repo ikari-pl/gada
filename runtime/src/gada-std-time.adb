@@ -16,12 +16,6 @@ package body Gada.Std.Time is
      (Duration (Long_Integer (L) + Long_Integer (R)));
    function "-" (L, R : Duration) return Duration is
      (Duration (Long_Integer (L) - Long_Integer (R)));
-   function "*" (L : Duration; R : Long_Integer) return Duration is
-     (Duration (Long_Integer (L) * R));
-   function "*" (L : Long_Integer; R : Duration) return Duration is
-     (Duration (L * Long_Integer (R)));
-   function "/" (L : Duration; R : Long_Integer) return Duration is
-     (Duration (Long_Integer (L) / R));
    function "<" (L, R : Duration) return Boolean is
      (Long_Integer (L) < Long_Integer (R));
    function "<=" (L, R : Duration) return Boolean is

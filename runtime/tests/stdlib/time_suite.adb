@@ -107,7 +107,7 @@ package body Time_Suite is
    begin
       delay until RT."+" (RT.Clock, RT.Milliseconds (20));
       declare
-         D : constant Duration := Since (T0);
+         D : constant Gada.Std.Time.Duration := Since (T0);
       begin
          Assert (D >= 15 * Millisecond,
                  "Since >= 15ms after a 20ms delay, got " & To_String (D));

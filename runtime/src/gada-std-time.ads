@@ -32,11 +32,11 @@ package Gada.Std.Time is
    Minute      : constant Duration := 60 * Second;
    Hour        : constant Duration := 60 * Minute;
 
+   --  "*", "/", unary "-" come from the inherited predefined operators
+   --  of the derived type (declaring mixed Long_Integer profiles here
+   --  would be ambiguous with them).
    function "+" (L, R : Duration) return Duration;
    function "-" (L, R : Duration) return Duration;
-   function "*" (L : Duration; R : Long_Integer) return Duration;
-   function "*" (L : Long_Integer; R : Duration) return Duration;
-   function "/" (L : Duration; R : Long_Integer) return Duration;
    function "<" (L, R : Duration) return Boolean;
    function "<=" (L, R : Duration) return Boolean;
    function ">" (L, R : Duration) return Boolean;

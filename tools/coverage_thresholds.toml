@@ -301,7 +301,7 @@ reason = "Parse_IPv4 Dot=0 arm unreachable behind Count=3 guard — see runtime/
 # Rationale: runtime/COVERAGE.md (gada-std-net, gada-std-bytes).
 [[exclude]]
 file = "runtime/src/gada-std-net.adb"
-lines = [92, 96, 141, 176, 230, 279, 280, 472, 1002]
+lines = [92, 96, 141, 176, 230, 279, 280, 484, 1014]
 reason = "end-of-block/subprogram terminators — see runtime/COVERAGE.md"
 
 [[exclude]]
@@ -309,16 +309,17 @@ file = "runtime/src/gada-std-bytes.adb"
 lines = [38, 132, 176]
 reason = "end To_String / end loop terminators — see runtime/COVERAGE.md"
 
-# Resolve's Addresses_Length = 0 arm: GNAT's Get_Host_By_Name wraps
-# gethostbyname(3), which never returns a successful host entry with
-# zero addresses on Linux CI — defensive only. The Inet6 arm of To_IP
-# is unreachable in v1 because every socket is created AF_INET, so no
-# Inet6 Sock_Addr is ever produced; Addr_Image's non-inet guard is the
-# same defensive class. Rationale: runtime/COVERAGE.md (gada-std-net).
+# Resolve's "resolved but no IPv4 address" arm (v6-only names): v1
+# sockets are IPv4-only, and on Linux CI every resolvable name used by
+# the suite (localhost) has a v4 entry, so the post-loop fall-through
+# is defensive only. The Inet6 arm of To_IP is unreachable in v1
+# because every socket is created AF_INET, so no Inet6 Sock_Addr is
+# ever produced; Addr_Image's non-inet guard is the same defensive
+# class. Rationale: runtime/COVERAGE.md (gada-std-net).
 [[exclude]]
 file = "runtime/src/gada-std-net.adb"
-lines = [440, 441, 442, 466, 467, 468, 469, 495]
-reason = "Resolve zero-address arm + To_IP Inet6 arm + Addr_Image guard: v1 is IPv4-only — see runtime/COVERAGE.md"
+lines = [455, 456, 478, 479, 480, 481, 507]
+reason = "Resolve no-v4 arm + To_IP Inet6 arm + Addr_Image guard: v1 is IPv4-only — see runtime/COVERAGE.md"
 
 # Nested `when others => null` inside the Socket_Error cleanup handlers
 # of Dial/Listen/Listen_Packet: only reachable if Close_Socket itself
@@ -326,5 +327,5 @@ reason = "Resolve zero-address arm + To_IP Inet6 arm + Addr_Image guard: v1 is I
 # deterministically. Rationale: runtime/COVERAGE.md (gada-std-net).
 [[exclude]]
 file = "runtime/src/gada-std-net.adb"
-lines = [692, 802, 964]
+lines = [704, 814, 976]
 reason = "Close_Socket failure arm in Socket_Error handlers — see runtime/COVERAGE.md"

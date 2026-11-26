@@ -516,25 +516,26 @@ test). Same misattribution class as gada-std-time.adb.
 the `Count (S, ".") = 3` guard at line 66 guarantees a dot remains
 in the searched suffix for parts 1..3 (each iteration consumes exactly
 one dot and advances Pos past it), so `Index` never returns 0 there.
-92, 96, 141, 176, 230, 279, 280, 472, 1002 — declare-block and
+92, 96, 141, 176, 230, 279, 280, 484, 1014 — declare-block and
 subprogram terminators; lcov 2.4 no-return-block misattribution class
 documented above (every contained line is hit by Net_Suite's parse,
-TCP, UDP, LookupHost, and error-path tests). 440-442 — `Resolve`'s
-`Addresses_Length (H) = 0` arm: GNAT's `Get_Host_By_Name` wraps
-`gethostbyname(3)`, which on Linux never returns a successful host
-entry with zero addresses; defensive only. The hostname success arm
-(444) is covered by `Test_Listen_Errors`' `localhost:0` control.
-466-469 — `To_IP`'s `Family_Inet6` arm: v1 creates every socket with
-`Family_Inet`, so no Inet6 `Sock_Addr_Type` is ever produced and this
-arm cannot execute (the bracket-parse path in `Split_Address`,
-395-400, IS covered by the `[::1]:80` dial error test — only the
-post-socket conversion arm is excluded). 495 — `Addr_Image`'s
-non-inet family guard, same defensive class. 692, 802, 964 — the
-nested `when others => null` inside the `Socket_Error` cleanup
-handlers of `Dial`/`Listen`/`Listen_Packet`: reachable only if
-`Close_Socket` itself raises during error cleanup, which needs fault
-injection; the handlers themselves (796-808, 958-970) are covered by
-the `192.0.2.1:0` unassigned-bind tests. All other net lines — IP
+TCP, UDP, LookupHost, and error-path tests). 455-456 — `Resolve`'s
+"resolved but no IPv4 address" fall-through (v6-only names): v1
+sockets are IPv4-only and on Linux CI every resolvable name the suite
+uses (localhost) has a v4 entry; the v6-literal early-out above it IS
+covered by the `[::1]:80` dial error test, and the v4-found loop arm
+by the `localhost:0` listen control. 478-481 — `To_IP`'s
+`Family_Inet6` arm: v1 creates every socket with `Family_Inet`, so no
+Inet6 `Sock_Addr_Type` is ever produced and this arm cannot execute
+(the bracket-parse path in `Split_Address`, 395-400, IS covered by the
+`[::1]:80` dial error test — only the post-socket conversion arm is
+excluded). 507 — `Addr_Image`'s non-inet family guard, same defensive
+class. 704, 814, 976 — the nested `when others => null` inside the
+`Socket_Error` cleanup handlers of `Dial`/`Listen`/`Listen_Packet`:
+reachable only if `Close_Socket` itself raises during error cleanup,
+which needs fault injection; the handlers themselves (808-820,
+970-982) are covered by the `192.0.2.1:0` unassigned-bind tests. All
+other net lines — IP
 parse/format tables, Split_Address, Resolve, Dial/Listen/Listen_Packet
 happy + error paths, Conn/Listener/Packet_Conn ops incl. closed-socket
 and EOF arms, Lookup_Host — are covered by Net_Suite, not excluded.

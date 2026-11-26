@@ -433,15 +433,27 @@ package body Gada.Std.Net is
       if Parse_IP (Host).Len = 4 then
          return GS.Inet_Addr (Host);
       end if;
+      if Parse_IP (Host).Len = 16 then
+         --  IPv6 literal: v1 sockets are IPv4-only.
+         OK := False;
+         return GS.Any_Inet_Addr;
+      end if;
       begin
          declare
             H : constant GS.Host_Entry_Type := GS.Get_Host_By_Name (Host);
          begin
-            if GS.Addresses_Length (H) = 0 then
-               OK := False;
-               return GS.Any_Inet_Addr;
-            end if;
-            return GS.Addresses (H, 1);
+            for I in 1 .. GS.Addresses_Length (H) loop
+               declare
+                  A : constant GS.Inet_Addr_Type := GS.Addresses (H, I);
+               begin
+                  if A.Family = GS.Family_Inet then
+                     return A;
+                  end if;
+               end;
+            end loop;
+            --  Resolved, but to no IPv4 address (v6-only name).
+            OK := False;
+            return GS.Any_Inet_Addr;
          end;
       exception
          when GS.Socket_Error | GS.Host_Error =>

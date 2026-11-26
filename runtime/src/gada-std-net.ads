@@ -65,7 +65,7 @@ package Gada.Std.Net is
       procedure Close;
       --  Go conn.RemoteAddr(): "ip:port" of the peer.
       function Remote_Addr return String;
-      entry Set (S : GNAT.Sockets.Socket_Type);
+      procedure Set (S : GNAT.Sockets.Socket_Type);
    private
       Sock   : GNAT.Sockets.Socket_Type := GNAT.Sockets.No_Socket;
       Closed : Boolean := False;
@@ -93,7 +93,7 @@ package Gada.Std.Net is
       --  Go listener.Addr().String(): the bound "ip:port" (useful with
       --  port 0, where the OS picks an ephemeral port).
       function Addr return String;
-      entry Set (S : GNAT.Sockets.Socket_Type);
+      procedure Set (S : GNAT.Sockets.Socket_Type);
    private
       Sock : GNAT.Sockets.Socket_Type := GNAT.Sockets.No_Socket;
    end Listener_Impl;
@@ -123,7 +123,7 @@ package Gada.Std.Net is
                           Err     : out Errors.Error_Access);
       procedure Close;
       function Addr return String;
-      entry Set (S : GNAT.Sockets.Socket_Type);
+      procedure Set (S : GNAT.Sockets.Socket_Type);
    private
       Sock : GNAT.Sockets.Socket_Type := GNAT.Sockets.No_Socket;
    end Packet_Conn_Impl;

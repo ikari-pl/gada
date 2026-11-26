@@ -508,7 +508,7 @@ package body Gada.Std.Net is
 
    protected body Conn_Impl is
 
-      entry Set (S : GS.Socket_Type) is
+      procedure Set (S : GS.Socket_Type) is
       begin
          Sock := S;
          Closed := False;
@@ -697,7 +697,7 @@ package body Gada.Std.Net is
 
    protected body Listener_Impl is
 
-      entry Set (S : GS.Socket_Type) is
+      procedure Set (S : GS.Socket_Type) is
       begin
          Sock := S;
       end Set;
@@ -807,7 +807,7 @@ package body Gada.Std.Net is
 
    protected body Packet_Conn_Impl is
 
-      entry Set (S : GS.Socket_Type) is
+      procedure Set (S : GS.Socket_Type) is
       begin
          Sock := S;
       end Set;

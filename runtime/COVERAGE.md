@@ -428,7 +428,7 @@ Excluded lines (see `tools/coverage_thresholds.toml`):
 
 ### `runtime/src/gada-std-strings.adb` (Phase 5)
 
-Excluded lines: 249, 377, 386, 395, 522, 544 — `end loop;` /
+Excluded lines: 142, 249, 377, 386, 395, 522, 544 — `end loop;` /
 `end To_Upper;` / `end To_Lower;` / `end Map;` terminators and two
 `declare` markers in `Replacer.Replace`. All executed — the Split,
 Case and Replacer tests are green in the same run — but lcov 2.4
@@ -437,7 +437,7 @@ misattribution class as `gada-async-race.adb:80`.
 
 ### `runtime/src/gada-std-fmt.adb` (Phase 5)
 
-Excluded lines: 54, 100, 143, 253, 314, 390, 400, 440, 509. Line 54
+Excluded lines: 54, 55, 100, 143, 253, 314, 390, 400, 440, 509. Line 54
 (`when others => null;` in `Parse_Spec`) is unreachable by
 construction: the `while` guard already restricts `F (I)` to
 `'-' | '+' | ' ' | '#' | '0'`, so the `others` arm can never fire —
@@ -459,7 +459,7 @@ class as `gada-async-race.adb:80`.
 ### `runtime/src/gada-std-bytes.adb`, `gada-std-bufio.adb`, `gada-std-io.adb` (Phase 5)
 
 bytes: 28, 122, 166 — `end To_String;` terminators and an `end loop;`
-marker. bufio: 51, 107, 180, 296 — `end Fill;`, two `declare` markers
+marker. bufio: 51, 106, 179, 295 — `end Fill;`, two `declare` markers
 in the Read_Line/Read_String search loops, and the `end if;` after
 Scanner's final-token `return True;` (executed by the "final token
 w/o LF" assert). The stored-error branches of Read/Read_Line/

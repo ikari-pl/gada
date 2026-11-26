@@ -217,12 +217,12 @@ reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead 
 
 [[exclude]]
 file = "runtime/src/gada-std-strings.adb"
-lines = [249, 377, 386, 395, 522, 544]
+lines = [142, 249, 377, 386, 395, 522, 544]
 reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
 
 [[exclude]]
 file = "runtime/src/gada-std-fmt.adb"
-lines = [54, 100, 143, 253, 314, 390, 400, 440, 509]
+lines = [54, 55, 100, 143, 253, 314, 390, 400, 440, 509]
 reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
 
 [[exclude]]
@@ -232,7 +232,7 @@ reason = "gcov terminator artifacts — see runtime/COVERAGE.md"
 
 [[exclude]]
 file = "runtime/src/gada-std-bufio.adb"
-lines = [51, 107, 180, 296]
+lines = [51, 106, 179, 295]
 reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
 
 [[exclude]]

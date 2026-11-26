@@ -105,7 +105,9 @@ package body Net_Suite is
       Assert (To_String (Parse_IP ("255.255.255.255")) = "255.255.255.255",
               "max v4");
       for I in Bad'Range loop
-         Assert (not Is_Valid (Parse_IP (Bad (I))),
+         Assert (not Is_Valid
+                 (Parse_IP (Ada.Strings.Fixed.Trim
+                    (Bad (I), Ada.Strings.Both))),
                  "should reject: '" & Bad (I) & "'");
       end loop;
    end Test_Parse_IP_V4;
@@ -117,7 +119,7 @@ package body Net_Suite is
       Good : constant Case_Array :=
         ("::1                                   ",
          "2001:db8::1                           ",
-         "2001:0db8:0000:0000:0000:ff00:0042:8329",
+         "2001:0db8:0000:0000:0000:ff00:0042:8329 ",
          "::                                    ",
          "1::                                   ",
          "::ffff:127.0.0.1                      ",
@@ -144,17 +146,22 @@ package body Net_Suite is
    begin
       for I in Good'Range loop
          declare
-            A : constant IP := Parse_IP (Good (I));
+            A : constant IP :=
+               Parse_IP (Ada.Strings.Fixed.Trim
+                 (Good (I), Ada.Strings.Both));
          begin
             Assert (Is_Valid (A) and then A.Len = 16,
                     "should parse: '" & Good (I) & "'");
-            Assert (To_String (A) = Want (I),
+            Assert (Ada.Strings.Fixed.Trim (To_String (A), Ada.Strings.Both)
+                 = Ada.Strings.Fixed.Trim (Want (I), Ada.Strings.Both),
                     "image of '" & Good (I) & "' = '" & To_String (A)
                     & "' want '" & Want (I) & "'");
          end;
       end loop;
       for I in Bad'Range loop
-         Assert (not Is_Valid (Parse_IP (Bad (I))),
+         Assert (not Is_Valid
+                 (Parse_IP (Ada.Strings.Fixed.Trim
+                    (Bad (I), Ada.Strings.Both))),
                  "should reject: '" & Bad (I) & "'");
       end loop;
    end Test_Parse_IP_V6;

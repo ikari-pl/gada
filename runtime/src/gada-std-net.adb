@@ -445,6 +445,9 @@ package body Gada.Std.Net is
    function To_IP (A : GS.Inet_Addr_Type) return IP is
       Result : IP := Zero_IP;
    begin
+      --  A.Family is Family_Inet_4_6; v1 sockets are always v4, so
+      --  the Inet6 arm is defensive (excluded from coverage — see
+      --  runtime/COVERAGE.md).
       case A.Family is
          when GS.Family_Inet =>
             Result.Len := 4;
@@ -456,8 +459,6 @@ package body Gada.Std.Net is
             for I in 1 .. 16 loop
                Result.B (I) := Character'Val (Natural (A.Sin_V6 (I)));
             end loop;
-         when GS.Family_Unix | GS.Family_Unspec =>
-            null;   --  leaves Len = 0 (nil IP)
       end case;
       return Result;
    end To_IP;
@@ -507,7 +508,7 @@ package body Gada.Std.Net is
 
    protected body Conn_Impl is
 
-      procedure Set (S : GS.Socket_Type) is
+      entry Set (S : GS.Socket_Type) is
       begin
          Sock := S;
          Closed := False;
@@ -696,7 +697,7 @@ package body Gada.Std.Net is
 
    protected body Listener_Impl is
 
-      procedure Set (S : GS.Socket_Type) is
+      entry Set (S : GS.Socket_Type) is
       begin
          Sock := S;
       end Set;
@@ -806,7 +807,7 @@ package body Gada.Std.Net is
 
    protected body Packet_Conn_Impl is
 
-      procedure Set (S : GS.Socket_Type) is
+      entry Set (S : GS.Socket_Type) is
       begin
          Sock := S;
       end Set;

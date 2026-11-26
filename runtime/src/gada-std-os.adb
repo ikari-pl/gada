@@ -35,11 +35,14 @@ package body Gada.Std.OS is
       declare
          N    : constant Stream_Element_Offset :=
            Stream_Element_Offset (SIO.Size (F));
-         Buf  : Stream_Element_Array (1 .. N);
+         --  Heap buffer: goroutine stacks are 256 KB, a stack array
+         --  would overflow on large files.
+         type SEA is access Stream_Element_Array;
+         Buf  : constant SEA := new Stream_Element_Array (1 .. N);
          Last : Stream_Element_Offset;
       begin
          begin
-            SIO.Read (F, Buf, Last);
+            SIO.Read (F, Buf.all, Last);
             for I in Buf'First .. Last loop
                Bytes.Byte_Vectors.Append
                  (Data, Character'Val (Buf (I)));
@@ -81,6 +84,12 @@ package body Gada.Std.OS is
      (Key   : String;
       Value : out Unbounded_String) return Boolean is
    begin
+      --  Go returns ("", false) for an empty key or one containing
+      --  '='; Ada's Exists would raise Constraint_Error — validate.
+      if Key'Length = 0 or else (for some C of Key => C = '=') then
+         Value := Null_Unbounded_String;
+         return False;
+      end if;
       if Ada.Environment_Variables.Exists (Key) then
          Value := To_Unbounded_String
            (Ada.Environment_Variables.Value (Key));
@@ -153,7 +162,8 @@ package body Gada.Std.OS is
    procedure Write (F : File_Access; Data : Bytes.Byte_Slice) is
       package SIO renames Ada.Streams.Stream_IO;
       N   : Natural := 0;
-      Buf : Stream_Element_Array
+      type SEA is access Stream_Element_Array;
+      Buf : constant SEA := new Stream_Element_Array
         (1 .. Stream_Element_Offset (Bytes.Byte_Vectors.Length (Data)));
    begin
       if F = null or else not SIO.Is_Open (F.all.F) then

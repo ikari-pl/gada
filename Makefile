@@ -212,7 +212,7 @@ example:
 	@echo "=== running examples/$(HELLO)/$(HELLO) ==="
 	@out=$$(mktemp -t gada-example.XXXXXX) ; \
 	    trap 'rm -f $$out' EXIT ; \
-	    $(ROOT)/examples/$(HELLO)/$(HELLO) > $$out ; \
+	    timeout 120 $(ROOT)/examples/$(HELLO)/$(HELLO) > $$out ; \
 	    rc=$$? ; \
 	    if [ $$rc -ne 0 ]; then \
 	        echo "make example: binary exited $$rc" >&2 ; \

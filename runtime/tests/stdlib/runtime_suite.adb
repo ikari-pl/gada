@@ -47,12 +47,13 @@ package body Runtime_Suite is
 
    procedure Test_Num_Goroutine (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      N0 : constant Natural := Num_Goroutine;
+      N0 : Natural;
       Unused_G : Scheduler.Goroutine_Id;
    begin
-      Assert (N0 >= 1, "at least the main goroutine is counted");
       Scheduler.Shutdown;
       Scheduler.Init (Workers => 2);
+      N0 := Num_Goroutine;   --  baseline AFTER the reset, not before
+      Assert (N0 >= 1, "at least the main goroutine is counted");
       Release_Chan := Unit_Channels.Make;
       Ready_Count  := 0;
       Unused_G := Scheduler.Spawn (Blocker_Body'Access);

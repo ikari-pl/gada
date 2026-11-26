@@ -165,10 +165,39 @@ package body Gada.Std.Time is
            (RT."-" (U.Mono, T.Mono))) * 1_000_000_000.0));
    end Until_K;
 
+   --  Zone conversions convert the WALL clock (Go: same instant, other
+   --  zone). The offset comes from Ada.Calendar.Time_Zones.
    function UTC (T : Time) return Time is
-     (Mono => T.Mono, Wall => T.Wall, Ns => T.Ns, UTC => True);
+   begin
+      if T.UTC then
+         return T;   --  already UTC: same wall
+      end if;
+      declare
+         Off : constant Ada.Calendar.Time_Zones.Time_Offset :=
+           Ada.Calendar.Time_Zones.UTC_Time_Offset (T.Wall);
+      begin
+         return (Mono => T.Mono,
+                 Wall => T.Wall - Standard.Duration (Integer (Off)) * 60.0,
+                 Ns   => T.Ns,
+                 UTC  => True);
+      end;
+   end UTC;
+
    function Local (T : Time) return Time is
-     (Mono => T.Mono, Wall => T.Wall, Ns => T.Ns, UTC => False);
+   begin
+      if not T.UTC then
+         return T;   --  already Local: same wall
+      end if;
+      declare
+         Off : constant Ada.Calendar.Time_Zones.Time_Offset :=
+           Ada.Calendar.Time_Zones.UTC_Time_Offset (T.Wall);
+      begin
+         return (Mono => T.Mono,
+                 Wall => T.Wall + Standard.Duration (Integer (Off)) * 60.0,
+                 Ns   => T.Ns,
+                 UTC  => False);
+      end;
+   end Local;
 
    function Year (T : Time) return Cal.Year_Number is
      (Cal.Year (T.Wall));
@@ -252,6 +281,14 @@ package body Gada.Std.Time is
 
       function Stopped return Boolean is (S);
 
+      procedure Try_Fire is
+      begin
+         if not S then
+            Time_Channels.Send (Chan, True);
+            S := True;
+         end if;
+      end Try_Fire;
+
    end Timer_Core;
 
    function To_Span (D : Duration) return Standard.Duration is
@@ -279,7 +316,9 @@ package body Gada.Std.Time is
       procedure Register (Core : Timer_Core_Access;
                          Ch   : Time_Channels.Channel;
                          Obj  : System.Address);
+      procedure Unregister (Ch : Time_Channels.Channel);
       procedure Stop_For (Ch : Time_Channels.Channel);
+      procedure Stop_All;
    private
       Items : Entry_Vectors.Vector;
    end Keeper;
@@ -293,6 +332,17 @@ package body Gada.Std.Time is
          Items.Append (E);
       end Register;
 
+      procedure Unregister (Ch : Time_Channels.Channel) is
+         use Ada.Containers;
+      begin
+         for I in Items.First_Index .. Items.Last_Index loop
+            if Items (I).Ch = Ch then
+               Items.Delete (I);
+               return;
+            end if;
+         end loop;
+      end Unregister;
+
       procedure Stop_For (Ch : Time_Channels.Channel) is
       begin
          for E of Items loop
@@ -301,6 +351,13 @@ package body Gada.Std.Time is
             end if;
          end loop;
       end Stop_For;
+
+      procedure Stop_All is
+      begin
+         for E of Items loop
+            E.Core.Stop;
+         end loop;
+      end Stop_All;
    end Keeper;
 
    Keep : Keeper;
@@ -336,9 +393,8 @@ package body Gada.Std.Time is
          delay To_Span (Slice);
          Remaining := Remaining - Slice;
       end loop;
-      if not R.Core.Stopped then
-         Time_Channels.Send (R.Core.Ch, True);
-      end if;
+      R.Core.Try_Fire;   --  atomic stop-vs-send claim
+      Keep.Unregister (R.Core.Ch);
    end One_Shot;
 
    task type Repeater is
@@ -364,8 +420,9 @@ package body Gada.Std.Time is
             Remaining := Remaining - Slice;
          end loop;
          exit when R.Core.Stopped;
-         Time_Channels.Send (R.Core.Ch, True);
+         R.Core.Try_Fire;
       end loop;
+      Keep.Unregister (R.Core.Ch);
    end Repeater;
 
    function New_Timer (D : Duration) return Timer is
@@ -390,6 +447,11 @@ package body Gada.Std.Time is
    begin
       Keep.Stop_For (Ch);
    end Stop_Channel;
+
+   procedure Stop_All is
+   begin
+      Keep.Stop_All;
+   end Stop_All;
 
    function After (D : Duration) return Time_Channels.Channel is
       Core : constant Timer_Core_Access := new Timer_Core;

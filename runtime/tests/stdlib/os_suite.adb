@@ -68,6 +68,8 @@ package body OS_Suite is
       Register_Routine (T, Test_Stat_Dir_And_Missing'Access,
                         "Stat dir + missing");
       Register_Routine (T, Test_Mkdir'Access, "Mkdir + exists error");
+      Register_Routine (T, Test_Read_File_Dir'Access,
+                        "ReadFile on a directory errors");
    end Register_Tests;
 
    procedure Test_Read_File_Ok (T : in out
@@ -139,6 +141,10 @@ package body OS_Suite is
       Assert (Err /= Errors.No_Error, "Set_Env rejects '=' in key");
       Err := Set_Env ("", "x");
       Assert (Err /= Errors.No_Error, "Set_Env rejects empty key");
+      --  LookupEnv with a bad key returns ("", false), no raise.
+      Assert (not Lookup_Env ("GADA_BAD=KEY", V),
+              "Lookup_Env rejects '=' in key");
+      Assert (not Lookup_Env ("", V), "Lookup_Env rejects empty key");
    end Test_Env;
 
    procedure Test_Open_Ok (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -228,5 +234,17 @@ package body OS_Suite is
       Assert (Err /= Errors.No_Error, "Mkdir on existing errors");
       Ada.Directories.Delete_Directory (Tmp_Dir);
    end Test_Mkdir;
+
+   procedure Test_Read_File_Dir (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Data : Byte_Slice;
+      Err  : Errors.Error_Access;
+   begin
+      --  On Linux, opening a directory succeeds and the read fails
+      --  with Device_Error (EISDIR) — exercises the read-error arm.
+      Read_File (".", Data, Err);
+      Assert (Err /= Errors.No_Error, "dir read: error set");
+      Assert (Byte_Vectors.Is_Empty (Data), "dir read: empty slice");
+   end Test_Read_File_Dir;
 
 end OS_Suite;

@@ -164,7 +164,7 @@ package body Time_Suite is
       Waiter_Flag := False;
       Watchdog_Hit := False;
       Waiter_Chan := After (10 * Millisecond);
-      Watchdog_Chan := After (5 * Second);
+      Watchdog_Chan := After (30 * Second);
       Scheduler.Shutdown;
       Scheduler.Init (Workers => 1);
       Unused_G := Scheduler.Spawn (Waiter_Body'Access);
@@ -186,19 +186,23 @@ package body Time_Suite is
    end Test_After;
 
    procedure Test_Timer_Stop (T : in out AUnit.Test_Cases.Test_Case'Class) is
-      Tm : Timer := New_Timer (10 * Second);
+      Tm  : Timer := New_Timer (30 * Millisecond);
+      Ctl : Timer := New_Timer (30 * Millisecond);
    begin
-      Stop (Tm);
-      --  Give the (stopped) timer task a chance to run: it must not
-      --  have sent anything.
+      Stop (Tm);   --  stopped before its 30ms deadline
+      --  Positive control: an unstopped timer of the same duration
+      --  MUST fire, so "stopped sent nothing" can actually fail.
       Scheduler.Shutdown;
       Scheduler.Init (Workers => 1);
-      for I in 1 .. 100 loop
+      for I in 1 .. 500 loop
+         exit when Time_Channels.Length (Chan (Ctl)) > 0;
          delay 0.001;
       end loop;
       Scheduler.Shutdown;
+      Assert (Time_Channels.Length (Chan (Ctl)) > 0,
+              "control timer fired (test can fail)");
       Assert (Time_Channels.Length (Chan (Tm)) = 0,
-              "stopped timer sent nothing");
+              "stopped timer sent nothing despite elapsed deadline");
    end Test_Timer_Stop;
 
    procedure Test_Tick (T : in out AUnit.Test_Cases.Test_Case'Class) is

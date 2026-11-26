@@ -71,8 +71,9 @@ package Gada.Std.Time is
                   Ns : Natural;
                   In_UTC : Boolean) return Time;
 
-   --  Go: time.Since(t) — monotonic elapsed. Until maps to
-   --  Until_K ("until" is reserved, same _K rule as New_K/Is_K).
+   --  Go: time.Since(t) — monotonic elapsed. v1 Until_K is the
+   --  binary U - T ("until" is reserved, same _K rule as New_K/Is_K);
+   --  Go's unary time.Until(t) has no lowering yet.
    function Since (T : Time) return Duration;
    function Until_K (T : Time; U : Time) return Duration;
 
@@ -99,6 +100,9 @@ package Gada.Std.Time is
    --  Timers — channels fed by Ada tasks on Real_Time delays
    ---------------------------------------------------------------
 
+   --  v1: the channel element is a dummy Boolean (Go delivers the
+   --  firing time.Time; the port discards it — receives are usually
+   --  `<-time.After(d)` in statement/select position).
    package Time_Channels is
       new Gada.Async.Channels.Unbounded (Boolean);
 
@@ -112,6 +116,11 @@ package Gada.Std.Time is
       function D return Duration;
       procedure Stop;
       function Stopped return Boolean;
+      --  Atomic check-and-send: if not stopped, sends True on the
+      --  channel and marks the timer fired, all under the protected
+      --  lock — a Stop landing after this returns is a no-op (the
+      --  timer already fired, matching Go's Stop returning False).
+      procedure Try_Fire;
    private
       Chan : Time_Channels.Channel := Time_Channels.No_Channel;
       Dly  : Duration := 0;
@@ -142,5 +151,11 @@ package Gada.Std.Time is
    --  feeding Ch so its task terminates promptly. No-op if Ch is
    --  unknown or already stopped.
    procedure Stop_Channel (Ch : Time_Channels.Channel);
+
+   --  v1 extension: stops every live timer (used by generated main
+   --  before Scheduler.Shutdown so a pending After/Tick cannot hang
+   --  process exit — Ada waits for dependent tasks at elaboration
+   --  finalization, Go does not).
+   procedure Stop_All;
 
 end Gada.Std.Time;

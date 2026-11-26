@@ -61,6 +61,7 @@ jobs:
   build-test-coverage:
     name: build, test, coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     permissions:
       contents: read
@@ -212,6 +213,7 @@ jobs:
   examples:
     name: examples (end-to-end)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     # Gate the heavyweight Ada toolchain install + gprbuild link behind a
     # green build-test-coverage run. If the Go unit tests or coverage gate
     # are red, there is no point burning ~3 minutes installing gnat_native
@@ -392,6 +394,7 @@ jobs:
   roadmap-consistency:
     name: roadmap consistency
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

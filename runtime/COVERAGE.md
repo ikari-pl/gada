@@ -481,17 +481,18 @@ is exercised by the After/Tick/NewTimer tests, not excluded.
 
 ### `runtime/src/gada-std-os.adb` (Phase 6 wave 2)
 
-49, 52, 54, 55 — Read_File's `when Device_Error | End_Error |
-Data_Error` arm: a mid-read stream failure on a regular file is not
-deterministically triggerable in CI (the open-failure arm IS covered
-by the missing-file tests). 57-58, 130, 149 — `end;` block terminators
-where lcov 2.4 leaves hit-count 0 despite every contained line being
-hit (same misattribution class as gada-std-time.adb). 70-71 — the
-`Args` argv loop body; the CI full-suite coverage run invokes
-test_runner with no filter argument (Argument_Count = 0), so the loop
-body never executes there (single-suite `make stdlib-test PKG=...`
-runs do pass one). Open/Create/Stat/Mkdir happy and error paths are
-all covered by OS_Suite, not excluded.
+50, 53, 55, 56 — Read_File's `when Device_Error | End_Error |
+Data_Error` arm: on Linux this IS hit deterministically by
+OS_Suite's Test_Read_File_Dir (open of "." succeeds, read fails
+EISDIR -> Device_Error); the exclude is kept as a belt-and-braces for
+platforms where the open itself fails. 58-59, 131, 150 — `end;` block
+terminators where lcov 2.4 leaves hit-count 0 despite every contained
+line being hit (same misattribution class as gada-std-time.adb).
+71-72 — the `Args` argv loop body; the CI full-suite coverage run
+invokes test_runner with no filter argument (Argument_Count = 0), so
+the loop body never executes there (single-suite `make stdlib-test
+PKG=...` runs do pass one). Open/Create/Stat/Mkdir happy and error
+paths are all covered by OS_Suite, not excluded.
 
 ### `runtime/src/gada-std-runtime.adb` (Phase 6 wave 2)
 

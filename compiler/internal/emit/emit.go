@@ -1658,6 +1658,12 @@ func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
 	// Shutdown is skipped in that case, which is fine because the OS
 	// reaps the process.
 	if e.needsAsyncScheduler {
+		// Stop any live time.After/Tick timers first: Ada waits for
+		// dependent tasks at finalization, so a pending timer task
+		// would otherwise hang process exit (Go exits immediately).
+		if _, ok := e.stdlibImports["time"]; ok {
+			e.println("Gada.Std.Time.Stop_All;")
+		}
 		e.println("Gada.Async.Scheduler.Shutdown;")
 	}
 

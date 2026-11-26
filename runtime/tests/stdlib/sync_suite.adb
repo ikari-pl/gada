@@ -24,6 +24,7 @@ package body Sync_Suite is
    Shared_Counter : Natural := 0;
    Shared_WG      : Wait_Group;
    Once_Counter   : Natural := 0;
+   pragma Volatile (Once_Counter);
    Once_Obj       : aliased Once;
    Once_Raised    : Boolean := False;
    Cond_Flag      : Boolean := False;
@@ -45,6 +46,8 @@ package body Sync_Suite is
       Register_Routine (T, Test_RWMutex'Access, "RWMutex reader/writer");
       Register_Routine (T, Test_WaitGroup'Access, "WaitGroup Add/Done/Wait");
       Register_Routine (T, Test_Once'Access, "Once runs exactly once");
+      Register_Routine (T, Test_Once_Concurrent'Access,
+                        "Once exactly once under 4 racing goroutines");
       Register_Routine (T, Test_Cond_Signal'Access, "Cond Signal wakes one");
       Register_Routine
         (T, Test_Cond_Broadcast'Access, "Cond Broadcast wakes all");
@@ -80,6 +83,13 @@ package body Sync_Suite is
    begin
       Once_Obj.Do_K (Once_Inc'Access);
    end Once_Body;
+
+   --  Racing Do_K body: also signals the WaitGroup.
+   procedure Once_Race_Body is
+   begin
+      Once_Obj.Do_K (Once_Inc'Access);
+      Shared_WG.Done;
+   end Once_Race_Body;
 
    procedure Waiter_Body is
    begin
@@ -141,7 +151,7 @@ package body Sync_Suite is
       Shared_Counter := 0;
       Shared_WG.Add (4);
       Scheduler.Shutdown;
-      Scheduler.Init (Workers => 1);
+      Scheduler.Init (Workers => 2);
       for I in 1 .. 4 loop
          Unused_G := Scheduler.Spawn (Bump_Body'Access);
       end loop;
@@ -266,9 +276,14 @@ package body Sync_Suite is
       Scheduler.Init (Workers => 1);
       Unused_G := Scheduler.Spawn (Waiter_Body'Access);
       --  Wait until the waiter is parked, then wake it.
-      while Cond_Obj.Waiters.Value = 0 loop
-         Scheduler.Yield;
+      --  Bounded poll with a real delay (Yield is a no-op in the
+      --  main task); 5s cap matches the suite's watchdog style.
+      for I in 1 .. 5_000 loop
+         exit when Cond_Obj.Waiters.Value >= 1;
+         delay 0.001;
       end loop;
+      Assert (Cond_Obj.Waiters.Value = 1, "waiter parked, got"
+              & Natural'Image (Cond_Obj.Waiters.Value));
       Signal (Cond_Obj.all);
       Shared_WG.Wait;
       Scheduler.Shutdown;
@@ -286,14 +301,33 @@ package body Sync_Suite is
       Scheduler.Init (Workers => 1);
       Unused_G := Scheduler.Spawn (Waiter_Body_1'Access);
       Unused_G := Scheduler.Spawn (Waiter_Body_2'Access);
-      while Cond_Obj.Waiters.Value < 2 loop
-         Scheduler.Yield;
+      for I in 1 .. 5_000 loop
+         exit when Cond_Obj.Waiters.Value >= 2;
+         delay 0.001;
       end loop;
+      Assert (Cond_Obj.Waiters.Value >= 2, "both waiters parked");
       Broadcast (Cond_Obj.all);
       Shared_WG.Wait;
       Scheduler.Shutdown;
       Assert (Cond_Flags (1) and Cond_Flags (2),
               "Broadcast woke both waiters");
    end Test_Cond_Broadcast;
+
+   procedure Test_Once_Concurrent (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Unused_G : Scheduler.Goroutine_Id;
+   begin
+      Once_Counter := 0;
+      Shared_WG.Add (4);
+      Scheduler.Shutdown;
+      Scheduler.Init (Workers => 2);
+      for I in 1 .. 4 loop
+         Unused_G := Scheduler.Spawn (Once_Race_Body'Access);
+      end loop;
+      Shared_WG.Wait;
+      Scheduler.Shutdown;
+      Assert (Once_Counter = 1, "4 racing Do_K ran f exactly once, got"
+              & Integer'Image (Once_Counter));
+   end Test_Once_Concurrent;
 
 end Sync_Suite;

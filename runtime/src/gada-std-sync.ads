@@ -15,8 +15,14 @@
 --      WaitGroup counter underflow raise Constraint_Error — Go panics
 --      on all three.
 --    * Cond is built from a Mutex_Access (Go's L) plus an unbounded
---      channel and a protected waiter counter, so Signal never leaves
---      a stale wakeup token. Wait requires the caller to hold L
+--      channel and a protected waiter counter. v1 note: the token
+--      channel can leave a stale token if a Signal lands in the
+--      window between a woken waiter's Receive and its counter Dec —
+--      i.e. Wait may return spuriously. As in Go, callers MUST loop
+--      (`while not cond loop Wait (C); end loop;`).
+--    * v1 RWMutex has no writer preference: a continuous reader
+--      stream can starve a pending writer (Go blocks new readers
+--      once a writer waits). Wait requires the caller to hold L
 --      (Go's contract) and releases it while parked.
 
 with Gada.Async.Channels.Unbounded;

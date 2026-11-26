@@ -1063,14 +1063,14 @@ func (e *emitter) println(s string) {
 	// the 80-column limit — emitted lines must wrap. Ada is free-format,
 	// so breaking at any space outside a string/char literal is always
 	// legal; continuation lines get two extra indent levels.
-	if len(line) <= 80 {
+	if len(line) <= maxLineCol {
 		e.buf.WriteString(line)
 		e.buf.WriteByte('\n')
 		return
 	}
 	cont := prefix + "      "
-	for len(line) > 80 {
-		brk := wrapBreakPoint(line, 80)
+	for len(line) > maxLineCol {
+		brk := wrapBreakPoint(line)
 		if brk <= 0 {
 			break // no legal break found; emit as-is and let gnat complain
 		}
@@ -1082,15 +1082,26 @@ func (e *emitter) println(s string) {
 	e.buf.WriteByte('\n')
 }
 
-// wrapBreakPoint returns the index of the last space at or before col
-// that is outside any string literal (with "" escapes) or character
-// literal ('x' / doubled ”), or -1 if there is none. Callers must
+// maxLineCol is the -gnatyy 80-column style limit the runtime gpr
+// enforces on emitted Ada.
+const maxLineCol = 80
+
+// wrapBreakPoint returns the index of the last space at or before
+// maxLineCol that is outside any string literal (with "" escapes) or
+// character literal ('x' / doubled ”), or -1 if there is none
+// (including comment lines, which must never break). Callers must
 // not break inside a literal, and a space is always a legal token
 // boundary in Ada.
-func wrapBreakPoint(line string, col int) int {
+func wrapBreakPoint(line string) int {
+	// A comment line (`-- …`) must never be wrapped: the continuation
+	// would fall outside the comment and be invalid Ada. Report no
+	// break so println emits the line as-is.
+	if strings.HasPrefix(strings.TrimLeft(line, " "), "--") {
+		return -1
+	}
 	inStr := false
 	best := -1
-	for i := 0; i < len(line) && i <= col; i++ {
+	for i := 0; i < len(line) && i <= maxLineCol; i++ {
 		c := line[i]
 		switch {
 		case inStr:

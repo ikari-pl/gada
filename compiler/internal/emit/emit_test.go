@@ -3697,14 +3697,20 @@ func TestWrapBreakPoint(t *testing.T) {
 		{`C := ' '; ` + strings.Repeat("y", 90), 9},
 	}
 	for _, tc := range cases {
-		if got := wrapBreakPoint(tc.line, 80); got != tc.wantBrk {
+		if got := wrapBreakPoint(tc.line); got != tc.wantBrk {
 			t.Errorf("wrapBreakPoint(%q) = %d, want %d", tc.line, got, tc.wantBrk)
 		}
 	}
 	// No space outside a string literal in the first 80 cols -> no
 	// legal break (never break inside the literal).
 	line := `F("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm");`
-	if got := wrapBreakPoint(line, 80); got != -1 {
+	if got := wrapBreakPoint(line); got != -1 {
 		t.Errorf("wrapBreakPoint inside string = %d, want -1", got)
+	}
+	// A comment line must never break: the continuation would be
+	// outside the comment and invalid Ada.
+	comment := "      --  a very long comment that would overflow the eighty column limit easily"
+	if got := wrapBreakPoint(comment); got != -1 {
+		t.Errorf("wrapBreakPoint on comment = %d, want -1", got)
 	}
 }

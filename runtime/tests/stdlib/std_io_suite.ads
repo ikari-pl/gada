@@ -23,5 +23,7 @@ package Std_IO_Suite is
    procedure Test_Copy_Write_Error (T : in out
       AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Read_All (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Read_All_Error (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
 
 end Std_IO_Suite;

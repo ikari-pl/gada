@@ -11,6 +11,7 @@ with Ada.Streams.Stream_IO;
 with Ada.Strings.Unbounded;
 with Gada.Std.Bytes; use Gada.Std.Bytes;
 with Gada.Std.Errors;
+with Gada.Std.Strings;
 with Gada.Std.OS; use Gada.Std.OS;
 
 package body OS_Suite is
@@ -111,7 +112,7 @@ package body OS_Suite is
    end Test_Read_File_Missing;
 
    procedure Test_Args (T : in out AUnit.Test_Cases.Test_Case'Class) is
-      A : constant Arg_Vectors.Vector := Args;
+      A : constant Gada.Std.Strings.String_Slice := Args;
    begin
       Assert (A.Length >= 1, "Args has at least argv[0], got"
               & Ada.Containers.Count_Type'Image (A.Length));

@@ -514,3 +514,85 @@ func TestRuntimeImportEmit(t *testing.T) {
 		}
 	}
 }
+
+// TestTimeChanImportEmit pins the Phase 6 `chan time.Time` mapping:
+// `timer := time.After(...)` declares a Gada.Std.Time.Time_Channels
+// channel and no per-file Channels_Of_Time instantiation is emitted.
+func TestTimeChanImportEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"time"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("timer")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun: &ir.Selector{X: idn("time"), Sel: "After"},
+				Args: []ir.Expr{&ir.BinOp{
+					Op: "*",
+					X:  litInt("200"),
+					Y:  &ir.Selector{X: idn("time"), Sel: "Millisecond"},
+				}},
+				ResultTypes: []ir.Type{
+					&ir.ChanType{Elem: &ir.NamedType{Name: "Time"}},
+				},
+			}},
+		},
+	)
+	for _, want := range []string{
+		"with Gada.Std.Time;",
+		"Gada.Std.Time.Time_Channels.Channel",
+		"Gada.Std.Time.After (200 * Gada.Std.Time.Millisecond)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Channels_Of_Time") {
+		t.Errorf("must not instantiate Channels_Of_Time:\n%s", out)
+	}
+}
+
+// TestSyncMutexVarEmit pins the Phase 6 `var mu sync.Mutex` +
+// `mu.Lock()` lowering: a bare `Mu : Gada.Std.Sync.Mutex;` declaration
+// (via ir.ZeroVal) and protected dot-calls `Mu.Lock;` / `Mu.Unlock;`.
+func TestSyncMutexVarEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"sync"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("mu")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "Mutex"}}},
+		},
+		&ir.Call{Fun: &ir.Selector{X: idn("mu"), Sel: "Lock"}},
+		&ir.Call{Fun: &ir.Selector{X: idn("mu"), Sel: "Unlock"}},
+	)
+	for _, want := range []string{
+		"with Gada.Std.Sync;",
+		"Mu : Gada.Std.Sync.Mutex;",
+		"Mu.Lock;",
+		"Mu.Unlock;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestLenOsArgsEmit pins the `len(os.Args)` special case: it lowers to
+// String_Vectors.Length over Gada.Std.OS.Args (a String_Slice).
+func TestLenOsArgsEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"os"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("argc")},
+			Define: true,
+			RHS: []ir.Expr{&ir.BuiltinCall{
+				Name: "len",
+				Args: []ir.Expr{&ir.Selector{X: idn("os"), Sel: "Args"}},
+			}},
+		},
+	)
+	want := "Integer (Gada.Std.Strings.String_Vectors.Length (Gada.Std.OS.Args))"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing %q in:\n%s", want, out)
+	}
+}

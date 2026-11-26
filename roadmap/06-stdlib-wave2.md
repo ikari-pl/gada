@@ -80,7 +80,19 @@ mutexes, `time.After`, `os.Args`, and `runtime.NumGoroutine`.
       excludes re-mapped after the line shift).
       Compiler: "runtime" joined StdlibPackages.
 
-- [ ] **`timer_pool` example**
-      *Files:* `examples/timer_pool/main.go`
+- [x] **`timer_pool` example**
+      *Files:* `examples/timer_pool/main.go`, `examples/timer_pool/expected_output.txt`
       *Verify:* `make example HELLO=timer_pool`
       *Done when:* a worker pool processes jobs with timeouts and reports goroutine count; output matches expected.
+      *Done 2026-11-26:* `examples/timer_pool` runs a 2-worker pool over
+      a jobs channel with a time.After deadline, a sync.Mutex-guarded
+      counter, len(os.Args), and runtime.NumGoroutine; expected_output
+      pinned via `go run` (jobs: 4 / sum: 12 / goroutines: 3 /
+      argc: 1). Needed four small emitter lowerings, each with a unit
+      test: `var x T` DeclStmt -> bare decl via new ir.ZeroVal;
+      qualified types (sync.Mutex) -> NamedType; `chan time.Time` rides
+      Gada.Std.Time.Time_Channels (no per-file instantiation); sync
+      method calls -> protected dot-calls (Mu.Lock;); len(os.Args) ->
+      String_Vectors.Length (Gada.Std.OS.Args), with an auto
+      `with Gada.Std.Strings;`. OS.Args now returns String_Slice.
+      CI: new `make example HELLO=timer_pool` step in the examples job.

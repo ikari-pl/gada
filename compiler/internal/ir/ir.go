@@ -211,6 +211,19 @@ type Lit struct {
 func (*Lit) irExpr()          {}
 func (*Lit) NodeKind() string { return "Lit" }
 
+// ZeroVal is the zero value of a declared type, produced by a
+// no-initializer `var x T` (DeclStmt). Type is resolved from
+// types.Info at translate time; the emitter declares the variable
+// bare (protected types and records default-initialise).
+type ZeroVal struct {
+	Type Type
+}
+
+func (*ZeroVal) irExpr() {}
+
+// NodeKind returns "ZeroVal".
+func (*ZeroVal) NodeKind() string { return "ZeroVal" }
+
 // BinOp is a binary operator expression. Op is the Go-source operator
 // string (e.g. "+", "<", "&&"); the emitter translates to the Ada
 // equivalent.

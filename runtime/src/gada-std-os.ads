@@ -16,11 +16,10 @@
 --  Mkdir. Go's two-value (value, error) returns become out-parameters
 --  with Err : out Error_Access throughout.
 
-with Ada.Containers.Indefinite_Vectors;
 with Ada.Streams.Stream_IO;
-with Ada.Strings.Unbounded;
 with Gada.Std.Bytes;
 with Gada.Std.Errors;
+with Gada.Std.Strings;
 
 package Gada.Std.OS is
 
@@ -36,11 +35,10 @@ package Gada.Std.OS is
    --  Args — Go os.Args (Args(1) is the program name, Go's [0])
    ---------------------------------------------------------------
 
-   package Arg_Vectors is new Ada.Containers.Indefinite_Vectors
-     (Positive, Ada.Strings.Unbounded.Unbounded_String,
-      "=" => Ada.Strings.Unbounded."=");
-
-   function Args return Arg_Vectors.Vector;
+   --  The same vector type the compiler emits for Go []string, so
+   --  len(os.Args) / os.Args[i] lower through the standard slice
+   --  machinery.
+   function Args return Strings.String_Slice;
 
    ---------------------------------------------------------------
    --  Environment — Go os.Getenv / os.LookupEnv / os.Setenv

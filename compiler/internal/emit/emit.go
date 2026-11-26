@@ -185,6 +185,7 @@ type emitter struct {
 	needsUnbounded      bool                      // a []string ([]string → String_Vectors of Unbounded_String) is used → `with Ada.Strings.Unbounded;`
 	needsStdErrors      bool                      // an error-typed value (e.g. os.ReadFile's err) is used → `with Gada.Std.Errors;`
 	needsStdBytes       bool                      // a []byte value (os.ReadFile result, string([]byte)) is used → `with Gada.Std.Bytes;`
+	needsStdStrings     bool                      // len(os.Args) lowers through Gada.Std.Strings.String_Vectors
 	pendingHead         []pendingHeadInit         // per-subprogram queue of head-of-body defines whose *initialisation* must run at the top of the body in source order (2-LHS stdlib out-calls, and any := whose RHS references an out-call result — Go evaluates RHS at the := point, but Ada declarative initialisers run before the body, so these are declared bare and initialised in the body). Drained by emitPendingHead at body top. Reset per subprogram.
 	deferredDecls       map[string]bool           // names whose decl initialiser was deferred to the body (out-call targets and anything referencing them).
 	unboundedStrings    map[string]bool           // local string vars, declared as Unbounded_String (Ada String objects are bound-constrained; Go strings are variable-length).
@@ -492,6 +493,9 @@ func (e *emitter) recordMapPair(m *ir.MapType) {
 // base names so the emitted instantiation list compiles without
 // further mangling.
 func (e *emitter) recordChanElem(elem ir.Type) {
+	if nt, ok := elem.(*ir.NamedType); ok && nt.Name == "Time" {
+		return // rides Gada.Std.Time.Time_Channels, no per-file instance
+	}
 	name, err := elemBaseName(elem)
 	if err != nil {
 		e.fail(err)
@@ -666,6 +670,11 @@ func (e *emitter) walkExpr(x ir.Expr) {
 		// declared (param type or `make` literal). Just walk the
 		// operand so any nested expressions inside are visited.
 		e.walkExpr(x.Chan)
+	case *ir.ZeroVal:
+		// `var x T` — named types need no per-file instantiation.
+		if _, ok := x.Type.(*ir.NamedType); !ok {
+			e.recordTypeInTree(x.Type)
+		}
 	case *ir.MapLit:
 		e.recordMapPair(&ir.MapType{Key: x.Key, Value: x.Value})
 		e.recordTypeInTree(x.Key)
@@ -755,6 +764,9 @@ func (e *emitter) collectWiths() []string {
 	}
 	if e.needsStdBytes {
 		add("with Gada.Std.Bytes;")
+	}
+	if e.needsStdStrings {
+		add("with Gada.Std.Strings;")
 	}
 	// Stdlib imports, sorted by Ada package name for deterministic
 	// output regardless of Go import declaration order.
@@ -1041,11 +1053,42 @@ func slicePkgFor(elem ir.Type) (string, error) {
 // every channel-dispatching emit site (MakeChan / Send / Receive /
 // Close / ChanType-as-decl).
 func chanPkgFor(elem ir.Type) (string, error) {
+	// `chan time.Time` is not instantiated per-file: time.After/Tick
+	// hand out Gada.Std.Time.Time_Channels.Channel (a Boolean-element
+	// unbounded channel), so receives lower through that package.
+	if nt, ok := elem.(*ir.NamedType); ok && nt.Name == "Time" {
+		return "Gada.Std.Time.Time_Channels", nil
+	}
 	t, err := elemBaseName(elem)
 	if err != nil {
 		return "", err
 	}
 	return "Channels_Of_" + t, nil
+}
+
+// syncTypeNames are the Gada.Std.Sync value types whose methods lower
+// to protected dot-calls (`mu.Lock()` -> `Mu.Lock;`).
+var syncTypeNames = map[string]bool{
+	"Mutex": true, "RWMutex": true, "WaitGroup": true, "Once": true,
+	"Cond": true,
+}
+
+// stdlibValueType maps a translated named type to its qualified Ada
+// type when the corresponding stdlib import is present, so
+// `var mu sync.Mutex` declares `Mu : Gada.Std.Sync.Mutex;`.
+func (e *emitter) stdlibValueType(name string) (string, bool) {
+	if _, ok := e.stdlibImports["sync"]; ok && syncTypeNames[name] {
+		return "Gada.Std.Sync." + goNameToAdaMember(name), true
+	}
+	if _, ok := e.stdlibImports["time"]; ok {
+		switch name {
+		case "Duration":
+			return "Gada.Std.Time.Duration", true
+		case "Time":
+			return "Gada.Std.Time.Time", true
+		}
+	}
+	return "", false
 }
 
 // println writes a single line, prefixed with the current indent
@@ -1724,6 +1767,18 @@ func (e *emitter) populateLocals(fn *ir.Function) {
 		if !ok {
 			continue
 		}
+		// `argc := len(os.Args)` lowers through Gada.Std.Strings.
+		if bc, ok := a.RHS[0].(*ir.BuiltinCall); ok && bc.Name == "len" &&
+			len(bc.Args) == 1 {
+			if sel, ok := bc.Args[0].(*ir.Selector); ok {
+				if xid, ok := sel.X.(*ir.Ident); ok && xid.Name == "os" &&
+					sel.Sel == "Args" {
+					if _, ok := e.stdlibImports["os"]; ok {
+						e.needsStdStrings = true
+					}
+				}
+			}
+		}
 		if t, ok := inferRHSType(a.RHS[0]); ok {
 			e.localTypes[id.Name] = t
 		} else if ix, ok := a.RHS[0].(*ir.IndexExpr); ok {
@@ -1780,6 +1835,8 @@ func inferRHSType(x ir.Expr) (ir.Type, bool) {
 		if len(x.ResultTypes) == 1 && x.ResultTypes[0] != nil {
 			return x.ResultTypes[0], true
 		}
+	case *ir.ZeroVal:
+		return x.Type, true
 	}
 	return nil, false
 }
@@ -2515,6 +2572,8 @@ func vectorEmptyInit(t ir.Type) string {
 // decisions (vector-backed slices and unconstrained String need one).
 func (e *emitter) rhsIRType(x ir.Expr) ir.Type {
 	switch x := x.(type) {
+	case *ir.ZeroVal:
+		return x.Type
 	case *ir.Call:
 		if len(x.ResultTypes) == 1 {
 			return x.ResultTypes[0]
@@ -2710,6 +2769,12 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 	rhsT := e.rhsIRType(a.RHS[0])
 	if _, isStr := rhsT.(*ir.StringType); isStr {
 		typ = "Ada.Strings.Unbounded.Unbounded_String"
+	}
+	// `var x T` — declare bare; protected types and records
+	// default-initialise, and there is no literal to splice in.
+	if _, ok := a.RHS[0].(*ir.ZeroVal); ok {
+		e.println(adaIdent(id.Name) + " : " + typ + ";")
+		return
 	}
 	// If the RHS reads an out-call result (or anything derived from
 	// one), the value is not available until the body runs — declare
@@ -3082,6 +3147,8 @@ func (e *emitter) inferDeclType(x ir.Expr) (string, error) {
 		return adaIdent(x.TypeName), nil
 	case *ir.TypeAssert:
 		// `v := x.(T)` binds v to the asserted type T.
+		return e.typeName(x.Type)
+	case *ir.ZeroVal:
 		return e.typeName(x.Type)
 	case *ir.Call:
 		// Stdlib package call in expression position; the result
@@ -3587,6 +3654,26 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 				return
 			}
 		}
+		// Phase 6: a method call on a Gada.Std.Sync value (`mu.Lock()`,
+		// `wg.Add(1)`) lowers to the protected dot-call `Mu.Lock;` /
+		// `Wg.Add (1);` — these are protected operations, not dispatching
+		// primitives, so they bypass the interface-method check below.
+		if id, ok := sel.X.(*ir.Ident); ok {
+			if nt, ok := e.localTypes[id.Name].(*ir.NamedType); ok &&
+				syncTypeNames[nt.Name] {
+				fun := e.emitExpr(sel.X) + "." + adaIdent(sel.Sel)
+				args := make([]string, 0, len(c.Args))
+				for _, a := range c.Args {
+					args = append(args, e.emitExpr(a))
+				}
+				if len(args) == 0 {
+					e.println(fun + ";")
+				} else {
+					e.println(fun + " (" + strings.Join(args, ", ") + ");")
+				}
+				return
+			}
+		}
 		// Otherwise `x.M(args)` is a method call (package-qualified calls
 		// other than stdlib ones are not supported). It emits as the Ada
 		// prefixed-view `X.M`, which is a valid primitive-operation call
@@ -3711,6 +3798,9 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		// etc.) lands here; surface the constraint loudly so the
 		// failure axis points at the right widening.
 		e.fail(fmt.Errorf("emit: <-c at expression position not supported in Phase 3 (only `v := <-c` head-of-body define is)"))
+		return ""
+	case *ir.ZeroVal:
+		// No expression form; emitVarDecl declares the variable bare.
 		return ""
 	}
 	e.fail(fmt.Errorf("emit: unsupported expr %T", x))
@@ -4025,6 +4115,16 @@ func (e *emitter) emitBuiltinCall(b *ir.BuiltinCall) string {
 			if _, ok := e.mapPkgForExpr(b.Args[0]); ok {
 				return e.emitMapBuiltin(b)
 			}
+			// len(os.Args): os.Args is Gada.Std.OS.Args, a String_Slice.
+			if sel, ok := b.Args[0].(*ir.Selector); ok {
+				if id, ok := sel.X.(*ir.Ident); ok && id.Name == "os" &&
+					sel.Sel == "Args" {
+					if _, ok := e.stdlibImports["os"]; ok {
+						return "Integer (Gada.Std.Strings.String_Vectors." +
+							"Length (Gada.Std.OS.Args))"
+					}
+				}
+			}
 		}
 		return e.emitSliceBuiltin(b)
 	case "delete":
@@ -4207,19 +4307,26 @@ func (e *emitter) chanPkgForExpr(x ir.Expr) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	t, ok := e.localTypes[id.Name]
-	if !ok {
+	if t, ok := e.localTypes[id.Name]; ok {
+		if ct, ok := t.(*ir.ChanType); ok {
+			pkg, err := chanPkgFor(ct.Elem)
+			if err != nil {
+				return "", false
+			}
+			return pkg, true
+		}
 		return "", false
 	}
-	ct, ok := t.(*ir.ChanType)
-	if !ok {
-		return "", false
+	// `c := make(chan T, …)` head defines land in chanIdentTypes (the
+	// pre-walk), not localTypes.
+	if elem, ok := e.chanIdentTypes[id.Name]; ok {
+		pkg, err := chanPkgFor(elem)
+		if err != nil {
+			return "", false
+		}
+		return pkg, true
 	}
-	pkg, err := chanPkgFor(ct.Elem)
-	if err != nil {
-		return "", false
-	}
-	return pkg, true
+	return "", false
 }
 
 // chanElemTypeOfExpr returns the element type of a chan-typed
@@ -4234,15 +4341,16 @@ func (e *emitter) chanElemTypeOfExpr(x ir.Expr) (ir.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	t, ok := e.localTypes[id.Name]
-	if !ok {
+	if t, ok := e.localTypes[id.Name]; ok {
+		if ct, ok := t.(*ir.ChanType); ok {
+			return ct.Elem, true
+		}
 		return nil, false
 	}
-	ct, ok := t.(*ir.ChanType)
-	if !ok {
-		return nil, false
+	if elem, ok := e.chanIdentTypes[id.Name]; ok {
+		return elem, true
 	}
-	return ct.Elem, true
+	return nil, false
 }
 
 // emitChanSend lowers a `c <- v` SendStmt to `Channels_Of_T.Send (C, V);`.
@@ -4753,6 +4861,9 @@ func (e *emitter) typeName(t ir.Type) (string, error) {
 		}
 		if _, ok := e.structByName[t.Name]; ok {
 			return adaIdent(t.Name), nil
+		}
+		if pkg, ok := e.stdlibValueType(t.Name); ok {
+			return pkg, nil
 		}
 		return "", fmt.Errorf("emit: type %q is not a struct or interface; only struct and interface types are usable as value types yet (a named scalar or an undefined/cross-package type reaches here)", t.Name)
 	case *ir.SliceType:

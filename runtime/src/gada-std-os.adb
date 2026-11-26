@@ -7,6 +7,7 @@ with Ada.Exceptions;
 with Ada.IO_Exceptions;
 with Ada.Streams.Stream_IO;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
+with Gada.Std.Strings;
 
 package body Gada.Std.OS is
 
@@ -61,9 +62,9 @@ package body Gada.Std.OS is
    --  Args
    ---------------------------------------------------------------
 
-   function Args return Arg_Vectors.Vector is
+   function Args return Strings.String_Slice is
       use Ada.Command_Line;
-      V : Arg_Vectors.Vector;
+      V : Strings.String_Slice;
    begin
       V.Append (To_Unbounded_String (Command_Name));
       for I in 1 .. Argument_Count loop

@@ -161,12 +161,20 @@ func (tr *translator) goOneToIR(t types.Type) ir.Type {
 		if t.NumMethods() == 1 && t.Method(0).Name() == "Error" {
 			return &ir.ErrorType{}
 		}
+	case *types.Chan:
+		if elem := tr.goOneToIR(t.Elem()); elem != nil {
+			return &ir.ChanType{Elem: elem}
+		}
 	case *types.Named:
 		// The predeclared `error` arrives as a *types.Named whose
 		// underlying is the one-method interface.
 		if t.Obj().Name() == "error" {
 			return &ir.ErrorType{}
 		}
+		// Any other named type (sync.Mutex, time.Time, time.Duration,
+		// or a user type): carry the name; the emitter resolves it
+		// against the file's declarations / stdlib imports.
+		return &ir.NamedType{Name: t.Obj().Name()}
 	}
 	return nil
 }

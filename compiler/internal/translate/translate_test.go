@@ -876,3 +876,42 @@ func TestTransTypeSwitch(t *testing.T) {
 		}
 	}
 }
+
+// TestDeclStmtVarZeroVal pins Phase 6's `var x T` inside a function
+// body: it translates to a defining Assign whose RHS is a ZeroVal
+// carrying the translated type (qualified types like sync.Mutex
+// become NamedType{"Mutex"}).
+func TestDeclStmtVarZeroVal(t *testing.T) {
+	t.Parallel()
+	src := `package p
+
+import "sync"
+
+func f() {
+	var mu sync.Mutex
+	mu.Lock()
+}
+`
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "src.go", src, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	pkg, err := File(af, nil)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	fn := pkg.Files[0].Decls[0].(*ir.Function)
+	a, ok := fn.Body[0].(*ir.Assign)
+	if !ok || !a.Define {
+		t.Fatalf("body[0] = %T, want defining Assign", fn.Body[0])
+	}
+	zv, ok := a.RHS[0].(*ir.ZeroVal)
+	if !ok {
+		t.Fatalf("RHS = %T, want *ir.ZeroVal", a.RHS[0])
+	}
+	nt, ok := zv.Type.(*ir.NamedType)
+	if !ok || nt.Name != "Mutex" {
+		t.Fatalf("ZeroVal.Type = %#v, want NamedType{Mutex}", zv.Type)
+	}
+}

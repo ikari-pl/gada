@@ -37,7 +37,8 @@ package Gada.Std.OS is
    ---------------------------------------------------------------
 
    package Arg_Vectors is new Ada.Containers.Indefinite_Vectors
-     (Positive, Ada.Strings.Unbounded.Unbounded_String);
+     (Positive, Ada.Strings.Unbounded.Unbounded_String,
+      "=" => Ada.Strings.Unbounded."=");
 
    function Args return Arg_Vectors.Vector;
 

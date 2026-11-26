@@ -11,6 +11,7 @@ with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 package body Gada.Std.OS is
 
    use Ada.Streams;
+   use type Ada.Directories.File_Kind;
 
    procedure Read_File (Path : String;
                         Data : out Bytes.Byte_Slice;

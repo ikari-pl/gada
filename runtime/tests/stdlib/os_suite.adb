@@ -17,6 +17,7 @@ package body OS_Suite is
 
    package Errors renames Gada.Std.Errors;
 
+   use type Ada.Strings.Unbounded.Unbounded_String;
    use type Errors.Error_Access;
 
    Tmp_Name : constant String := "os_suite_tmp.bin";

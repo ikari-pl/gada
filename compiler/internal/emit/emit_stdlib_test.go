@@ -283,10 +283,6 @@ func TestBuiltinAndInferErrorArms(t *testing.T) {
 	e := newEmitter("p", &ir.File{})
 	e.localTypes = map[string]ir.Type{"b": &ir.SliceType{Elem: &ir.ByteType{}}}
 
-	// string() arity and non-[]byte operand rejections.
-	if _, ok := e.emitBuiltinCall(&ir.BuiltinCall{Name: "string"}), false; ok {
-	}
-	_ = e
 	errCases := []struct {
 		name string
 		call *ir.BuiltinCall

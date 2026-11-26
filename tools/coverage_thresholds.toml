@@ -128,7 +128,7 @@ reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-bounded.adb"
-lines = [436, 437]
+lines = [448, 449]
 reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
 
 # Park_Receiver's race-recheck arms (Got=True / Closed=True). Mirror of
@@ -141,7 +141,7 @@ reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-bounded.adb"
-lines = [502, 503, 504, 507, 508, 509]
+lines = [527, 528, 529, 532, 533, 534]
 reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
 
 # Channels.Unbounded mirror of the Channels.Bounded Park_Receiver
@@ -153,7 +153,7 @@ reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE
 # Rationale: runtime/COVERAGE.md (gada-async-channels-unbounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-unbounded.adb"
-lines = [405, 406, 407, 410, 411, 412]
+lines = [416, 417, 418, 421, 422, 423]
 reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
 
 # Selector defensive / unreachable lines (line numbers adjusted in

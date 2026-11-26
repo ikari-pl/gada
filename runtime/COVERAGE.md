@@ -169,13 +169,13 @@ Added in PR #3 review feedback (gemini-code-assist comment #4).
 
 ### `runtime/src/gada-async-channels-bounded.adb`
 
-#### `Send` — `Park_Sender` close-race recheck  *(lines 413–414)*
+#### `Send` — `Park_Sender` close-race recheck  *(lines 448–449)*
 
 ```ada
 C.Ref.State.Park_Sender (Slot, Was_Closed);
 if Was_Closed then
-   Free_Slot (Slot);                                  --  line 413
-   raise Channel_Closed                               --  line 414
+   Free_Slot (Slot);                                  --  line 448
+   raise Channel_Closed                               --  line 449
      with "Gada.Async.Channels.Bounded.Send: closed during park";
 end if;
 ```
@@ -198,21 +198,26 @@ injection seam (slated alongside Phase 4 panic-marshalling work)
 will park the calling goroutine *between* those two protected calls,
 fire a Close, and re-cover this arm. Two lines.
 
-#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 466–468, 471–473)*
+#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 527–529, 532–534)*
 
 ```ada
 C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);
 if Got then
-   Free_Slot (Slot);   --  line 466
-   OK := True;          --  line 467
-   return;              --  line 468
+   Free_Slot (Slot);   --  line 527
+   OK := True;          --  line 528
+   return;              --  line 529
 end if;
 if Was_Closed then
-   Free_Slot (Slot);   --  line 471
-   OK := False;         --  line 472
-   return;              --  line 473
+   Free_Slot (Slot);   --  line 532
+   OK := False;         --  line 533
+   return;              --  line 534
 end if;
 ```
+
+The main-task timed-poll arms of both `Send` and `Receive` (including
+the poll-sees-closed arms) are covered, not excluded:
+`Test_Main_Task_{Send_Polls_When_Full, Receive_Polls_Until_Send,
+Send_Poll_Raises_On_Close, Receive_Poll_Closed_Gives_False}`.
 
 Mirror image of the Send-side race-recheck above. `Park_Receiver`
 re-checks `Count > 0` and `Closed_F` under its protected lock;
@@ -232,21 +237,24 @@ them here documents the testability gap, not their value.
 
 ### `runtime/src/gada-async-channels-unbounded.adb`
 
-#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 387–389, 392–394)*
+#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 416–418, 421–423)*
 
 ```ada
 C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);
 if Got then
-   Free_Slot (Slot);   --  line 387
-   OK := True;          --  line 388
-   return;              --  line 389
+   Free_Slot (Slot);   --  line 416
+   OK := True;          --  line 417
+   return;              --  line 418
 end if;
 if Was_Closed then
-   Free_Slot (Slot);   --  line 392
-   OK := False;         --  line 393
-   return;              --  line 394
+   Free_Slot (Slot);   --  line 421
+   OK := False;         --  line 422
+   return;              --  line 423
 end if;
 ```
+
+The main-task timed-poll arm of `Receive` is covered, not excluded:
+`Channels_Unbounded_Suite.Test_Main_Task_Receive_Polls_Until_Send`.
 
 Mirror of the Channels.Bounded Park_Receiver race-recheck above.
 Same single-worker-determinism constraint: the only window for the

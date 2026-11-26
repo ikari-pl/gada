@@ -59,6 +59,7 @@ package body Channels_Suite is
    procedure Receiver_Body_Park_Then_Drain;
    procedure Delayed_Sender_Body;
    procedure Delayed_Drainer_Body;
+   procedure Delayed_Closer_Body;
 
    --  Delayed bodies for the main-task poll tests: they sleep 20 ms
    --  so the main task's blocking Send/Receive has to enter its
@@ -78,6 +79,12 @@ package body Channels_Suite is
       Bound.Receive (The_Channel, V, OK);
       Recv_Done := True;
    end Delayed_Drainer_Body;
+
+   procedure Delayed_Closer_Body is
+   begin
+      delay 0.02;
+      Bound.Close (The_Channel);
+   end Delayed_Closer_Body;
 
    --  ## Sender_Body_Send_42
    --
@@ -212,6 +219,14 @@ package body Channels_Suite is
          "Receive that would park (empty open channel) from the main "
          & "task timed-polls until a goroutine sends — Go main-task "
          & "receive semantics; no orphaned Wait_Slot is allocated");
+      Register_Routine
+        (T, Test_Main_Task_Send_Poll_Raises_On_Close'Access,
+         "Main-task Send polling a full buffer raises Channel_Closed "
+         & "when a goroutine closes the channel mid-poll");
+      Register_Routine
+        (T, Test_Main_Task_Receive_Poll_Closed_Gives_False'Access,
+         "Main-task Receive polling an empty open channel returns "
+         & "OK = False when a goroutine closes it mid-poll");
    end Register_Tests;
 
    ---------------------------------------------------------------
@@ -812,5 +827,58 @@ package body Channels_Suite is
       Assert (Send_Done, "sender goroutine did not complete");
       Gada.Async.Scheduler.Shutdown;
    end Test_Main_Task_Receive_Polls_Until_Send;
+
+   procedure Test_Main_Task_Send_Poll_Raises_On_Close
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Unused_G : Gada.Async.Scheduler.Goroutine_Id;
+      Raised   : Boolean := False;
+   begin
+      The_Channel := Bound.Make (Capacity => 1);
+      Gada.Async.Scheduler.Shutdown;
+      Gada.Async.Scheduler.Init (Workers => 1);
+
+      --  Fill the buffer; no drainer runs, so the main task's second
+      --  Send timed-polls. A delayed closer goroutine closes the
+      --  channel at ~20 ms; the poll must then raise Channel_Closed.
+      Bound.Send (The_Channel, 1);
+      Unused_G := Gada.Async.Scheduler.Spawn
+        (Delayed_Closer_Body'Access);
+      begin
+         Bound.Send (The_Channel, 2);
+      exception
+         when Bound.Channel_Closed =>
+            Raised := True;
+      end;
+      Assert (Raised,
+              "main-task poll-send must raise Channel_Closed when the "
+              & "channel closes while the buffer is full");
+      Gada.Async.Scheduler.Shutdown;
+   end Test_Main_Task_Send_Poll_Raises_On_Close;
+
+   procedure Test_Main_Task_Receive_Poll_Closed_Gives_False
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Unused_G : Gada.Async.Scheduler.Goroutine_Id;
+      V        : Integer := 0;
+      OK       : Boolean := False;
+   begin
+      The_Channel := Bound.Make (Capacity => 1);
+      Gada.Async.Scheduler.Shutdown;
+      Gada.Async.Scheduler.Init (Workers => 1);
+
+      --  Empty open channel; a delayed closer goroutine closes it at
+      --  ~20 ms. The main-task Receive timed-polls and must return
+      --  OK = False (Go's closed-channel receive) once closed.
+      Unused_G := Gada.Async.Scheduler.Spawn
+        (Delayed_Closer_Body'Access);
+      Bound.Receive (The_Channel, V, OK);
+      Assert (not OK,
+              "main-task poll-receive on a channel closed mid-poll "
+              & "must return OK = False");
+      Gada.Async.Scheduler.Shutdown;
+   end Test_Main_Task_Receive_Poll_Closed_Gives_False;
 
 end Channels_Suite;

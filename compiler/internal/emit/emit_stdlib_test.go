@@ -495,3 +495,22 @@ func TestTimeImportEmit(t *testing.T) {
 		}
 	}
 }
+
+// TestRuntimeImportEmit pins the Phase 6 `runtime` import mapping.
+func TestRuntimeImportEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"runtime"},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("runtime"), Sel: "NumGoroutine"},
+			Args: nil,
+		},
+	)
+	for _, want := range []string{
+		"with Gada.Std.Runtime;",
+		"Gada.Std.Runtime.Num_Goroutine",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}

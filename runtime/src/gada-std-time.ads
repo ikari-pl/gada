@@ -102,19 +102,28 @@ package Gada.Std.Time is
    package Time_Channels is
       new Gada.Async.Channels.Unbounded (Boolean);
 
-   protected type Stop_Flag is
+   --  Timer_Core carries the channel + delay + stop flag; the timer
+   --  tasks hold it by access (task discriminants must be access
+   --  types, so the channel itself rides inside this protected).
+   protected type Timer_Core is
+      procedure Setup (Ch_Val : Time_Channels.Channel;
+                     Dly_Val : Duration);
+      function Ch return Time_Channels.Channel;
+      function D return Duration;
       procedure Stop;
       function Stopped return Boolean;
    private
-      S : Boolean := False;
-   end Stop_Flag;
+      Chan : Time_Channels.Channel := Time_Channels.No_Channel;
+      Dly  : Duration := 0;
+      S    : Boolean := False;
+   end Timer_Core;
 
-   type Stop_Flag_Access is access all Stop_Flag;
+   type Timer_Core_Access is access all Timer_Core;
 
    --  Go: type Timer struct { C <-chan Time; ... }
    type Timer is record
-      C : Time_Channels.Channel;
-      F : Stop_Flag_Access;
+      C    : Time_Channels.Channel;
+      Core : Timer_Core_Access;
    end record;
 
    --  Go: time.NewTimer(d) — fires once after d on C.

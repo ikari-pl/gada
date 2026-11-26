@@ -194,7 +194,8 @@ package body Gada.Std.Time is
    function RFC3339_Nano (T : Time) return String is
       B : Unbounded_String;
    begin
-      Append (B, Fmt.Image (T.Wall, "%Y-%m-%dT%H:%M:%S"));
+      Append (B, Fmt.Image (T.Wall,
+                       Fmt.Picture ("%Y-%m-%dT%H:%M:%S")));
       Append_Frac (B, Long_Integer (T.Ns), 9);
       if T.UTC then
          Append (B, 'Z');
@@ -220,13 +221,26 @@ package body Gada.Std.Time is
    --  Timers
    ---------------------------------------------------------------
 
-   protected body Stop_Flag is
+   protected body Timer_Core is
+
+      procedure Setup (Ch_Val : Time_Channels.Channel;
+                       Dly_Val : Duration) is
+      begin
+         Chan := Ch_Val;
+         Dly  := Dly_Val;
+      end Setup;
+
+      function Ch return Time_Channels.Channel is (Chan);
+      function D return Duration is (Dly);
+
       procedure Stop is
       begin
          S := True;
       end Stop;
+
       function Stopped return Boolean is (S);
-   end Stop_Flag;
+
+   end Timer_Core;
 
    function To_Span (D : Duration) return RT.Time_Span is
      (RT.To_Time_Span
@@ -234,6 +248,8 @@ package body Gada.Std.Time is
 
    --  Keeps heap task objects reachable so the GC never collects a
    --  live timer task (After/Tick return only the channel).
+   use type System.Address;
+
    package Address_Vectors is
       new Ada.Containers.Indefinite_Vectors (Positive, System.Address);
 
@@ -252,22 +268,20 @@ package body Gada.Std.Time is
 
    Keep : Keeper;
 
-   task type One_Shot (Ch : Time_Channels.Channel; D : Duration;
-                       F : Stop_Flag_Access) is
+   task type One_Shot (Core : Timer_Core_Access) is
    end One_Shot;
 
    type One_Shot_Access is access all One_Shot;
 
    task body One_Shot is
    begin
-      delay until RT."+" (RT.Clock, To_Span (D));
-      if not F.Stopped then
-         Time_Channels.Send (Ch, True);
+      delay until RT."+" (RT.Clock, To_Span (Core.D));
+      if not Core.Stopped then
+         Time_Channels.Send (Core.Ch, True);
       end if;
    end One_Shot;
 
-   task type Repeater (Ch : Time_Channels.Channel; D : Duration;
-                       F : Stop_Flag_Access) is
+   task type Repeater (Core : Timer_Core_Access) is
    end Repeater;
 
    type Repeater_Access is access all Repeater;
@@ -275,45 +289,44 @@ package body Gada.Std.Time is
    task body Repeater is
    begin
       loop
-         delay until RT."+" (RT.Clock, To_Span (D));
-         exit when F.Stopped;
-         Time_Channels.Send (Ch, True);
+         delay until RT."+" (RT.Clock, To_Span (Core.D));
+         exit when Core.Stopped;
+         Time_Channels.Send (Core.Ch, True);
       end loop;
    end Repeater;
 
    function New_Timer (D : Duration) return Timer is
-      T : constant One_Shot_Access :=
-        new One_Shot'(Ch => Time_Channels.Make, D => D,
-                      F => new Stop_Flag);
+      Core : constant Timer_Core_Access := new Timer_Core;
+      T    : constant One_Shot_Access := new One_Shot'(Core => Core);
    begin
+      Core.Setup (Time_Channels.Make, D);
       Keep.Add (T.all'Address);
-      return (C => T.Ch,
-              F => T.F);
+      return (C => Core.Ch, Core => Core);
    end New_Timer;
 
    procedure Stop (T : in out Timer) is
    begin
-      T.F.Stop;
+      T.Core.Stop;
    end Stop;
 
    function Chan (T : Timer) return Time_Channels.Channel is (T.C);
 
    function After (D : Duration) return Time_Channels.Channel is
-      T : constant One_Shot_Access :=
-        new One_Shot'(Ch => Time_Channels.Make, D => D,
-                      F => new Stop_Flag);
+      Core : constant Timer_Core_Access := new Timer_Core;
+      T    : constant One_Shot_Access := new One_Shot'(Core => Core);
    begin
+      Core.Setup (Time_Channels.Make, D);
       Keep.Add (T.all'Address);
-      return T.Ch;
+      return Core.Ch;
    end After;
 
    function Tick (D : Duration) return Time_Channels.Channel is
-      T : constant Repeater_Access :=
-        new Repeater'(Ch => Time_Channels.Make, D => D,
-                      F => new Stop_Flag);
+      Core : constant Timer_Core_Access := new Timer_Core;
+      T    : constant Repeater_Access := new Repeater'(Core => Core);
    begin
+      Core.Setup (Time_Channels.Make, D);
       Keep.Add (T.all'Address);
-      return T.Ch;
+      return Core.Ch;
    end Tick;
 
 end Gada.Std.Time;

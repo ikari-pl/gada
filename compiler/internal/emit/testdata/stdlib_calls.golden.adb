@@ -1,6 +1,6 @@
 with Gada.Core.Panic;
 with Ada.Strings.Unbounded;
-with Gada.Std.Errors;
+with Gada.Std.Errors; use type Gada.Std.Errors.Error_Access;
 with Gada.Std.Bytes;
 with Gada.Std.OS;
 with Gada.Std.Strings;
@@ -12,13 +12,14 @@ package body P is
       Default      => 0);
 
    procedure F (Path : String) is
-      Data : Gada.Std.Bytes.Byte_Slice;
+      Data : Gada.Std.Bytes.Byte_Slice := Gada.Std.Bytes.Byte_Vectors.Empty;
       Err : Gada.Std.Errors.Error_Access;
-      Text : String;
-      Words : Gada.Std.Strings.String_Slice;
+      Text : String := "";
+      Words : Gada.Std.Strings.String_Slice :=
+            Gada.Std.Strings.String_Vectors.Empty;
       N : Integer;
-      W : String;
-      W2 : String;
+      W : String := "";
+      W2 : String := "";
    begin
       Gada.Std.OS.Read_File (Path, Data, Err);
       Text := Gada.Std.Bytes.To_String (Data);

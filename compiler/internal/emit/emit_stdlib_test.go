@@ -59,9 +59,9 @@ func TestStdlibOutCallEmit(t *testing.T) {
 		},
 	)
 	for _, want := range []string{
-		"Data : Gada.Std.Bytes.Byte_Slice;",
+		"Data : Gada.Std.Bytes.Byte_Slice := Gada.Std.Bytes.Byte_Vectors.Empty;",
 		"Err : Gada.Std.Errors.Error_Access;",
-		"Text : String;",
+		`Text : String := "";`,
 		`Gada.Std.OS.Read_File ("f.txt", Data, Err);`,
 		"Text := Gada.Std.Bytes.To_String (Data);",
 		"if Err /= null then",

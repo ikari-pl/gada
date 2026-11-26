@@ -745,7 +745,9 @@ func (e *emitter) collectWiths() []string {
 		add("with Ada.Strings.Unbounded;")
 	}
 	if e.needsStdErrors {
-		add("with Gada.Std.Errors;")
+		// use type makes the access type's = / /= directly visible
+		// for `err /= null` comparisons in emitted code.
+		add("with Gada.Std.Errors; use type Gada.Std.Errors.Error_Access;")
 	}
 	if e.needsStdBytes {
 		add("with Gada.Std.Bytes;")
@@ -1760,7 +1762,11 @@ func (e *emitter) emitStdlibOutCallDecl(a *ir.Assign, c *ir.Call) {
 			e.fail(err)
 			return
 		}
-		e.println(adaIdent(id.Name) + " : " + typ + ";")
+		decl := adaIdent(id.Name) + " : " + typ
+		if init := declInit(c.ResultTypes[i]); init != "" {
+			decl += " := " + init
+		}
+		e.println(decl + ";")
 		lhs = append(lhs, adaIdent(id.Name))
 	}
 	e.pendingHead = append(e.pendingHead,
@@ -2430,6 +2436,63 @@ func (e *emitter) emitGoClosureWithArgs(n int, g *ir.GoStmt) {
 // runtime instantiation defaults so a `recover()`-rescued function
 // returns the same value its callers would observe on a normal-flow
 // short-circuit.
+// vectorEmptyInit returns the empty-vector initializer for
+// vector-backed slice types ([]string → String_Vectors.Empty,
+// []byte → Byte_Vectors.Empty). Their Ada subtypes are unconstrained,
+// so every declaration of one needs an initializer.
+func vectorEmptyInit(t ir.Type) string {
+	st, ok := t.(*ir.SliceType)
+	if !ok {
+		return ""
+	}
+	switch st.Elem.(type) {
+	case *ir.StringType:
+		return "Gada.Std.Strings.String_Vectors.Empty"
+	case *ir.ByteType:
+		return "Gada.Std.Bytes.Byte_Vectors.Empty"
+	}
+	return ""
+}
+
+// rhsIRType recovers the IR type of a `:=` RHS for decl-initializer
+// decisions (vector-backed slices and unconstrained String need one).
+func (e *emitter) rhsIRType(x ir.Expr) ir.Type {
+	switch x := x.(type) {
+	case *ir.Call:
+		if len(x.ResultTypes) == 1 {
+			return x.ResultTypes[0]
+		}
+	case *ir.IndexExpr:
+		if elem, ok := e.sliceElemForExpr(x.X); ok {
+			return elem
+		}
+	case *ir.SliceLit:
+		return &ir.SliceType{Elem: x.Elem}
+	case *ir.BuiltinCall:
+		if x.Name == "string" {
+			return &ir.StringType{}
+		}
+	}
+	if t, ok := inferRHSType(x); ok {
+		return t
+	}
+	return nil
+}
+
+// declInit returns the initializer for a bare (deferred) declaration:
+// vector-backed slices get their empty vector, other unconstrained
+// types (String) get their zero literal. "" means no initializer.
+func declInit(t ir.Type) string {
+	if init := vectorEmptyInit(t); init != "" {
+		return init
+	}
+	switch t.(type) {
+	case *ir.StringType:
+		return `""`
+	}
+	return ""
+}
+
 func zeroLiteralOf(t ir.Type) string {
 	switch t.(type) {
 	case *ir.IntType:
@@ -2591,7 +2654,11 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 	// one), the value is not available until the body runs — declare
 	// bare and queue the initialiser for the top of the body.
 	if e.refsDeferred(a.RHS[0]) {
-		e.println(adaIdent(id.Name) + " : " + typ + ";")
+		decl := adaIdent(id.Name) + " : " + typ
+		if init := declInit(e.rhsIRType(a.RHS[0])); init != "" {
+			decl += " := " + init
+		}
+		e.println(decl + ";")
 		e.pendingHead = append(e.pendingHead, pendingHeadInit{
 			lhs: adaIdent(id.Name), rhs: a.RHS[0],
 		})

@@ -22,6 +22,12 @@ package Bufio_Suite is
    procedure Test_Read_String (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Read_Hard_Error (T : in out
       AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Read_Stored_Error (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Read_Line_CRLF_Straddle (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Flush_Short_Write (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Scanner (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Scanner_Long_And_Error (T : in out
       AUnit.Test_Cases.Test_Case'Class);

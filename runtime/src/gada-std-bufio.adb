@@ -19,7 +19,10 @@ package body Gada.Std.Bufio is
    ---------------------------------------------------------------
 
    function New_Reader (Source : IO.Reader_Access) return Reader is
-     (Source => Source, Buf => Null_Unbounded_String, At_EOF => False);
+     (Source    => Source,
+      Buf       => Null_Unbounded_String,
+      At_EOF    => False,
+      Saved_Err => Errors.No_Error);
 
    --  Pulls one chunk from the source into the buffer. Sets At_EOF on
    --  end of stream; hard errors come back in Err.
@@ -37,6 +40,11 @@ package body Gada.Std.Bufio is
          if Errors.Is_K (E, IO.EOF) then
             R.At_EOF := True;
          else
+            --  Go stores the first hard error in b.err and replays it
+            --  once the buffered data has been consumed.
+            if R.Saved_Err = Errors.No_Error then
+               R.Saved_Err := E;
+            end if;
             Err := E;
          end if;
       end if;
@@ -48,10 +56,18 @@ package body Gada.Std.Bufio is
    begin
       N := 0;
       Err := Errors.No_Error;
-      if Length (R.Buf) = 0 and then not R.At_EOF then
-         Fill (R, Err);
-         if Err /= Errors.No_Error then
+      if Length (R.Buf) = 0 then
+         if R.Saved_Err /= Errors.No_Error then
+            --  Go's readErr: deliver the stored error once, then clear.
+            Err := R.Saved_Err;
+            R.Saved_Err := Errors.No_Error;
             return;
+         end if;
+         if not R.At_EOF then
+            Fill (R, Err);
+            if Err /= Errors.No_Error then
+               return;
+            end if;
          end if;
       end if;
       M := Natural'Min (Data'Length, Length (R.Buf));
@@ -100,6 +116,17 @@ package body Gada.Std.Bufio is
                return;
             end if;
          end;
+         if R.Saved_Err /= Errors.No_Error then
+            --  Go: a stored read error comes back with whatever data
+            --  remains buffered; readErr delivers it once.
+            if Length (R.Buf) > 0 then
+               Append (Line, R.Buf);
+               R.Buf := Null_Unbounded_String;
+            end if;
+            Err := R.Saved_Err;
+            R.Saved_Err := Errors.No_Error;
+            return;
+         end if;
          if R.At_EOF then
             if Length (R.Buf) > 0 then
                --  Final line without a newline: data, no error (the
@@ -113,8 +140,15 @@ package body Gada.Std.Bufio is
          end if;
          if Length (R.Buf) >= Buf_Size then
             --  Line longer than the buffer: hand back a prefix chunk.
-            Line := R.Buf;
-            R.Buf := Null_Unbounded_String;
+            --  Go: if the chunk ends in CR, leave it in the buffer —
+            --  it pairs with the LF that may start the next chunk.
+            if Element (R.Buf, Length (R.Buf)) = CR then
+               Line := Head (R.Buf, Length (R.Buf) - 1);
+               Delete (R.Buf, 1, Length (R.Buf) - 1);
+            else
+               Line := R.Buf;
+               R.Buf := Null_Unbounded_String;
+            end if;
             Is_Prefix := True;
             return;
          end if;
@@ -154,6 +188,13 @@ package body Gada.Std.Bufio is
                return;
             end if;
          end;
+         if R.Saved_Err /= Errors.No_Error then
+            Append (S, R.Buf);
+            R.Buf := Null_Unbounded_String;
+            Err := R.Saved_Err;
+            R.Saved_Err := Errors.No_Error;
+            return;
+         end if;
          if R.At_EOF then
             --  EOF before the delim: data so far comes back with EOF.
             Append (S, R.Buf);
@@ -198,17 +239,30 @@ package body Gada.Std.Bufio is
    end Write;
 
    procedure Flush (W : in out Writer; Err : out Errors.Error_Access) is
-      N  : Natural;
-      WE : Errors.Error_Access;
+      Total : Natural;
+      N     : Natural;
+      WE    : Errors.Error_Access;
    begin
       Err := Errors.No_Error;
       if Length (W.Buf) > 0 then
+         Total := Length (W.Buf);
          WE := IO.Write (W.Dest.all, To_String (W.Buf), N);
+         if N > 0 then
+            --  Keep only the unwritten tail buffered (Go's Flush).
+            Delete (W.Buf, 1, N);
+         end if;
          if WE /= Errors.No_Error and then not Errors.Is_K (WE, IO.EOF) then
             Err := WE;
-            return;  --  keep the unwritten data buffered
+            return;
          end if;
-         W.Buf := Null_Unbounded_String;
+         if WE = Errors.No_Error and then N < Total then
+            --  Go: success with n < len(p) is io.ErrShortWrite.
+            Err := IO.Err_Short_Write;
+            return;
+         end if;
+         if N = Total then
+            W.Buf := Null_Unbounded_String;
+         end if;
       end if;
    end Flush;
 

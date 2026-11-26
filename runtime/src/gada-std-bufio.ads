@@ -79,6 +79,9 @@ private
       Source : Gada.Std.IO.Reader_Access;
       Buf    : Ada.Strings.Unbounded.Unbounded_String;
       At_EOF : Boolean := False;
+      --  Go's b.err: a hard read error from the source, delivered once
+      --  (Go's readErr clears it) when the buffer drains.
+      Saved_Err : Gada.Std.Errors.Error_Access := Gada.Std.Errors.No_Error;
    end record;
 
    type Writer is tagged record

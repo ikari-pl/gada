@@ -22,6 +22,10 @@ package Gada.Std.IO is
    --  errors.Is compares, so this is a package variable like Go's.
    EOF : Gada.Std.Errors.Error_Access;
 
+   --  Go: var ErrShortWrite = errors.New("short write") — returned by
+   --  Copy when the writer reports success but fewer bytes than given.
+   Err_Short_Write : Gada.Std.Errors.Error_Access;
+
    --  Go: type Reader interface { Read(p []byte) (n int, err error) }
    type Reader is abstract tagged private;
    type Reader_Access is access all Reader'Class;

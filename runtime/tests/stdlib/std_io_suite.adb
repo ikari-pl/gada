@@ -72,6 +72,17 @@ package body Std_IO_Suite is
       return Errors.New_K ("write failed");
    end Write;
 
+   --  Short-writing writer: reports success but writes only half.
+   type Short_Writer is new Writer with null record;
+
+   overriding function Write (W : in out Short_Writer; Data : String;
+                              N : out Natural) return Errors.Error_Access is
+      pragma Unreferenced (W);
+   begin
+      N := Data'Length / 2;
+      return Errors.No_Error;
+   end Write;
+
    function Mem_Src (S : String) return Reader_Access is
      (new Mem_Reader'(Reader with Data => To_Unbounded_String (S),
                       Pos => 1));
@@ -88,6 +99,8 @@ package body Std_IO_Suite is
       Register_Routine (T, Test_Copy_Empty'Access, "Copy empty source");
       Register_Routine (T, Test_Copy_Read_Error'Access, "Copy read error");
       Register_Routine (T, Test_Copy_Write_Error'Access, "Copy write error");
+      Register_Routine (T, Test_Copy_Short_Write'Access,
+                        "Copy short write = ErrShortWrite");
       Register_Routine (T, Test_Read_All'Access, "ReadAll + EOF");
       Register_Routine (T, Test_Read_All_Error'Access, "ReadAll hard error");
    end Register_Tests;
@@ -154,6 +167,23 @@ package body Std_IO_Suite is
               "write error propagates");
       Assert (N = 0, "failed write counts 0");
    end Test_Copy_Write_Error;
+
+   procedure Test_Copy_Short_Write (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Src : constant Reader_Access := Mem_Src ("hello world");
+      Dst : constant Writer_Access := new Short_Writer;
+      N   : Natural;
+      E   : Errors.Error_Access;
+   begin
+      Copy (Dst, Src, N, E);
+      --  Go: io.Copy returns io.ErrShortWrite when the writer reports
+      --  success with n < len(p); the unwritten tail is not dropped
+      --  silently.
+      Assert (Errors.Is_K (E, Err_Short_Write),
+              "short write returns ErrShortWrite");
+      Assert (N = 5, "only the 5 written bytes are counted, got"
+              & Integer'Image (N));
+   end Test_Copy_Short_Write;
 
    procedure Test_Read_All (T : in out AUnit.Test_Cases.Test_Case'Class) is
       Src  : constant Reader_Access := Mem_Src ("all of it");

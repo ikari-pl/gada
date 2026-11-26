@@ -34,6 +34,13 @@ package body Gada.Std.IO is
                   N := Total;
                   return;
                end if;
+               --  Go: a writer reporting success with N < len(p) is a
+               --  short write — io.ErrShortWrite, never silent loss.
+               if WE = Errors.No_Error and then WN < Chunk then
+                  Err := Err_Short_Write;
+                  N := Total;
+                  return;
+               end if;
             end;
          end if;
          if E /= Errors.No_Error then
@@ -76,4 +83,6 @@ package body Gada.Std.IO is
 begin
    --  Go: var EOF = errors.New("EOF")
    EOF := Errors.New_K ("EOF");
+   --  Go: var ErrShortWrite = errors.New("short write")
+   Err_Short_Write := Errors.New_K ("short write");
 end Gada.Std.IO;

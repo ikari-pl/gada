@@ -675,6 +675,15 @@ package body Gada.Std.Strconv is
                   N_Sig : constant Natural :=
                     (if Shortest then Nd else Eprec);
                begin
+                  --  'g' strips trailing zeros; R is LSB-first, so they
+                  --  sit at low indices. Compact to Nd significant digits
+                  --  (Fmt_F pads back up to the requested Aft).
+                  if Nd < RN then
+                     for I in 1 .. Nd loop
+                        R (I) := R (RN - Nd + I);
+                     end loop;
+                     RN := Nd;
+                  end if;
                   return Fmt_F (Neg, R, RN, RDP,
                                 Natural'Max (0, N_Sig - 1 - Exp10));
                end;

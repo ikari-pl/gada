@@ -382,9 +382,18 @@ package body Strconv_Suite is
       --  'f' prec 0 rounds at the units digit.
       Assert (Format_Float (0.6, 'f', 0) = "1", "0.6 rounds to 1");
       Assert (Format_Float (0.4, 'f', 0) = "0", "0.4 rounds to 0");
-      --  17-significant-digit shortest (0.1 + 0.2).
-      Assert (Format_Float (0.1 + 0.2) = "0.30000000000000004",
-              "17-digit shortest");
+      --  17-significant-digit shortest: typed constants force a real
+      --  float64 addition (the literal expression 0.1 + 0.2 is static
+      --  and exact in Ada, like Go's constant folding — fl(0.3)).
+      declare
+         A : Long_Float := 0.1;
+         B : Long_Float := 0.2;
+      begin
+         Assert (Format_Float (A + B) = "0.30000000000000004",
+                 "17-digit shortest");
+         Assert (Format_Float (0.1 + 0.2) = "0.3",
+                 "static 0.1 + 0.2 folds to fl(0.3)");
+      end;
    end Test_Edges;
 
 end Strconv_Suite;

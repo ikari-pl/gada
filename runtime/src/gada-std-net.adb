@@ -71,15 +71,18 @@ package body Gada.Std.Net is
             return Zero_IP;
          end if;
          declare
-            Dot_R : constant Natural := Index (S (Pos .. S'Last), ".");
-            Dot   : constant Natural :=
-              (if Dot_R = 0 then 0 else Pos + Dot_R - 1);
-            Last  : constant Natural :=
+            --  Index returns an index into the slice's own range,
+            --  i.e. an absolute position in S.
+            Dot  : constant Natural := Index (S (Pos .. S'Last), ".");
+            Last : constant Natural :=
               (if Part = 4 then S'Last else Dot - 1);
-            V     : Natural;
+            V    : Natural;
          begin
             if Part < 4 and then Dot = 0 then
                return Zero_IP;
+            end if;
+            if Last < Pos then
+               return Zero_IP;   --  empty octet (e.g. "1..2.3")
             end if;
             if not Parse_Octet (S (Pos .. Last), V) then
                return Zero_IP;
@@ -109,12 +112,13 @@ package body Gada.Std.Net is
       end if;
       while Pos <= S'Last loop
          declare
-            Col_R : constant Natural := Index (S (Pos .. S'Last), ":");
-            Colon : constant Natural :=
-              (if Col_R = 0 then 0 else Pos + Col_R - 1);
+            --  Index returns an index into the slice's own range,
+            --  i.e. an absolute position in S.
+            Colon : constant Natural := Index (S (Pos .. S'Last), ":");
             Last  : constant Natural :=
               (if Colon = 0 then S'Last else Colon - 1);
-            G     : constant String := S (Pos .. Last);
+            G     : constant String :=
+              (if Last < Pos then "" else S (Pos .. Last));
             V     : Natural;
          begin
             if Index (G, ".") > 0 then
@@ -178,9 +182,13 @@ package body Gada.Std.Net is
       use Ada.Strings.Fixed;
       Dbl    : constant Natural := Index (S, "::");
       Head_S : constant String :=
-        (if Dbl = 0 then S else S (S'First .. Dbl - 1));
+        (if Dbl = 0 then S
+         elsif Dbl > S'First then S (S'First .. Dbl - 1)
+         else "");
       Tail_S : constant String :=
-        (if Dbl = 0 then "" else S (Dbl + 2 .. S'Last));
+        (if Dbl = 0 then ""
+         elsif Dbl + 2 <= S'Last then S (Dbl + 2 .. S'Last)
+         else "");
       Head, Tail : Group_Array;
       N_Head, N_Tail : Natural;
       Groups : Group_Array;
@@ -436,7 +444,7 @@ package body Gada.Std.Net is
             return GS.Addresses (H, 1);
          end;
       exception
-         when GS.Socket_Error =>
+         when GS.Socket_Error | GS.Host_Error =>
             OK := False;
             return GS.Any_Inet_Addr;
       end;
@@ -986,7 +994,7 @@ package body Gada.Std.Net is
             end loop;
          end;
       exception
-         when E : GS.Socket_Error =>
+         when E : GS.Socket_Error | GS.Host_Error =>
             Addrs := Strings.String_Vectors.Empty_Vector;
             Err := Errors.New_K
               ("lookup " & Host & ": "

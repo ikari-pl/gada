@@ -240,6 +240,11 @@ file = "runtime/src/gada-std-io.adb"
 lines = [37, 50, 74]
 reason = "gcov end-block artifacts — see runtime/COVERAGE.md"
 
+[[exclude]]
+file = "runtime/src/gada-std-os.adb"
+lines = [40, 42]
+reason = "gcov declare-block end / fall-through terminator artifacts — see runtime/COVERAGE.md"
+
 # `end Image;` — the fall-through terminator of Gada.Async.Race.Image.
 # Image is a function that always `return`s (single returned conditional
 # expression covering both the no-race and detected arms, both exercised

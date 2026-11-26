@@ -2904,6 +2904,14 @@ func (e *emitter) emitStmtListOrNull(stmts []ir.Stmt) {
 // literal (whose element type is on the node, so no *types.Info
 // plumbing is needed). Anything else still defers — full RHS-typing
 // arrives with the type-info plumbing in a later phase.
+// argIdent returns the name of x when x is a bare identifier.
+func argIdent(x ir.Expr) string {
+	if id, ok := x.(*ir.Ident); ok {
+		return id.Name
+	}
+	return ""
+}
+
 func (e *emitter) inferDeclType(x ir.Expr) (string, error) {
 	switch x := x.(type) {
 	case *ir.Lit:
@@ -2961,6 +2969,13 @@ func (e *emitter) inferDeclType(x ir.Expr) (string, error) {
 			return "String", nil
 		case "len", "cap":
 			return "Integer", nil
+		case "append":
+			if st, ok := e.localTypes[argIdent(x.Args[0])]; ok {
+				if sl, ok := st.(*ir.SliceType); ok {
+					return e.typeName(sl)
+				}
+			}
+			return "", fmt.Errorf("emit: := from append of unknown slice type")
 		}
 		return "", fmt.Errorf("emit: := from builtin %q not supported", x.Name)
 	}

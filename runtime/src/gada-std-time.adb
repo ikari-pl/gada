@@ -315,8 +315,8 @@ package body Gada.Std.Time is
 
    function New_Timer (D : Duration) return Timer is
       Core : constant Timer_Core_Access := new Timer_Core;
-      T    : constant One_Shot_Access := new One_Shot'
-          (R => new Timer_Rec'(Core => Core));
+      Rec : constant Timer_Rec_Access := new Timer_Rec'(Core => Core);
+      T   : constant One_Shot_Access := new One_Shot'(R => Rec);
    begin
       Core.Setup (Time_Channels.Make, D);
       Keep.Add (T.all'Address);
@@ -332,8 +332,8 @@ package body Gada.Std.Time is
 
    function After (D : Duration) return Time_Channels.Channel is
       Core : constant Timer_Core_Access := new Timer_Core;
-      T    : constant One_Shot_Access := new One_Shot'
-          (R => new Timer_Rec'(Core => Core));
+      Rec : constant Timer_Rec_Access := new Timer_Rec'(Core => Core);
+      T   : constant One_Shot_Access := new One_Shot'(R => Rec);
    begin
       Core.Setup (Time_Channels.Make, D);
       Keep.Add (T.all'Address);
@@ -342,8 +342,8 @@ package body Gada.Std.Time is
 
    function Tick (D : Duration) return Time_Channels.Channel is
       Core : constant Timer_Core_Access := new Timer_Core;
-      T    : constant Repeater_Access := new Repeater'
-          (R => new Timer_Rec'(Core => Core));
+      Rec : constant Timer_Rec_Access := new Timer_Rec'(Core => Core);
+      T   : constant Repeater_Access := new Repeater'(R => Rec);
    begin
       Core.Setup (Time_Channels.Make, D);
       Keep.Add (T.all'Address);

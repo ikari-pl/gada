@@ -91,7 +91,9 @@ package Gada.Std.Sync is
    protected type Once is
       --  Go: Do(f) — runs f exactly once across all callers, even if
       --  f raises (Go marks done via defer on the panic path too).
-      procedure Do (F : Procedure_Access);
+      --  ("do" is an Ada reserved word, so the compiler maps Go's Do
+      --  to Do_K, like New_K / Is_K.)
+      procedure Do_K (F : Procedure_Access);
    private
       Done_Flag : Boolean := False;
    end protected;

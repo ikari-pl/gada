@@ -76,7 +76,7 @@ package body Sync_Suite is
 
    procedure Once_Body is
    begin
-      Do (Once_Inc'Access);
+      Do_K (Once_Inc'Access);
    end Once_Body;
 
    procedure Waiter_Body is
@@ -222,8 +222,8 @@ package body Sync_Suite is
       Unused_G : Scheduler.Goroutine_Id;
    begin
       Once_Counter := 0;
-      Do (O, Once_Inc'Access);
-      Do (O, Once_Inc'Access);
+      Do_K (O, Once_Inc'Access);
+      Do_K (O, Once_Inc'Access);
       Assert (Once_Counter = 1, "Do runs f once, got"
               & Integer'Image (Once_Counter));
       --  From a goroutine too: still exactly once overall.
@@ -231,7 +231,7 @@ package body Sync_Suite is
       Scheduler.Init (Workers => 1);
       Unused_G := Scheduler.Spawn (Once_Body'Access);
       Scheduler.Shutdown;
-      Do (O, Once_Inc'Access);
+      Do_K (O, Once_Inc'Access);
       Assert (Once_Counter = 2, "once per Once object, got"
               & Integer'Image (Once_Counter));
       --  Go marks done even when f panics.
@@ -240,7 +240,7 @@ package body Sync_Suite is
       begin
          Once_Raised := False;
          begin
-            Do (O2, Once_Raise'Access);
+            Do_K (O2, Once_Raise'Access);
             Assert (False, "raising f must propagate");
          exception
             when Constraint_Error =>
@@ -248,7 +248,7 @@ package body Sync_Suite is
          end;
          Assert (Once_Raised, "f ran before raising");
          Once_Counter := 0;
-         Do (O2, Once_Inc'Access);
+         Do_K (O2, Once_Inc'Access);
          Assert (Once_Counter = 0, "done stays set after panic");
       end;
    end Test_Once;

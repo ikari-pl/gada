@@ -274,14 +274,14 @@ reason = "end Append_Frac/Dig2/Image_Date_Time/New_Timer terminators — see run
 # now rejected up front by the Ada.Directories.Kind guard (covered by
 # Test_Read_File_Dir), and Device_Error / End_Error / Data_Error on a
 # regular-file read are not deterministically triggerable in CI.
-# 149, 168: `end;` block terminators of the Open/Create error arms
-# (lcov 2.4 no-return-block misattribution, same class as
-# gada-std-time.adb). 83-84: the Args argv loop body only runs when the
-# runner is invoked with CLI args; the CI full-suite coverage run passes
-# no filter (Argument_Count = 0). Rationale: runtime/COVERAGE.md.
+# 70-71, 149, 168: `end;`/`end Read_File;`/`end Open;`/`end Create;`
+# block terminators (lcov 2.4 no-return-block misattribution, same class
+# as gada-std-time.adb). 83-84: the Args argv loop body only runs when
+# the runner is invoked with CLI args; the CI full-suite coverage run
+# passes no filter (Argument_Count = 0). Rationale: runtime/COVERAGE.md.
 [[exclude]]
 file = "runtime/src/gada-std-os.adb"
-lines = [62, 63, 64, 65, 66, 67, 68, 83, 84, 149, 168]
+lines = [62, 63, 64, 65, 66, 67, 68, 70, 71, 83, 84, 149, 168]
 reason = "untriggerable read-error arm + lcov terminators + argv loop — see runtime/COVERAGE.md"
 
 # `end Go_Max_Procs;` terminator — lcov 2.4 no-return-block

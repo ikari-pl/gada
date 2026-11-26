@@ -291,11 +291,9 @@ package body Gada.Std.Strconv is
                   exit when Carry = 0;
                end loop;
                if Carry > 0 then
-                  --  999…9 rounds up to 1000…0: shift right, bump DP.
-                  for I in reverse 1 .. RN loop
-                     R (I + 1) := R (I);
-                  end loop;
-                  R (1) := Carry;
+                  --  999…9 rounds up to 1000…0: R is LSB-first, so the
+                  --  carry out becomes a new most significant digit.
+                  R (RN + 1) := Carry;
                   RN := RN + 1;
                   RDP := RDP + 1;
                end if;

@@ -148,6 +148,10 @@ package body Bytes_Suite is
       Assert (not Contains (To_Bytes ("abc"), To_Bytes ("z")),
               "Contains missing");
       Assert (Index (To_Bytes ("abc"), To_Bytes ("z")) = -1, "Index -1");
+      Assert (Compare (To_Bytes ("abc"), To_Bytes ("ab")) = 1,
+              "Compare longer = 1");
+      Assert (not Has_Suffix (To_Bytes ("ab"), To_Bytes ("abc")),
+              "HasSuffix suffix longer than s = False");
    end Test_Edges;
 
 end Bytes_Suite;

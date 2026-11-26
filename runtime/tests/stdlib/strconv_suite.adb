@@ -116,6 +116,13 @@ package body Strconv_Suite is
       Assert (Format_Float (123456789.0) = "1.23456789e+08", "g 9 digits");
       Assert (Format_Float (0.0001) = "0.0001", "g 1e-4 stays fixed");
       Assert (Format_Float (0.00001) = "1e-05", "g 1e-5 switches to e");
+      --  'g' with explicit precision: 0 means 1; trailing zeros strip;
+      --  Eprec shrinks to the significant digit count.
+      Assert (Format_Float (3.14, 'g', 0) = "3", "g prec 0 acts as 1");
+      Assert (Format_Float (1.5, 'g', 5) = "1.5", "g prec 5 strips zeros");
+      Assert (Format_Float (123.456, 'g', 4) = "123.5", "g prec 4 rounds");
+      Assert (Format_Float (123456.0, 'g', 8) = "123456", "g prec 8 Eprec");
+      Assert (Format_Float (0.000123, 'g', 2) = "0.00012", "g small exp");
       --  Specials via Parse_Float (Go's exact spellings).
       Parse_Float ("nan", Nan, E);
       Assert (E = Errors.No_Error and Nan /= Nan, "parse nan");
@@ -144,6 +151,17 @@ package body Strconv_Suite is
       Assert (Format_Float (31415.9, 'e', 3) = "3.142e+04", "e prec 3");
       Assert (Format_Float (31415.9, 'E', 3) = "3.142E+04", "E prec 3");
       Assert (Format_Float (0.0, 'e', 2) = "0.00e+00", "e of zero");
+      --  Carry propagation when rounding overflows the kept digits.
+      Assert (Format_Float (9.99, 'f', 1) = "10.0", "carry 9.99 f");
+      Assert (Format_Float (0.99, 'f', 1) = "1.0", "carry 0.99 f");
+      Assert (Format_Float (999.9, 'e', 2) = "1.00e+03", "carry 999.9 e");
+      --  Zero-case rounding at the 10^-Aft position (DP + Aft < 1).
+      Assert (Format_Float (0.06, 'f', 1) = "0.1", "0.06 rounds up");
+      Assert (Format_Float (0.04, 'f', 1) = "0.0", "0.04 rounds down");
+      --  Fmt_F zero-padding branches.
+      Assert (Format_Float (0.0001, 'f', 6) = "0.000100", "f lead zeros");
+      Assert (Format_Float (123.0, 'f', 3) = "123.000", "f int + pad");
+      Assert (Format_Float (1.5, 'f', 5) = "1.50000", "f frac pad");
    end Test_Format_Float_F_E;
 
    procedure Test_Parse_Float_Ok (T : in out
@@ -205,6 +223,20 @@ package body Strconv_Suite is
               "Quote control byte as \xNN");
       Assert (Quote ((1 => Character'Val (127))) = '"' & "\x7f" & '"',
               "Quote DEL as \xNN");
+      --  Named escapes for the remaining control chars.
+      Assert (Quote ((1 => Character'Val (7))) = '"' & "\a" & '"',
+              "Quote BEL as escape a");
+      Assert (Quote ((1 => Character'Val (8))) = '"' & "\b" & '"',
+              "Quote BS as escape b");
+      Assert (Quote ((1 => Character'Val (11))) = '"' & "\v" & '"',
+              "Quote VT as escape v");
+      Assert (Quote ((1 => Character'Val (12))) = '"' & "\f" & '"',
+              "Quote FF as escape f");
+      Assert (Quote ((1 => Character'Val (13))) = '"' & "\r" & '"',
+              "Quote CR as escape r");
+      --  Apostrophe is printable: not escaped (Go contract).
+      Assert (Quote ((1 => Character'Val (39))) = '"' & Character'Val (39)
+                & '"', "Quote apostrophe raw");
    end Test_Quote;
 
    procedure Test_Unquote (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -266,6 +298,24 @@ package body Strconv_Suite is
       Assert (Errors.Is_K (E, Err_Syntax), "unknown escape: syntax");
       Unquote ("'ab'", V, E);
       Assert (Errors.Is_K (E, Err_Syntax), "two-char literal: syntax");
+      --  Trailing backslash with nothing after it.
+      Unquote ('"' & '\' & '"', V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "trailing backslash: syntax");
+      --  Octal escape with fewer than 3 digits, and a non-octal digit.
+      Unquote ('"' & "\1" & '"', V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "short octal: syntax");
+      Unquote ('"' & "\189" & '"', V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "bad octal digit: syntax");
+      --  Unterminated raw string; backquote inside a raw string.
+      Unquote ("`abc", V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "raw unterminated: syntax");
+      Unquote ("`a`b`", V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "raw inner backquote: syntax");
+      --  Unterminated char literal; unterminated double quote.
+      Unquote ("'a", V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "char unterminated: syntax");
+      Unquote ('"' & "a", V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "dquote unterminated: syntax");
    end Test_Unquote_Errors;
 
    procedure Test_Num_Error_Is_As (T : in out

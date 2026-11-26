@@ -135,6 +135,7 @@ package body Strings_Suite is
       Assert (Index_Any ("xyz", "aeiou") = -1, "IndexAny none = -1");
       Assert (Index_Byte ("chicken", 'k') = 4, "IndexByte");
       Assert (Index_Rune ("chicken", 'n') = 6, "IndexRune");
+      Assert (Index ("ab", "abc") = -1, "Index sub longer than s = -1");
    end Test_Index_Family;
 
    procedure Test_Last_Index_Family (T : in out
@@ -145,6 +146,10 @@ package body Strings_Suite is
       Assert (Last_Index_Any ("chicken", "aeiou") = 5, "LastIndexAny");
       Assert (Last_Index_Byte ("chicken", 'c') = 3, "LastIndexByte");
       Assert (Last_Index ("abc", "xyz") = -1, "LastIndex missing = -1");
+      Assert (Last_Index ("abc", "") = 3, "LastIndex empty sub = len");
+      Assert (Last_Index ("ab", "abc") = -1, "LastIndex sub longer = -1");
+      Assert (Last_Index_Any ("abc", "xyz") = -1, "LastIndexAny none = -1");
+      Assert (Last_Index_Byte ("abc", 'z') = -1, "LastIndexByte none = -1");
    end Test_Last_Index_Family;
 
    procedure Test_Split (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -172,6 +177,10 @@ package body Strings_Suite is
                     3 => Ada.Strings.Unbounded.To_Unbounded_String ("c")));
       Check_Slice (T, Split_N ("a,b,c", ",", 0),
                    (1 .. 0 => Ada.Strings.Unbounded.To_Unbounded_String ("")));
+      --  Empty separator splits per byte, capped at N fields.
+      Check_Slice (T, Split_N ("abcd", "", 2),
+                   (1 => Ada.Strings.Unbounded.To_Unbounded_String ("a"),
+                    2 => Ada.Strings.Unbounded.To_Unbounded_String ("bcd")));
    end Test_Split_N;
 
    procedure Test_Split_After_And_Empty_Sep (T : in out
@@ -222,6 +231,8 @@ package body Strings_Suite is
       Assert (Trim_Prefix ("foobar", "foo") = "bar", "TrimPrefix");
       Assert (Trim_Prefix ("foobar", "xxx") = "foobar", "TrimPrefix no-op");
       Assert (Trim_Suffix ("foobar", "bar") = "foo", "TrimSuffix");
+      Assert (Trim_Suffix ("foobar", "xxx") = "foobar",
+              "TrimSuffix no-op");
    end Test_Trim_Space_Prefix_Suffix;
 
    procedure Test_Case_And_Map (T : in out

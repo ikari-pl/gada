@@ -89,6 +89,7 @@ package body Std_IO_Suite is
       Register_Routine (T, Test_Copy_Read_Error'Access, "Copy read error");
       Register_Routine (T, Test_Copy_Write_Error'Access, "Copy write error");
       Register_Routine (T, Test_Read_All'Access, "ReadAll + EOF");
+      Register_Routine (T, Test_Read_All_Error'Access, "ReadAll hard error");
    end Register_Tests;
 
    procedure Test_EOF_Sentinel (T : in out
@@ -163,5 +164,17 @@ package body Std_IO_Suite is
       Assert (E = Errors.No_Error, "ReadAll err = No_Error (EOF swallowed)");
       Assert (To_String (Data) = "all of it", "ReadAll content");
    end Test_Read_All;
+
+   procedure Test_Read_All_Error (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Src  : constant Reader_Access := new Fail_Reader;
+      Data : Unbounded_String;
+      E    : Errors.Error_Access;
+   begin
+      Read_All (Src, Data, E);
+      Assert (E /= Errors.No_Error and not Errors.Is_K (E, EOF),
+              "ReadAll hard error propagates (EOF not reported)");
+      Assert (Length (Data) = 0, "nothing accumulated");
+   end Test_Read_All_Error;
 
 end Std_IO_Suite;

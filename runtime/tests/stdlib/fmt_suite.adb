@@ -192,6 +192,24 @@ package body Fmt_Suite is
          Assert (Err = Errors.No_Error and N = 1 and C (1).C = 'x',
                  "%c parses one char");
       end;
+      declare
+         D : Arg_Array (1 .. 1) := (1 => A (""));
+      begin
+         Sscanf ("1", "%d", D, N, Err);
+         Assert (Err /= Errors.No_Error, "%d into str kind errors");
+      end;
+      declare
+         F : Arg_Array (1 .. 1) := (1 => A (0.0));
+      begin
+         Sscanf ("abc", "%f", F, N, Err);
+         Assert (Err /= Errors.No_Error, "%f unparseable token errors");
+      end;
+      declare
+         I1 : Arg_Array (1 .. 1) := (1 => (Int_Arg, 0));
+      begin
+         Sscanf ("x", "%c", I1, N, Err);
+         Assert (Err /= Errors.No_Error, "%c into int kind errors");
+      end;
    end Test_Edges;
 
 end Fmt_Suite;

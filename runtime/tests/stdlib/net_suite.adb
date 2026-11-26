@@ -10,6 +10,7 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 
 with AUnit.Assertions; use AUnit.Assertions;
 
+with Ada.Containers; use type Ada.Containers.Count_Type;
 with Ada.Strings;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
@@ -23,6 +24,8 @@ package body Net_Suite is
 
    package Scheduler renames Gada.Async.Scheduler;
    package Errors renames Gada.Std.Errors;
+
+   use type Errors.Error_Access;
 
    --  Shared handles for the goroutine acceptor body (Spawn'd
    --  procedures have no closures).
@@ -182,9 +185,11 @@ package body Net_Suite is
       Lookup_Host ("localhost", Addrs, Err);
       Assert (Err = Errors.No_Error,
               "localhost must resolve: " & Err_Text (Err));
-      Assert (String_Vectors.Length (Addrs) >= 1,
-              "localhost has >= 1 address");
-      for I in 1 .. String_Vectors.Length (Addrs) loop
+      declare
+         N : constant Integer := Integer (String_Vectors.Length (Addrs));
+      begin
+      Assert (N >= 1, "localhost has >= 1 address");
+      for I in 1 .. N loop
          declare
             S : constant String := To_String
               (String_Vectors.Element (Addrs, I));
@@ -194,6 +199,7 @@ package body Net_Suite is
             end if;
          end;
       end loop;
+      end;
       Assert (Found, "localhost resolves to a loopback address");
 
       Lookup_Host ("127.0.0.1", Addrs, Err);

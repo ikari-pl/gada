@@ -40,7 +40,7 @@ package Gada.Std.Sync is
       function Is_Locked return Boolean;
    private
       Locked : Boolean := False;
-   end protected;
+   end Mutex;
 
    type Mutex_Access is access all Mutex;
 
@@ -63,7 +63,7 @@ package Gada.Std.Sync is
    private
       Writer  : Boolean := False;
       Readers : Natural := 0;
-   end protected;
+   end RW_Mutex;
 
    type RW_Mutex_Access is access all RW_Mutex;
 
@@ -82,7 +82,7 @@ package Gada.Std.Sync is
       function Value return Natural;
    private
       N : Natural := 0;
-   end protected;
+   end Wait_Group;
 
    ---------------------------------------------------------------
    --  Once — Go's sync.Once
@@ -96,7 +96,7 @@ package Gada.Std.Sync is
       procedure Do_K (F : Procedure_Access);
    private
       Done_Flag : Boolean := False;
-   end protected;
+   end Once;
 
    ---------------------------------------------------------------
    --  Cond — Go's sync.Cond
@@ -110,7 +110,7 @@ package Gada.Std.Sync is
       function Value return Natural;
    private
       N : Natural := 0;
-   end protected;
+   end Waiter_Count;
 
    package Unit_Channels is
       new Gada.Async.Channels.Unbounded (Boolean);

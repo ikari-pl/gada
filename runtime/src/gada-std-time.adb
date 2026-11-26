@@ -177,7 +177,8 @@ package body Gada.Std.Time is
            Ada.Calendar.Time_Zones.UTC_Time_Offset (T.Wall);
       begin
          return (Mono => T.Mono,
-                 Wall => T.Wall - Standard.Duration (Integer (Off)) * 60.0,
+                 Wall => T.Wall - Cal.Day_Duration
+                   (Standard.Duration (Integer (Off)) * 60.0),
                  Ns   => T.Ns,
                  UTC  => True);
       end;
@@ -193,7 +194,8 @@ package body Gada.Std.Time is
            Ada.Calendar.Time_Zones.UTC_Time_Offset (T.Wall);
       begin
          return (Mono => T.Mono,
-                 Wall => T.Wall + Standard.Duration (Integer (Off)) * 60.0,
+                 Wall => T.Wall + Cal.Day_Duration
+                   (Standard.Duration (Integer (Off)) * 60.0),
                  Ns   => T.Ns,
                  UTC  => False);
       end;

@@ -60,6 +60,7 @@ package body OS_Suite is
                         "ReadFile missing file errors");
       Register_Routine (T, Test_Args'Access, "Args");
       Register_Routine (T, Test_Env'Access, "Getenv/LookupEnv/Setenv");
+      Register_Routine (T, Test_Open_Ok'Access, "Open existing ok");
       Register_Routine (T, Test_Open_Missing'Access, "Open missing errors");
       Register_Routine (T, Test_Create_Write_Stat'Access,
                         "Create/Write/Close/Stat roundtrip");
@@ -139,14 +140,32 @@ package body OS_Suite is
       Assert (Err /= Errors.No_Error, "Set_Env rejects empty key");
    end Test_Env;
 
-   procedure Test_Open_Missing (T : in out
-      AUnit.Test_Cases.Test_Case'Class) is
+   procedure Test_Open_Ok (T : in out AUnit.Test_Cases.Test_Case'Class) is
       F   : File_Access;
       Err : Errors.Error_Access;
+   begin
+      Write_Tmp ("abc");
+      Open (Tmp_Name, F, Err);
+      Assert (Err = Errors.No_Error and F /= null, "Open existing ok");
+      Close (F);
+      Assert (F = null, "Close nulls handle");
+      Remove_Tmp;
+   end Test_Open_Ok;
+
+   procedure Test_Open_Missing (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      F    : File_Access;
+      Err  : Errors.Error_Access;
+      F2   : File_Access;
+      Err2 : Errors.Error_Access;
    begin
       Open ("os_suite_missing_xyz.bin", F, Err);
       Assert (Err /= Errors.No_Error, "open missing: error set");
       Assert (F = null, "open missing: null handle");
+      --  Create in a nonexistent directory hits the same error arm.
+      Create ("os_suite_missing_dir_xyz/f.bin", F2, Err2);
+      Assert (Err2 /= Errors.No_Error, "create in missing dir: error");
+      Assert (F2 = null, "create error: null handle");
    end Test_Open_Missing;
 
    procedure Test_Create_Write_Stat (T : in out

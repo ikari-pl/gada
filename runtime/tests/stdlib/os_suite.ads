@@ -27,6 +27,7 @@ package OS_Suite is
       AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Args (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Env (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Open_Ok (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Open_Missing (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Create_Write_Stat (T : in out
       AUnit.Test_Cases.Test_Case'Class);

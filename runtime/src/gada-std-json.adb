@@ -178,11 +178,11 @@ package body Gada.Std.Json is
                                 else Man);
       --  Split mantissa into digits and point position.
       Dot : constant Natural := Ada.Strings.Fixed.Index (Dig, ".");
-      Digits : constant String :=
+      Dig_S : constant String :=
         (if Dot = 0 then Dig
          else Dig (Dig'First .. Dot - 1) & Dig (Dot + 1 .. Dig'Last));
       Point : constant Natural :=
-        (if Dot = 0 then Digits'Length else Dot - Digits'First + 1);
+        (if Dot = 0 then Dig_S'Length else Dot - Dig_S'First + 1);
       --  Apply the exponent: new point position.
       New_Point : constant Integer :=
         Integer (Point) + Exp;
@@ -197,7 +197,7 @@ package body Gada.Std.Json is
          --  fraction, trailing zeros stripped, then e and the signed
          --  exponent without leading zeros ('+' kept, as in Go).
          declare
-            Man : constant String := Digits;
+            Man : constant String := Dig_S;
             Last : Natural := Man'Last;
          begin
             while Last > Man'First and then Man (Last) = '0' loop
@@ -230,10 +230,10 @@ package body Gada.Std.Json is
       if Neg then
          Append (R, '-');
       end if;
-      if New_Point >= Digits'Length then
+      if New_Point >= Dig_S'Length then
          --  Integral: digits + padding zeros.
-         Append (R, Digits);
-         for K in 1 .. New_Point - Integer (Digits'Length) loop
+         Append (R, Dig_S);
+         for K in 1 .. New_Point - Integer (Dig_S'Length) loop
             Append (R, '0');
          end loop;
       elsif New_Point <= 0 then
@@ -241,11 +241,11 @@ package body Gada.Std.Json is
          for K in 1 .. (-New_Point) loop
             Append (R, '0');
          end loop;
-         Append (R, Digits);
+         Append (R, Dig_S);
       else
-         Append (R, Digits (Digits'First .. Digits'First + New_Point - 1));
+         Append (R, Dig_S (Dig_S'First .. Dig_S'First + New_Point - 1));
          Append (R, '.');
-         Append (R, Digits (Digits'First + New_Point .. Digits'Last));
+         Append (R, Dig_S (Dig_S'First + New_Point .. Dig_S'Last));
       end if;
       declare
          T : constant String := To_String (R);

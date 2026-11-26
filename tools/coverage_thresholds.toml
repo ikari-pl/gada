@@ -193,6 +193,53 @@ file = "runtime/src/gada-async-selector.adb"
 lines = [104, 109, 165, 166, 167, 322]
 reason = "Selector defensive/unreachable arms — see runtime/COVERAGE.md"
 
+# --- Phase 5 stdlib wave 1 (Gada.Std.*) ------------------------------------
+# Rationale for all of these: runtime/COVERAGE.md (gada-std-* sections).
+# Two categories:
+#   (a) gcov/lcov 2.x misattribution artifacts — the line IS executed (the
+#       suite test that can only pass through it is green in the same CI
+#       run) but lcov reports hit-count 0: fall-through `end X;` terminators
+#       of always-returning functions, `declare`/`end;` block markers, and
+#       the bodies of dynamically-bounded pad loops in Fmt_F. Same category
+#       as the approved gada-async-race.adb:80 exclusion.
+#   (b) genuinely unreachable/defensive code: the `return 17` fallback of
+#       Shortest_K (17 significant digits always round-trip a binary64 —
+#       a mathematical fact, not a test gap), Parse_Float's
+#       Constraint_Error arm (this GNAT returns ±Inf on overflow instead of
+#       raising; the post-check below it is covered by the 1e999 tests), and
+#       Parse_Spec's `when others => null;` (the while-guard already
+#       restricts to the five flag characters).
+
+[[exclude]]
+file = "runtime/src/gada-std-strconv.adb"
+lines = [397, 398, 407, 408, 409, 410, 423, 424, 443, 444, 514, 689, 690, 692, 731, 736, 742, 744, 746, 747, 827, 850, 872, 884]
+reason = "gcov terminator/artifact lines + unreachable Shortest_K/Constraint_Error arms — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-strings.adb"
+lines = [142, 212, 244, 247, 248, 371, 380, 389, 495, 517]
+reason = "gcov terminator/declare artifacts (executed by Split/Case tests) — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-fmt.adb"
+lines = [55, 56, 101, 140, 237, 299, 389, 458]
+reason = "unreachable flag `when others` + gcov end/declare artifacts — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-bytes.adb"
+lines = [28, 122, 166]
+reason = "gcov terminator artifacts — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-bufio.adb"
+lines = [43, 82, 142, 245]
+reason = "gcov terminator/declare artifacts (245 executed by Scanner final-token test) — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-io.adb"
+lines = [37, 50, 74]
+reason = "gcov end-block artifacts — see runtime/COVERAGE.md"
+
 # `end Image;` — the fall-through terminator of Gada.Async.Race.Image.
 # Image is a function that always `return`s (single returned conditional
 # expression covering both the no-race and detected arms, both exercised

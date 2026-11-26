@@ -162,6 +162,7 @@ package body Strconv_Suite is
       Assert (Format_Float (0.0001, 'f', 6) = "0.000100", "f lead zeros");
       Assert (Format_Float (123.0, 'f', 3) = "123.000", "f int + pad");
       Assert (Format_Float (1.5, 'f', 5) = "1.50000", "f frac pad");
+      Assert (Format_Float (0.5, 'f', 3) = "0.500", "f short digits pad");
    end Test_Format_Float_F_E;
 
    procedure Test_Parse_Float_Ok (T : in out
@@ -286,6 +287,10 @@ package body Strconv_Suite is
       V : Ada.Strings.Unbounded.Unbounded_String;
       E : Errors.Error_Access;
    begin
+      Unquote ("", V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "empty string: syntax");
+      Unquote ("x", V, E);
+      Assert (Errors.Is_K (E, Err_Syntax), "one char: syntax");
       Unquote ("abc", V, E);
       Assert (Errors.Is_K (E, Err_Syntax), "no quotes: syntax");
       Unquote ("""a", V, E);

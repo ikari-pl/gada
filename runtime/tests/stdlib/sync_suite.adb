@@ -24,6 +24,7 @@ package body Sync_Suite is
    Shared_Counter : Natural := 0;
    Shared_WG      : Wait_Group;
    Once_Counter   : Natural := 0;
+   Once_Obj       : aliased Once;
    Once_Raised    : Boolean := False;
    Cond_Flag      : Boolean := False;
    Cond_Flags     : array (1 .. 2) of Boolean := (others => False);
@@ -54,13 +55,13 @@ package body Sync_Suite is
       Ok : Boolean;
    begin
       loop
-         Try_Lock (Shared_Mutex, Ok);
+         Shared_Mutex.Try_Lock (Ok);
          exit when Ok;
          Scheduler.Yield;
       end loop;
       Shared_Counter := Shared_Counter + 1;
-      Unlock (Shared_Mutex);
-      Done (Shared_WG);
+      Shared_Mutex.Unlock;
+      Shared_WG.Done;
    end Bump_Body;
 
    procedure Once_Inc is
@@ -76,35 +77,35 @@ package body Sync_Suite is
 
    procedure Once_Body is
    begin
-      Do_K (Once_Inc'Access);
+      Once_Obj.Do_K (Once_Inc'Access);
    end Once_Body;
 
    procedure Waiter_Body is
    begin
-      Lock (Cond_Obj.L.all);
-      Wait (Cond_Obj.all);
+      Cond_Obj.L.all.Lock;
+      Cond_Obj.all.Wait;
       --  Wait reacquired the lock on return.
       Cond_Flag := True;
-      Unlock (Cond_Obj.L.all);
-      Done (Shared_WG);
+      Cond_Obj.L.all.Unlock;
+      Shared_WG.Done;
    end Waiter_Body;
 
    procedure Waiter_Body_1 is
    begin
-      Lock (Cond_Obj.L.all);
-      Wait (Cond_Obj.all);
+      Cond_Obj.L.all.Lock;
+      Cond_Obj.all.Wait;
       Cond_Flags (1) := True;
-      Unlock (Cond_Obj.L.all);
-      Done (Shared_WG);
+      Cond_Obj.L.all.Unlock;
+      Shared_WG.Done;
    end Waiter_Body_1;
 
    procedure Waiter_Body_2 is
    begin
-      Lock (Cond_Obj.L.all);
-      Wait (Cond_Obj.all);
+      Cond_Obj.L.all.Lock;
+      Cond_Obj.all.Wait;
       Cond_Flags (2) := True;
-      Unlock (Cond_Obj.L.all);
-      Done (Shared_WG);
+      Cond_Obj.L.all.Unlock;
+      Shared_WG.Done;
    end Waiter_Body_2;
 
    procedure Test_Mutex_Basic (T : in out
@@ -112,19 +113,19 @@ package body Sync_Suite is
       M  : aliased Mutex;
       Ok : Boolean;
    begin
-      Assert (not Is_Locked (M), "fresh mutex is unlocked");
-      Try_Lock (M, Ok);
-      Assert (Ok and Is_Locked (M), "TryLock on free mutex succeeds");
-      Try_Lock (M, Ok);
+      Assert (not M.Is_Locked, "fresh mutex is unlocked");
+      M.Try_Lock (Ok);
+      Assert (Ok and M.Is_Locked, "TryLock on free mutex succeeds");
+      M.Try_Lock (Ok);
       Assert (not Ok, "TryLock on held mutex fails");
-      Unlock (M);
-      Assert (not Is_Locked (M), "Unlock releases");
-      Lock (M);
-      Assert (Is_Locked (M), "entry Lock acquires");
-      Unlock (M);
+      M.Unlock;
+      Assert (not M.Is_Locked, "Unlock releases");
+      M.Lock;
+      Assert (M.Is_Locked, "entry Lock acquires");
+      M.Unlock;
       --  Go panics on unlock of an unlocked mutex; we raise.
       begin
-         Unlock (M);
+         M.Unlock;
          Assert (False, "double Unlock must raise");
       exception
          when Constraint_Error =>
@@ -137,13 +138,13 @@ package body Sync_Suite is
       Unused_G : Scheduler.Goroutine_Id;
    begin
       Shared_Counter := 0;
-      Add (Shared_WG, 4);
+      Shared_WG.Add (4);
       Scheduler.Shutdown;
       Scheduler.Init (Workers => 1);
       for I in 1 .. 4 loop
          Unused_G := Scheduler.Spawn (Bump_Body'Access);
       end loop;
-      Wait (Shared_WG);
+      Shared_WG.Wait;
       Scheduler.Shutdown;
       Assert (Shared_Counter = 4, "4 goroutines each bumped once, got"
               & Integer'Image (Shared_Counter));
@@ -153,33 +154,33 @@ package body Sync_Suite is
       Rw : aliased RW_Mutex;
       Ok : Boolean;
    begin
-      Lock (Rw);  --  write lock
-      Try_R_Lock (Rw, Ok);
+      Rw.Lock;  --  write lock
+      Rw.Try_R_Lock (Ok);
       Assert (not Ok, "no read lock while writer holds it");
-      Try_Lock (Rw, Ok);
+      Rw.Try_Lock (Ok);
       Assert (not Ok, "no second write lock");
-      Unlock (Rw);
-      Try_R_Lock (Rw, Ok);
+      Rw.Unlock;
+      Rw.Try_R_Lock (Ok);
       Assert (Ok, "read lock after write unlock");
-      Try_R_Lock (Rw, Ok);
+      Rw.Try_R_Lock (Ok);
       Assert (Ok, "second reader ok");
-      Try_Lock (Rw, Ok);
+      Rw.Try_Lock (Ok);
       Assert (not Ok, "writer blocked by readers");
-      R_Unlock (Rw);
-      R_Unlock (Rw);
-      Try_Lock (Rw, Ok);
+      Rw.R_Unlock;
+      Rw.R_Unlock;
+      Rw.Try_Lock (Ok);
       Assert (Ok, "writer ok after all readers released");
-      Unlock (Rw);
+      Rw.Unlock;
       --  Go panics on Unlock with no write lock / RUnlock with none.
       begin
-         Unlock (Rw);
+         Rw.Unlock;
          Assert (False, "Unlock without write lock must raise");
       exception
          when Constraint_Error =>
             null;
       end;
       begin
-         R_Unlock (Rw);
+         Rw.R_Unlock;
          Assert (False, "RUnlock without read lock must raise");
       exception
          when Constraint_Error =>
@@ -189,32 +190,32 @@ package body Sync_Suite is
 
    procedure Test_WaitGroup (T : in out AUnit.Test_Cases.Test_Case'Class) is
    begin
-      Add (Shared_WG, 2);
-      Assert (Value (Shared_WG) = 2, "counter is 2");
-      Done (Shared_WG);
-      Done (Shared_WG);
-      Assert (Value (Shared_WG) = 0, "counter is 0");
-      Wait (Shared_WG);  --  returns immediately at zero
+      Shared_WG.Add (2);
+      Assert (Shared_WG.Value = 2, "counter is 2");
+      Shared_WG.Done;
+      Shared_WG.Done;
+      Assert (Shared_WG.Value = 0, "counter is 0");
+      Shared_WG.Wait;  --  returns immediately at zero
       --  Go panics on counter underflow.
       begin
-         Done (Shared_WG);
+         Shared_WG.Done;
          Assert (False, "Done at zero must raise");
       exception
          when Constraint_Error =>
             null;
       end;
       begin
-         Add (Shared_WG, -1);
+         Shared_WG.Add (-1);
          Assert (False, "Add(-1) at zero must raise");
       exception
          when Constraint_Error =>
             null;
       end;
-      Add (Shared_WG, 5);
-      Add (Shared_WG, -3);
-      Assert (Value (Shared_WG) = 2, "Add(-3) down to 2 ok");
-      Add (Shared_WG, -2);
-      Wait (Shared_WG);
+      Shared_WG.Add (5);
+      Shared_WG.Add (-3);
+      Assert (Shared_WG.Value = 2, "Add(-3) down to 2 ok");
+      Shared_WG.Add (-2);
+      Shared_WG.Wait;
    end Test_WaitGroup;
 
    procedure Test_Once (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -222,8 +223,8 @@ package body Sync_Suite is
       Unused_G : Scheduler.Goroutine_Id;
    begin
       Once_Counter := 0;
-      Do_K (O, Once_Inc'Access);
-      Do_K (O, Once_Inc'Access);
+      O.Do_K (Once_Inc'Access);
+      O.Do_K (Once_Inc'Access);
       Assert (Once_Counter = 1, "Do runs f once, got"
               & Integer'Image (Once_Counter));
       --  From a goroutine too: still exactly once overall.
@@ -231,7 +232,7 @@ package body Sync_Suite is
       Scheduler.Init (Workers => 1);
       Unused_G := Scheduler.Spawn (Once_Body'Access);
       Scheduler.Shutdown;
-      Do_K (O, Once_Inc'Access);
+      O.Do_K (Once_Inc'Access);
       Assert (Once_Counter = 2, "once per Once object, got"
               & Integer'Image (Once_Counter));
       --  Go marks done even when f panics.
@@ -240,7 +241,7 @@ package body Sync_Suite is
       begin
          Once_Raised := False;
          begin
-            Do_K (O2, Once_Raise'Access);
+            O2.Do_K (Once_Raise'Access);
             Assert (False, "raising f must propagate");
          exception
             when Constraint_Error =>
@@ -248,7 +249,7 @@ package body Sync_Suite is
          end;
          Assert (Once_Raised, "f ran before raising");
          Once_Counter := 0;
-         Do_K (O2, Once_Inc'Access);
+         O2.Do_K (Once_Inc'Access);
          Assert (Once_Counter = 0, "done stays set after panic");
       end;
    end Test_Once;
@@ -260,16 +261,16 @@ package body Sync_Suite is
    begin
       Cond_Flag := False;
       Cond_Obj := New_Cond (M'Access);
-      Add (Shared_WG, 1);
+      Shared_WG.Add (1);
       Scheduler.Shutdown;
       Scheduler.Init (Workers => 1);
       Unused_G := Scheduler.Spawn (Waiter_Body'Access);
       --  Wait until the waiter is parked, then wake it.
-      while Value (Cond_Obj.Waiters) = 0 loop
+      while Cond_Obj.Waiters.Value = 0 loop
          Scheduler.Yield;
       end loop;
-      Signal (Cond_Obj.all);
-      Wait (Shared_WG);
+      Cond_Obj.all.Signal;
+      Shared_WG.Wait;
       Scheduler.Shutdown;
       Assert (Cond_Flag, "Signal woke the waiter");
    end Test_Cond_Signal;
@@ -281,16 +282,16 @@ package body Sync_Suite is
    begin
       Cond_Flags := (others => False);
       Cond_Obj := New_Cond (M'Access);
-      Add (Shared_WG, 2);
+      Shared_WG.Add (2);
       Scheduler.Shutdown;
       Scheduler.Init (Workers => 1);
       Unused_G := Scheduler.Spawn (Waiter_Body_1'Access);
       Unused_G := Scheduler.Spawn (Waiter_Body_2'Access);
-      while Value (Cond_Obj.Waiters) < 2 loop
+      while Cond_Obj.Waiters.Value < 2 loop
          Scheduler.Yield;
       end loop;
-      Broadcast (Cond_Obj.all);
-      Wait (Shared_WG);
+      Cond_Obj.all.Broadcast;
+      Shared_WG.Wait;
       Scheduler.Shutdown;
       Assert (Cond_Flags (1) and Cond_Flags (2),
               "Broadcast woke both waiters");

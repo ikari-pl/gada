@@ -188,24 +188,24 @@ package body Gada.Std.Sync is
       --  Go's contract: the caller holds C.L. Register as a waiter
       --  BEFORE releasing L so a Signal that fires between the Unlock
       --  and the park still leaves a token in the channel buffer.
-      Inc (C.Waiters);
-      Unlock (C.L.all);
+      C.Waiters.Inc;
+      C.L.all.Unlock;
       Unit_Channels.Receive (C.Ch, V, OK);
-      Lock (C.L.all);
-      Dec (C.Waiters);
+      C.L.all.Lock;
+      C.Waiters.Dec;
    end Wait;
 
    procedure Signal (C : in out Cond) is
    begin
       --  Only wake when somebody is actually parked, so a Signal with
       --  no waiters leaves no stale token (Go: no-op).
-      if Value (C.Waiters) > 0 then
+      if C.Waiters.Value > 0 then
          Unit_Channels.Send (C.Ch, True);
       end if;
    end Signal;
 
    procedure Broadcast (C : in out Cond) is
-      W : constant Natural := Value (C.Waiters);
+      W : constant Natural := C.Waiters.Value;
    begin
       for I in 1 .. W loop
          Unit_Channels.Send (C.Ch, True);

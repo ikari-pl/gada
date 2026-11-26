@@ -5,35 +5,28 @@ import (
 	"go/ast"
 	"go/types"
 	"strconv"
-	"sync"
 
 	"github.com/gada-lang/gada/compiler/internal/ir"
 )
 
-// Phase 5 wave 1: stdlib package calls. The file-wide import table and
-// the *types.Info handle are threaded through package-level variables
-// because transExpr/transAssign are free functions and the IR carries
-// no ast back-pointers; File() sets them once per translated file (the
-// driver loads exactly one .go file per package, so a package-level
-// slot cannot leak across files).
+// translator carries the per-file translation context: the import
+// table (local name → path, needed to recognise stdlib package calls
+// in expression position) and the *types.Info handle (needed to type
+// call results). All trans*/try* functions are methods on it, so
+// parallel corpus tests never share mutable state (CI runs -race).
+type translator struct {
+	imports map[string]string // local import name → import path
+	info    *types.Info
+}
 
-var curImports map[string]string // local import name → import path
-var curInfo *types.Info
-
-// fileCtxMu serialises File() calls: the corpus tests translate
-// fixtures in parallel, and the package-level slots above are only
-// safe because one File() call translates exactly one file to
-// completion before the next begins. The driver loads a single .go
-// file per package, so this never serialises real workloads.
-var fileCtxMu sync.Mutex
-
-func resetFileContext(f *ast.File, info *types.Info) error {
-	curInfo = info
-	curImports = map[string]string{}
+// newTranslator builds the context for one file (the driver loads
+// exactly one .go file per package).
+func newTranslator(f *ast.File, info *types.Info) (*translator, error) {
+	tr := &translator{imports: map[string]string{}, info: info}
 	for _, imp := range f.Imports {
 		path, err := strconv.Unquote(imp.Path.Value)
 		if err != nil {
-			return fmt.Errorf("translate: bad import path %s: %w", imp.Path.Value, err)
+			return nil, fmt.Errorf("translate: bad import path %s: %w", imp.Path.Value, err)
 		}
 		name := path
 		if i := lastSlash(path); i >= 0 {
@@ -42,9 +35,25 @@ func resetFileContext(f *ast.File, info *types.Info) error {
 		if imp.Name != nil {
 			name = imp.Name.Name
 		}
-		curImports[name] = path
+		tr.imports[name] = path
 	}
-	return nil
+	return tr, nil
+}
+
+// Test-facing wrappers: the corpus and unit tests call the leaf
+// translators directly. Each builds a fresh empty translator so no
+// state is shared between parallel tests.
+func transType(e ast.Expr) (ir.Type, error) { return (&translator{}).transType(e) }
+func transIdent(i *ast.Ident) ir.Expr       { return (&translator{}).transIdent(i) }
+func transExpr(e ast.Expr) (ir.Expr, error) { return (&translator{}).transExpr(e) }
+func transAssign(s *ast.AssignStmt) (*ir.Assign, error) {
+	return (&translator{}).transAssign(s)
+}
+func transTypeAssert(e *ast.TypeAssertExpr) (*ir.TypeAssert, error) {
+	return (&translator{}).transTypeAssert(e)
+}
+func transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
+	return (&translator{}).transTypeSwitch(s)
 }
 
 func lastSlash(s string) int {
@@ -62,7 +71,7 @@ func lastSlash(s string) int {
 // resolved from *types.Info so the emitter can type `:=` targets
 // (`words := strings.Fields(s)`, `data, err := os.ReadFile(p)`).
 // ok=false for any other call shape.
-func stdlibCall(c *ast.CallExpr) (*ir.Call, bool, error) {
+func (tr *translator) stdlibCall(c *ast.CallExpr) (*ir.Call, bool, error) {
 	sel, ok := c.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return nil, false, nil
@@ -71,14 +80,14 @@ func stdlibCall(c *ast.CallExpr) (*ir.Call, bool, error) {
 	if !ok {
 		return nil, false, nil
 	}
-	path, ok := curImports[id.Name]
+	path, ok := tr.imports[id.Name]
 	if !ok {
 		return nil, false, nil
 	}
 	if _, ok := ir.StdlibPackages[path]; !ok {
 		return nil, false, nil
 	}
-	args, err := transExprList(c.Args)
+	args, err := tr.transExprList(c.Args)
 	if err != nil {
 		return nil, false, err
 	}
@@ -86,8 +95,8 @@ func stdlibCall(c *ast.CallExpr) (*ir.Call, bool, error) {
 		Fun:  &ir.Selector{X: &ir.Ident{Name: id.Name}, Sel: sel.Sel.Name},
 		Args: args,
 	}
-	if curInfo != nil {
-		call.ResultTypes = goTypesToIR(curInfo.TypeOf(c))
+	if tr.info != nil {
+		call.ResultTypes = tr.goTypesToIR(tr.info.TypeOf(c))
 	}
 	if call.ResultTypes == nil {
 		// Corpus fixtures translate without *types.Info (parser only);
@@ -115,21 +124,21 @@ var fallbackResultTypes = map[string][]ir.Type{
 // Multi-result calls arrive as a *types.Tuple and expand to one IR
 // type per result. Unrecognised shapes yield a nil entry so callers
 // can fail loudly rather than emit a mis-typed declaration.
-func goTypesToIR(t types.Type) []ir.Type {
+func (tr *translator) goTypesToIR(t types.Type) []ir.Type {
 	if t == nil {
 		return nil
 	}
 	if tup, ok := t.(*types.Tuple); ok {
 		out := make([]ir.Type, 0, tup.Len())
 		for i := 0; i < tup.Len(); i++ {
-			out = append(out, goOneToIR(tup.At(i).Type()))
+			out = append(out, tr.goOneToIR(tup.At(i).Type()))
 		}
 		return out
 	}
-	return []ir.Type{goOneToIR(t)}
+	return []ir.Type{tr.goOneToIR(t)}
 }
 
-func goOneToIR(t types.Type) ir.Type {
+func (tr *translator) goOneToIR(t types.Type) ir.Type {
 	switch t := t.(type) {
 	case *types.Basic:
 		switch t.Kind() {
@@ -145,7 +154,7 @@ func goOneToIR(t types.Type) ir.Type {
 			return &ir.ByteType{}
 		}
 	case *types.Slice:
-		if elem := goOneToIR(t.Elem()); elem != nil {
+		if elem := tr.goOneToIR(t.Elem()); elem != nil {
 			return &ir.SliceType{Elem: elem}
 		}
 	case *types.Interface:

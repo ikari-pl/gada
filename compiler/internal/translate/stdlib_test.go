@@ -2,6 +2,7 @@ package translate
 
 import (
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -137,9 +138,9 @@ func TestGoTypesToIR(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			rts := goTypesToIR(tc.t)
+			rts := (&translator{}).goTypesToIR(tc.t)
 			if len(rts) != 1 || rts[0] == nil || rts[0].NodeKind() != tc.want {
-				t.Fatalf("goTypesToIR(%s) = %#v, want 1 result of kind %s", tc.name, rts, tc.want)
+				t.Fatalf("(&translator{}).goTypesToIR(%s) = %#v, want 1 result of kind %s", tc.name, rts, tc.want)
 			}
 		})
 	}
@@ -148,16 +149,16 @@ func TestGoTypesToIR(t *testing.T) {
 		types.NewVar(0, nil, "d", types.NewSlice(types.Typ[types.Byte])),
 		types.NewVar(0, nil, "e", errType),
 	)
-	rts := goTypesToIR(tup)
+	rts := (&translator{}).goTypesToIR(tup)
 	if len(rts) != 2 || rts[0].NodeKind() != "SliceType" || rts[1].NodeKind() != "ErrorType" {
-		t.Fatalf("goTypesToIR(tuple) = %#v", rts)
+		t.Fatalf("(&translator{}).goTypesToIR(tuple) = %#v", rts)
 	}
 	// Unknown shapes yield nil entries (callers fail loudly).
-	if rts := goTypesToIR(types.NewPointer(types.Typ[types.Int])); len(rts) != 1 || rts[0] != nil {
-		t.Fatalf("goTypesToIR(*int) = %#v, want [nil]", rts)
+	if rts := (&translator{}).goTypesToIR(types.NewPointer(types.Typ[types.Int])); len(rts) != 1 || rts[0] != nil {
+		t.Fatalf("(&translator{}).goTypesToIR(*int) = %#v, want [nil]", rts)
 	}
-	if rts := goTypesToIR(nil); rts != nil {
-		t.Fatalf("goTypesToIR(nil) = %#v, want nil", rts)
+	if rts := (&translator{}).goTypesToIR(nil); rts != nil {
+		t.Fatalf("(&translator{}).goTypesToIR(nil) = %#v, want nil", rts)
 	}
 }
 
@@ -175,14 +176,15 @@ func f() { s.TrimSpace("x") }
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if err := resetFileContext(af, nil); err != nil {
-		t.Fatalf("resetFileContext: %v", err)
+	tr, err := newTranslator(af, nil)
+	if err != nil {
+		t.Fatalf("newTranslator: %v", err)
 	}
-	if curImports["s"] != "strings" {
-		t.Fatalf("curImports = %v, want s→strings", curImports)
+	if tr.imports["s"] != "strings" {
+		t.Fatalf("imports = %v, want s→strings", tr.imports)
 	}
-	if _, ok := curImports["strings"]; ok {
-		t.Fatalf("curImports should not bind the path segment for an alias: %v", curImports)
+	if _, ok := tr.imports["strings"]; ok {
+		t.Fatalf("imports should not bind the path segment for an alias: %v", tr.imports)
 	}
 }
 
@@ -190,34 +192,35 @@ func f() { s.TrimSpace("x") }
 // non-Ident prefix, unknown prefix, and a non-stdlib import path.
 func TestStdlibCallRejections(t *testing.T) {
 	t.Parallel()
-	if err := resetFileContext(&ast.File{Name: &ast.Ident{Name: "p"}, Imports: []*ast.ImportSpec{
+	tr, err := newTranslator(&ast.File{Name: &ast.Ident{Name: "p"}, Imports: []*ast.ImportSpec{
 		{Path: &ast.BasicLit{Kind: token.STRING, Value: `"strings"`}},
 		{Path: &ast.BasicLit{Kind: token.STRING, Value: `"example.com/x"`}},
-	}}, nil); err != nil {
-		t.Fatalf("resetFileContext: %v", err)
+	}}, nil)
+	if err != nil {
+		t.Fatalf("newTranslator: %v", err)
 	}
 	mk := func(fun ast.Expr) *ast.CallExpr {
 		return &ast.CallExpr{Fun: fun, Args: []ast.Expr{&ast.Ident{Name: "s"}}}
 	}
-	if _, ok, err := stdlibCall(mk(&ast.Ident{Name: "len"})); ok || err != nil {
+	if _, ok, err := tr.stdlibCall(mk(&ast.Ident{Name: "len"})); ok || err != nil {
 		t.Errorf("bare ident fun: ok=%v err=%v", ok, err)
 	}
-	if _, ok, err := stdlibCall(mk(&ast.SelectorExpr{
+	if _, ok, err := tr.stdlibCall(mk(&ast.SelectorExpr{
 		X: &ast.ParenExpr{X: &ast.Ident{Name: "strings"}}, Sel: &ast.Ident{Name: "TrimSpace"},
 	})); ok || err != nil {
 		t.Errorf("non-ident prefix: ok=%v err=%v", ok, err)
 	}
-	if _, ok, err := stdlibCall(mk(&ast.SelectorExpr{
+	if _, ok, err := tr.stdlibCall(mk(&ast.SelectorExpr{
 		X: &ast.Ident{Name: "unknown"}, Sel: &ast.Ident{Name: "F"},
 	})); ok || err != nil {
 		t.Errorf("unknown prefix: ok=%v err=%v", ok, err)
 	}
-	if _, ok, err := stdlibCall(mk(&ast.SelectorExpr{
+	if _, ok, err := tr.stdlibCall(mk(&ast.SelectorExpr{
 		X: &ast.Ident{Name: "x"}, Sel: &ast.Ident{Name: "F"},
 	})); ok || err != nil {
 		t.Errorf("non-stdlib import: ok=%v err=%v", ok, err)
 	}
-	if _, ok, err := stdlibCall(mk(&ast.SelectorExpr{
+	if _, ok, err := tr.stdlibCall(mk(&ast.SelectorExpr{
 		X: &ast.Ident{Name: "strings"}, Sel: &ast.Ident{Name: "TrimSpace"},
 	})); !ok || err != nil {
 		t.Errorf("strings.TrimSpace: ok=%v err=%v", ok, err)
@@ -225,9 +228,70 @@ func TestStdlibCallRejections(t *testing.T) {
 	if lastSlash("noslash") != -1 || lastSlash("a/b") != 1 {
 		t.Errorf("lastSlash wrong")
 	}
-	if err := resetFileContext(&ast.File{Name: &ast.Ident{Name: "p"}, Imports: []*ast.ImportSpec{
+	if _, err := newTranslator(&ast.File{Name: &ast.Ident{Name: "p"}, Imports: []*ast.ImportSpec{
 		{Path: &ast.BasicLit{Kind: token.STRING, Value: `"bad`}},
 	}}, nil); err == nil {
 		t.Errorf("expected bad-import-path error")
+	}
+}
+
+// TestTranslatorMiscArms covers the remaining stdlib.go branches: the
+// transExpr test wrapper, stdlibCall arg-error propagation, the
+// info-backed ResultTypes path, and a bare (unnamed) error interface.
+func TestTranslatorMiscArms(t *testing.T) {
+	t.Parallel()
+	// transExpr wrapper works standalone.
+	if _, err := transExpr(&ast.Ident{Name: "x"}); err != nil {
+		t.Fatalf("transExpr wrapper: %v", err)
+	}
+	// stdlibCall propagates arg translation errors (func lit is unsupported).
+	tr := &translator{imports: map[string]string{"strings": "strings"}}
+	bad := &ast.CallExpr{
+		Fun: &ast.SelectorExpr{X: &ast.Ident{Name: "strings"}, Sel: &ast.Ident{Name: "Fields"}},
+		Args: []ast.Expr{&ast.FuncLit{
+			Type: &ast.FuncType{},
+			Body: &ast.BlockStmt{},
+		}},
+	}
+	if _, _, err := tr.stdlibCall(bad); err == nil {
+		t.Fatal("expected arg-translation error to propagate")
+	}
+	// info-backed ResultTypes: type-check a tiny source with go/types.
+	src := `package p
+
+import "strings"
+
+func f(s string) []string { return strings.Fields(s) }
+`
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "x.go", src, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	conf := types.Config{Importer: importer.Default()}
+	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}}
+	_, err = conf.Check("p", fset, []*ast.File{af}, info)
+	if err != nil {
+		t.Fatalf("typecheck: %v", err)
+	}
+	tr2, err := newTranslator(af, info)
+	if err != nil {
+		t.Fatalf("newTranslator: %v", err)
+	}
+	call := af.Decls[1].(*ast.FuncDecl).Body.List[0].(*ast.ReturnStmt).Results[0].(*ast.CallExpr)
+	c, ok, err := tr2.stdlibCall(call)
+	if !ok || err != nil {
+		t.Fatalf("stdlibCall: ok=%v err=%v", ok, err)
+	}
+	if len(c.ResultTypes) != 1 || c.ResultTypes[0].NodeKind() != "SliceType" {
+		t.Fatalf("info-backed ResultTypes = %#v", c.ResultTypes)
+	}
+	// Bare (unnamed) one-method Error interface also maps to ErrorType.
+	iface := types.NewInterfaceType([]*types.Func{
+		types.NewFunc(0, nil, "Error", types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(), types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.String])), false)),
+	}, nil)
+	if got := (&translator{}).goOneToIR(iface); got == nil || got.NodeKind() != "ErrorType" {
+		t.Fatalf("goOneToIR(bare error iface) = %#v", got)
 	}
 }

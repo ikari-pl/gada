@@ -170,7 +170,7 @@ package body Gada.Std.Time is
       return Duration
         (Long_Integer (RT.To_Duration (RT."-" (U.Mono, T.Mono))
                         * 1_000_000_000.0));
-   end Until;
+   end Until_K;
 
    function UTC (T : Time) return Time is (T with UTC => True);
    function Local (T : Time) return Time is (T with UTC => False);

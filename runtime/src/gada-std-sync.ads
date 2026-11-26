@@ -32,7 +32,7 @@ package Gada.Std.Sync is
 
    protected type Mutex is
       --  Go: func (m *Mutex) Lock() — blocks until free.
-      entry Lock when not Locked;
+      entry Lock;
       --  Go: func (m *Mutex) Unlock() — panics if already unlocked.
       procedure Unlock;
       --  Go: func (m *Mutex) TryLock() (Go 1.18) — never blocks.
@@ -51,9 +51,9 @@ package Gada.Std.Sync is
    protected type RW_Mutex is
       --  Write lock: blocks while a writer holds it or any reader is
       --  active. Go: Lock().
-      entry Lock when not Writer and then Readers = 0;
+      entry Lock;
       --  Read lock: blocks only while a writer holds it. Go: RLock().
-      entry R_Lock when not Writer;
+      entry R_Lock;
       --  Go: Unlock() — panics if no write lock held.
       procedure Unlock;
       --  Go: RUnlock() — panics if no read lock held.
@@ -78,7 +78,7 @@ package Gada.Std.Sync is
       --  Go: Done() == Add(-1).
       procedure Done;
       --  Go: Wait() — blocks until the counter reaches zero.
-      entry Wait when N = 0;
+      entry Wait;
       function Value return Natural;
    private
       N : Natural := 0;

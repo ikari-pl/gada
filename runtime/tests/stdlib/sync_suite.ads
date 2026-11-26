@@ -23,6 +23,8 @@ package Sync_Suite is
    procedure Test_RWMutex (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_WaitGroup (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Once (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Once_Concurrent (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Cond_Signal (T : in out
       AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Cond_Broadcast (T : in out

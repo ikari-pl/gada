@@ -56,6 +56,7 @@ with Bytes_Suite;
 with Std_IO_Suite;
 with Bufio_Suite;
 with Fmt_Suite;
+with OS_Suite;
 
 procedure Test_Runner is
 
@@ -97,6 +98,7 @@ procedure Test_Runner is
       or else Pkg = "stdlib.io"
       or else Pkg = "stdlib.bufio"
       or else Pkg = "stdlib.fmt"
+      or else Pkg = "stdlib.os"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -196,6 +198,9 @@ procedure Test_Runner is
       end if;
       if Should_Register ("stdlib.fmt") then
          Add_Test (Result, new Fmt_Suite.Fmt_Test);
+      end if;
+      if Should_Register ("stdlib.os") then
+         Add_Test (Result, new OS_Suite.OS_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

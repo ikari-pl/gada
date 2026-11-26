@@ -15,14 +15,17 @@ begin
       Meta : Gada.Reflect.Types.Type_Descriptor;
    begin
       --  Any
-      Meta := Gada.Reflect.Types.Make (Id => 1, Name => "Any", Kind => Gada.Reflect.Types.Interface_Kind);
+      Meta := Gada.Reflect.Types.Make (Id => 1, Name => "Any", Kind =>
+            Gada.Reflect.Types.Interface_Kind);
       Gada.Reflect.Registry.Register_Type (Meta);
       --  Blank
-      Meta := Gada.Reflect.Types.Make (Id => 2, Name => "Blank", Kind => Gada.Reflect.Types.Struct_Kind);
+      Meta := Gada.Reflect.Types.Make (Id => 2, Name => "Blank", Kind =>
+            Gada.Reflect.Types.Struct_Kind);
       Gada.Reflect.Types.Add_Field (Meta, "N", Field_Type => 3);
       Gada.Reflect.Registry.Register_Type (Meta);
       --  int
-      Meta := Gada.Reflect.Types.Make (Id => 3, Name => "int", Kind => Gada.Reflect.Types.Int_Kind);
+      Meta := Gada.Reflect.Types.Make (Id => 3, Name => "int", Kind =>
+            Gada.Reflect.Types.Int_Kind);
       Gada.Reflect.Registry.Register_Type (Meta);
    end;
    --  Blank satisfies Any

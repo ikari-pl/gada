@@ -91,6 +91,9 @@ var corpusFixtures = []string{
 	"type_switch",
 	// Phase 5 — stdlib import mapping (with Gada.Std.Strings; + qualified call).
 	"stdlib_import",
+	// Phase 5 — stdlib calls in expression position, 2-LHS (T, error)
+	// out-call, string([]byte), []string index/assign/len, nil compare.
+	"stdlib_calls",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -98,6 +101,12 @@ var corpusFixtures = []string{
 // the corresponding .golden.adb. The IR side is shared with
 // translate so a divergence in emit alone surfaces here, while a
 // divergence in IR shape would surface in translate's TestCorpus.
+// flattenSpaces collapses all whitespace runs to single spaces so
+// assertions survive the emitter's 80-column line wrapping.
+func flattenSpaces(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func TestCorpus(t *testing.T) {
 	t.Parallel()
 
@@ -1095,14 +1104,14 @@ func TestSelectorInstantiationsPrelude(t *testing.T) {
 		for _, want := range []string{
 			"with Gada.Async.Channels.Bounded;",
 			"with Gada.Async.Selector;",
-			"package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);",
+			"package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);", // may wrap; matched via flattenSpaces below
 			"package Selectors_Of_Integer is new Gada.Async.Selector",
 			"(Element_Type    => Integer,",
 			"Default_Element => 0,",
 			"Bnd             => Channels_Of_Integer);",
 			"Sel_Cases_1 : Selectors_Of_Integer.Case_Array",
 		} {
-			if !strings.Contains(got, want) {
+			if !strings.Contains(flattenSpaces(got), flattenSpaces(want)) {
 				t.Fatalf("missing %q in output:\n%s", want, got)
 			}
 		}
@@ -1144,14 +1153,14 @@ func TestSelectorInstantiationsPrelude(t *testing.T) {
 		for _, want := range []string{
 			"with Gada.Async.Channels.Bounded;",
 			"with Gada.Async.Selector;",
-			"package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);",
+			"package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);", // may wrap; matched via flattenSpaces below
 			"package Selectors_Of_Integer is new Gada.Async.Selector",
 			"(Element_Type    => Integer,",
 			"Default_Element => 0,",
 			"Bnd             => Channels_Of_Integer);",
 			"Sel_Cases_1 : Selectors_Of_Integer.Case_Array",
 		} {
-			if !strings.Contains(got, want) {
+			if !strings.Contains(flattenSpaces(got), flattenSpaces(want)) {
 				t.Fatalf("missing %q in output:\n%s", want, got)
 			}
 		}
@@ -1644,8 +1653,11 @@ func TestTypeNameSliceAndMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("typeName(SliceType{StringType}): unexpected error %v", err)
 	}
-	if got != "Slices_Of_String.Slice" {
-		t.Errorf("typeName(SliceType{StringType}) = %q, want %q", got, "Slices_Of_String.Slice")
+	// []string maps to the Gada.Std.Strings vector subtype, not a
+	// Slices_Of_* instantiation (String is uncontrolled, illegal as a
+	// generic element here).
+	if got != "Gada.Std.Strings.String_Slice" {
+		t.Errorf("typeName(SliceType{StringType}) = %q, want %q", got, "Gada.Std.Strings.String_Slice")
 	}
 	if _, err := e.typeName(nil); err == nil {
 		t.Fatal("expected error for nil type")
@@ -2081,8 +2093,6 @@ func TestEmitSliceLitOfStringFloatBool(t *testing.T) {
 		elem     ir.Type
 		wantInst string
 	}{
-		{"string", &ir.StringType{},
-			"package Slices_Of_String is new Gada.Core.Slices (Element_Type => String);"},
 		{"bool", &ir.BoolType{},
 			"package Slices_Of_Boolean is new Gada.Core.Slices (Element_Type => Boolean);"},
 		{"float64", &ir.Float64Type{},
@@ -2103,10 +2113,35 @@ func TestEmitSliceLitOfStringFloatBool(t *testing.T) {
 			if err := Package(pkg, &buf); err != nil {
 				t.Fatalf("emit: %v", err)
 			}
-			if !strings.Contains(buf.String(), tc.wantInst) {
+			if !strings.Contains(flattenSpaces(buf.String()), flattenSpaces(tc.wantInst)) {
 				t.Fatalf("expected %q in:\n%s", tc.wantInst, buf.String())
 			}
 		})
+	}
+}
+
+// TestEmitSliceLitOfStringRejected pins the Phase 5 rule: a []string
+// composite literal has no Slices_Of_String instantiation (String is
+// uncontrolled) and no vector From_Array — the emit fails loudly, and
+// the type name maps to Gada.Std.Strings.String_Slice.
+func TestEmitSliceLitOfStringRejected(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name:    "f",
+		Results: []*ir.Param{{Type: &ir.SliceType{Elem: &ir.StringType{}}}},
+		Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+			&ir.SliceLit{Elem: &ir.StringType{}, Elems: []ir.Expr{
+				&ir.Lit{Kind: ir.LitString, Value: `"a"`},
+			}},
+		}}},
+	})
+	var buf bytes.Buffer
+	err := Package(pkg, &buf)
+	if err == nil {
+		t.Fatalf("expected emit error for []string literal, got output:\n%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "composite literal of []string/[]byte not supported") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -2382,7 +2417,7 @@ func TestMapLitNonEmptyInVarDecl(t *testing.T) {
 	if !strings.Contains(out, "M : Maps_Of_Integer_To_Integer.Map :=") {
 		t.Fatalf("expected map := decl, got:\n%s", out)
 	}
-	if !strings.Contains(out, "From_Pairs ([(K => 1, V => 2)])") {
+	if !strings.Contains(flattenSpaces(out), "From_Pairs ([(K => 1, V => 2)])") {
 		t.Fatalf("expected From_Pairs aggregate, got:\n%s", out)
 	}
 }
@@ -3638,5 +3673,37 @@ func TestStdlibImportEmit(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "with Gada.Core.IO;") || strings.Contains(buf.String(), "Gada.Std.Fmt") {
 		t.Fatalf("fmt should map to Gada.Core.IO, got:\n%s", buf.String())
+	}
+}
+
+// TestWrapBreakPoint pins the 80-column wrapper's literal-awareness:
+// breaks must land on spaces outside string literals (with "" escapes)
+// and character literals, never inside them.
+func TestWrapBreakPoint(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		line    string
+		wantBrk int // index of last legal break space within col 80; -1 = none
+	}{
+		{"short line", 5},
+		{strings.Repeat("a", 70) + " b c", 72},
+		{`Print ("cannot read input");` + strings.Repeat(" x", 60), 80},
+		// Spaces inside the string literal are not breakable; the
+		// only legal break within 80 cols is the one after `S`.
+		{`S := "a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4";`, 4},
+		// The space inside the char literal ' ' (index 6) is skipped;
+		// the last legal break is the space after the semicolon.
+		{`C := ' '; ` + strings.Repeat("y", 90), 9},
+	}
+	for _, tc := range cases {
+		if got := wrapBreakPoint(tc.line, 80); got != tc.wantBrk {
+			t.Errorf("wrapBreakPoint(%q) = %d, want %d", tc.line, got, tc.wantBrk)
+		}
+	}
+	// No space outside a string literal in the first 80 cols -> no
+	// legal break (never break inside the literal).
+	line := `F("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm");`
+	if got := wrapBreakPoint(line, 80); got != -1 {
+		t.Errorf("wrapBreakPoint inside string = %d, want -1", got)
 	}
 }

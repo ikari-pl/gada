@@ -148,15 +148,21 @@ type Return struct {
 func (*Return) irStmt()          {}
 func (*Return) NodeKind() string { return "Return" }
 
-// Call is a function or method invocation used in statement
-// position. Call-as-expression is intentionally deferred until a
-// later phase; the corpus does not need it.
+// Call is a function or method invocation. Statement position is the
+// original use; Phase 5 adds expression position for stdlib package
+// calls (`words := strings.Fields(s)`), where Fun is a Selector headed
+// by a stdlib import name. ResultTypes carries the call's result types
+// (resolved from *types.Info at translate time) so the emitter can
+// declare `:=` targets — one entry for single-value calls, two for the
+// `(T, error)` out-call shape (`data, err := os.ReadFile(p)`).
 type Call struct {
-	Fun  Expr
-	Args []Expr
+	Fun         Expr
+	Args        []Expr
+	ResultTypes []Type
 }
 
 func (*Call) irStmt()          {}
+func (*Call) irExpr()          {}
 func (*Call) NodeKind() string { return "Call" }
 
 // ExprStmt wraps a non-call expression used in statement position.
@@ -191,6 +197,7 @@ const (
 	LitString LitKind = "string"
 	LitBool   LitKind = "bool"
 	LitFloat  LitKind = "float64"
+	LitNil    LitKind = "nil"
 )
 
 // Lit is a literal. Value is the canonical Go source form so the
@@ -599,6 +606,27 @@ type Float64Type struct{}
 func (*Float64Type) irType()          {}
 func (*Float64Type) NodeKind() string { return "Float64Type" }
 
+// ByteType is Go `byte`/`uint8`. As a slice element (`[]byte`) it maps
+// to Character inside Gada.Std.Bytes.Byte_Slice (a vector), not to a
+// Slices_Of_* instantiation — Gada.Core.Slices' element type must be
+// definite and uncontrolled, and String/byte slices use the
+// Gada.Std.* vector types instead.
+type ByteType struct{}
+
+func (*ByteType) irType() {}
+
+// NodeKind returns the JSON envelope tag for ByteType.
+func (*ByteType) NodeKind() string { return "ByteType" }
+
+// ErrorType is Go's predeclared `error` interface. Translates to
+// Gada.Std.Errors.Error_Access (nil error = null access).
+type ErrorType struct{}
+
+func (*ErrorType) irType() {}
+
+// NodeKind returns the JSON envelope tag for ErrorType.
+func (*ErrorType) NodeKind() string { return "ErrorType" }
+
 // NamedType is a reference to a defined type by name — a struct or
 // interface declared elsewhere in the file (`type Point struct {…}`,
 // `type Stringer interface {…}`). It appears wherever a Go type is a
@@ -913,6 +941,14 @@ func unmarshalExpr(raw json.RawMessage) (Expr, error) {
 			return nil, err
 		}
 		return &n, nil
+	case "Call":
+		// Phase 5: stdlib package calls also appear in expression
+		// position; the type shares the stmt unmarshal.
+		var n Call
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
 	default:
 		return nil, fmt.Errorf("ir: unknown expr kind %q", env.Kind)
 	}
@@ -934,6 +970,10 @@ func unmarshalType(raw json.RawMessage) (Type, error) {
 		return &BoolType{}, nil
 	case "Float64Type":
 		return &Float64Type{}, nil
+	case "ByteType":
+		return &ByteType{}, nil
+	case "ErrorType":
+		return &ErrorType{}, nil
 	case "NamedType":
 		var n NamedType
 		if err := json.Unmarshal(raw, &n); err != nil {
@@ -1314,16 +1354,18 @@ func (s *Return) UnmarshalJSON(b []byte) error {
 
 func (s *Call) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Kind string `json:"kind"`
-		Fun  Expr   `json:"fun"`
-		Args []Expr `json:"args"`
-	}{"Call", s.Fun, s.Args})
+		Kind        string `json:"kind"`
+		Fun         Expr   `json:"fun"`
+		Args        []Expr `json:"args"`
+		ResultTypes []Type `json:"resultTypes,omitempty"`
+	}{"Call", s.Fun, s.Args, s.ResultTypes})
 }
 
 func (s *Call) UnmarshalJSON(b []byte) error {
 	var aux struct {
-		Fun  json.RawMessage   `json:"fun"`
-		Args []json.RawMessage `json:"args"`
+		Fun         json.RawMessage   `json:"fun"`
+		Args        []json.RawMessage `json:"args"`
+		ResultTypes []json.RawMessage `json:"resultTypes"`
 	}
 	if err := json.Unmarshal(b, &aux); err != nil {
 		return err
@@ -1338,6 +1380,13 @@ func (s *Call) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	s.Args = args
+	for _, rt := range aux.ResultTypes {
+		t, err := unmarshalType(rt)
+		if err != nil {
+			return err
+		}
+		s.ResultTypes = append(s.ResultTypes, t)
+	}
 	return nil
 }
 
@@ -1506,6 +1555,16 @@ func (*BoolType) MarshalJSON() ([]byte, error) {
 
 func (*Float64Type) MarshalJSON() ([]byte, error) {
 	return []byte(`{"kind":"Float64Type"}`), nil
+}
+
+// MarshalJSON emits the payload-free JSON envelope for ByteType.
+func (*ByteType) MarshalJSON() ([]byte, error) {
+	return []byte(`{"kind":"ByteType"}`), nil
+}
+
+// MarshalJSON emits the payload-free JSON envelope for ErrorType.
+func (*ErrorType) MarshalJSON() ([]byte, error) {
+	return []byte(`{"kind":"ErrorType"}`), nil
 }
 
 func (t *NamedType) MarshalJSON() ([]byte, error) {

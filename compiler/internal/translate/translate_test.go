@@ -107,6 +107,7 @@ func TestCorpus(t *testing.T) {
 		"type_switch.go",
 		// Phase 5 — stdlib import mapping (strings.ToUpper).
 		"stdlib_import.go",
+		"stdlib_calls.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -671,9 +672,27 @@ func TestUnsupportedBuiltinTypes(t *testing.T) {
 	t.Parallel()
 	denied := []string{
 		"int8", "int16", "int32", "int64",
-		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
-		"byte", "rune", "float32", "complex64", "complex128",
-		"error", "any", "comparable",
+		"uint", "uint16", "uint32", "uint64", "uintptr",
+		"rune", "float32", "complex64", "complex128",
+		"any", "comparable",
+	}
+	// Phase 5 wave 1 promotes byte/uint8 (→ ByteType) and error
+	// (→ ErrorType) from the denylist to supported types.
+	supported := map[string]string{
+		"byte": "ByteType", "uint8": "ByteType", "error": "ErrorType",
+	}
+	for name, want := range supported {
+		name, want := name, want
+		t.Run("supported/"+name, func(t *testing.T) {
+			t.Parallel()
+			got, err := transType(&ast.Ident{Name: name})
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", name, err)
+			}
+			if got.NodeKind() != want {
+				t.Fatalf("type %q = %s, want %s", name, got.NodeKind(), want)
+			}
+		})
 	}
 	for _, name := range denied {
 		name := name

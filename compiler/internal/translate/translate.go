@@ -37,9 +37,13 @@ import (
 // info may be nil; Phase 1 does not consult it. The parameter is
 // kept in the signature so later phases need not break callers.
 func File(f *ast.File, info *types.Info) (*ir.Package, error) {
-	_ = info // reserved for later phases
+	fileCtxMu.Lock()
+	defer fileCtxMu.Unlock()
 	if f == nil {
 		return nil, fmt.Errorf("translate: nil ast.File")
+	}
+	if err := resetFileContext(f, info); err != nil {
+		return nil, err
 	}
 	if f.Name == nil {
 		return nil, fmt.Errorf("translate: file has no package clause")
@@ -199,9 +203,9 @@ func transFieldList(fl *ast.FieldList) ([]*ir.Param, error) {
 var unsupportedBuiltinType = map[string]bool{
 	"int8": true, "int16": true, "int32": true, "int64": true,
 	"uint": true, "uint8": true, "uint16": true, "uint32": true,
-	"uint64": true, "uintptr": true, "byte": true, "rune": true,
+	"uint64": true, "uintptr": true, "rune": true,
 	"float32": true, "complex64": true, "complex128": true,
-	"error": true, "any": true, "comparable": true,
+	"any": true, "comparable": true,
 }
 
 func transType(e ast.Expr) (ir.Type, error) {
@@ -216,6 +220,10 @@ func transType(e ast.Expr) (ir.Type, error) {
 			return &ir.BoolType{}, nil
 		case "float64":
 			return &ir.Float64Type{}, nil
+		case "byte", "uint8":
+			return &ir.ByteType{}, nil
+		case "error":
+			return &ir.ErrorType{}, nil
 		default:
 			// A Go *predeclared* type GADA does not support (the wider
 			// numerics, complex, byte/rune, error, any) is rejected here —
@@ -366,6 +374,7 @@ var builtinNames = map[string]bool{
 	"panic":   true,
 	"recover": true,
 	"close":   true,
+	"string":  true, // conversion string(x), e.g. string([]byte)
 }
 
 // --- statements -----------------------------------------------------------
@@ -1027,6 +1036,15 @@ func transExpr(e ast.Expr) (ir.Expr, error) {
 		} else if ok {
 			return mc, nil
 		}
+		// Phase 5 wave 1: a call whose Fun is a stdlib package
+		// selector (`strings.Fields(s)`, `os.ReadFile(p)`) is a
+		// package call, not a conversion, so it is unambiguous
+		// without type info; result types come from *types.Info.
+		if sc, ok, err := stdlibCall(e); err != nil {
+			return nil, err
+		} else if ok {
+			return sc, nil
+		}
 		// Only builtin calls are valid in expression position in
 		// Phase 2; general call-as-expression (e.g. `f()` on the RHS
 		// of an assign) still needs *types.Info plumbing to
@@ -1038,7 +1056,7 @@ func transExpr(e ast.Expr) (ir.Expr, error) {
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("translate: general call-as-expression not supported in Phase 2 (only builtin calls are)")
+			return nil, fmt.Errorf("translate: general call-as-expression not supported in Phase 2 (only builtin calls and stdlib package calls are)")
 		}
 		return b, nil
 	default:
@@ -1215,6 +1233,8 @@ func transIdent(i *ast.Ident) ir.Expr {
 	switch i.Name {
 	case "true", "false":
 		return &ir.Lit{Kind: ir.LitBool, Value: i.Name}
+	case "nil":
+		return &ir.Lit{Kind: ir.LitNil, Value: "nil"}
 	default:
 		return &ir.Ident{Name: i.Name}
 	}

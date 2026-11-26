@@ -1,3 +1,4 @@
+with Ada.Strings.Unbounded;
 with Gada.Std.Strings;
 
 package body P is

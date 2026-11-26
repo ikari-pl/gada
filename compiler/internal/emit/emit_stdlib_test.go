@@ -538,7 +538,7 @@ func TestTimeChanImportEmit(t *testing.T) {
 		},
 	)
 	for _, want := range []string{
-		"with Gada.Std.Time;",
+		"with Gada.Std.Time; use type Gada.Std.Time.Duration;",
 		"Gada.Std.Time.Time_Channels.Channel",
 		"Gada.Std.Time.After (200 * Gada.Std.Time.Millisecond)",
 	} {

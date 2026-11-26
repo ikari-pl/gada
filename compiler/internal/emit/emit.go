@@ -777,7 +777,14 @@ func (e *emitter) collectWiths() []string {
 		}
 		sort.Strings(pkgs)
 		for _, p := range pkgs {
-			add("with " + p + ";")
+			if p == "Gada.Std.Time" {
+				// Duration arithmetic (`200 * time.Millisecond`) needs
+				// the derived type's predefined operators directly
+				// visible.
+				add("with Gada.Std.Time; use type Gada.Std.Time.Duration;")
+			} else {
+				add("with " + p + ";")
+			}
 		}
 	}
 	return withs

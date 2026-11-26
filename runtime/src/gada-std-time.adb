@@ -77,7 +77,7 @@ package body Gada.Std.Time is
       end;
    end Append_Frac;
 
-   function String (D : Duration) return String is
+   function To_String (D : Duration) return String is
       Ns : constant Long_Integer := Long_Integer (D);
       U  : constant Long_Integer := (if Ns < 0 then -Ns else Ns);
       B  : Unbounded_String;
@@ -123,7 +123,7 @@ package body Gada.Std.Time is
          end;
       end if;
       return To_String (B);
-   end String;
+   end To_String;
 
    ---------------------------------------------------------------
    --  Time
@@ -183,12 +183,12 @@ package body Gada.Std.Time is
    function Day (T : Time) return Cal.Day_Number is
      (Cal.Day (T.Wall));
    function Hour_Of (T : Time) return Natural is
-     (Natural (Cal.Split (T.Wall).Seconds) / 3600);
+     (Natural (Fmt.Hour (T.Wall)));
    function Minute_Of (T : Time) return Natural is
-     (Natural (Cal.Split (T.Wall).Seconds) / 60 mod 60);
+     (Natural (Fmt.Minute (T.Wall)));
    function Second_Of (T : Time) return Natural is
-     (Natural (Cal.Split (T.Wall).Seconds) mod 60);
-   function Nanosecond (T : Time) return Natural is (T.Ns);
+     (Natural (Fmt.Second (T.Wall)));
+   function Nanosecond_Of (T : Time) return Natural is (T.Ns);
 
    --  "2026-11-26T07:08:09.123456789Z" (UTC) or "…+01:00" (Local).
    function RFC3339_Nano (T : Time) return String is

@@ -76,17 +76,17 @@ package body Time_Suite is
    procedure Test_Duration_String (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
    begin
-      Assert (String (0 * Nanosecond) = "0s", "0s");
-      Assert (String (Nanosecond) = "1ns", "1ns");
-      Assert (String (1500 * Nanosecond) = "1.5µs", "1.5µs");
-      Assert (String (Microsecond) = "1µs", "1µs");
-      Assert (String (300 * Millisecond) = "300ms", "300ms");
-      Assert (String (1500 * Millisecond) = "1.5s", "1.5s");
-      Assert (String (90 * Second) = "1m30s", "1m30s");
-      Assert (String (Hour + 2 * Minute + 3 * Second + 4 * Millisecond)
+      Assert (To_String (0 * Nanosecond) = "0s", "0s");
+      Assert (To_String (Nanosecond) = "1ns", "1ns");
+      Assert (To_String (1500 * Nanosecond) = "1.5µs", "1.5µs");
+      Assert (To_String (Microsecond) = "1µs", "1µs");
+      Assert (To_String (300 * Millisecond) = "300ms", "300ms");
+      Assert (To_String (1500 * Millisecond) = "1.5s", "1.5s");
+      Assert (To_String (90 * Second) = "1m30s", "1m30s");
+      Assert (To_String (Hour + 2 * Minute + 3 * Second + 4 * Millisecond)
                 = "1h2m3.004s", "1h2m3.004s");
-      Assert (String (-1500 * Millisecond) = "-1.5s", "-1.5s");
-      Assert (String (24 * Hour) = "24h0m0s", "24h0m0s");
+      Assert (To_String (-1500 * Millisecond) = "-1.5s", "-1.5s");
+      Assert (To_String (24 * Hour) = "24h0m0s", "24h0m0s");
    end Test_Duration_String;
 
    procedure Test_Duration_Arith (T : in out
@@ -110,8 +110,8 @@ package body Time_Suite is
          D : constant Duration := Since (T0);
       begin
          Assert (D >= 15 * Millisecond,
-                 "Since >= 15ms after a 20ms delay, got " & String (D));
-         Assert (D < 5 * Second, "Since is sane, got " & String (D));
+                 "Since >= 15ms after a 20ms delay, got " & To_String (D));
+         Assert (D < 5 * Second, "Since is sane, got " & To_String (D));
       end;
    end Test_Now_Since;
 
@@ -124,7 +124,7 @@ package body Time_Suite is
               "date y/m/d");
       Assert (Hour_Of (D) = 7 and Minute_Of (D) = 8 and Second_Of (D) = 9,
               "date h/m/s");
-      Assert (Nanosecond (D) = 123_456_789, "nanosecond");
+      Assert (Nanosecond_Of (D) = 123_456_789, "nanosecond");
    end Test_Date_Accessors;
 
    procedure Test_UTC_Local_Format (T : in out
@@ -136,7 +136,7 @@ package body Time_Suite is
       Assert (RFC3339_Nano (UTC (D)) = "2026-11-26T07:08:09.123456789Z",
               "UTC format, got " & RFC3339_Nano (UTC (D)));
       --  Local keeps the instant; only the zone suffix differs.
-      Assert (Year (LU) = 2026 and Nanosecond (LU) = 123_456_789,
+      Assert (Year (LU) = 2026 and Nanosecond_Of (LU) = 123_456_789,
               "Local keeps instant");
       declare
          S : constant String := RFC3339_Nano (LU);

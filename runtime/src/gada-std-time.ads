@@ -44,7 +44,8 @@ package Gada.Std.Time is
    function "=" (L, R : Duration) return Boolean;
 
    --  Go: func (d Duration) String() — "1h2m3.004s", "300ms", "1.5µs".
-   function String (D : Duration) return String;
+   --  Named To_String (Ada idiom; "String" would hide the type).
+   function To_String (D : Duration) return String;
 
    function Nanoseconds (D : Duration) return Long_Integer;
 
@@ -89,7 +90,7 @@ package Gada.Std.Time is
    function Hour_Of (T : Time) return Natural;
    function Minute_Of (T : Time) return Natural;
    function Second_Of (T : Time) return Natural;
-   function Nanosecond (T : Time) return Natural;
+   function Nanosecond_Of (T : Time) return Natural;
 
    --  Go: t.Format(time.RFC3339Nano) — v1 fixes the layout.
    function RFC3339_Nano (T : Time) return String;

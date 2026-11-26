@@ -13,15 +13,39 @@ reflection end-to-end, `net/http` exercises everything.
 
 ## Items
 
-- [ ] **Stdlib package: `net`**
-      *Files:* `runtime/src/gada-std-net.{ads,adb}`, `runtime/tests/stdlib/net_suite.{ads,adb}`, `compiler/internal/{ir/stdlib.go,emit/emit.go,translate/translate.go}`
+- [x] **Stdlib package: `net`** (done 2026-11-26, CI green on 49a4d62)
+      *Files:* `runtime/src/gada-std-net.{ads,adb}`, `runtime/tests/stdlib/net_suite.{ads,adb}`, `compiler/internal/{ir/stdlib.go,ir/ir.go,emit/emit.go,translate/translate.go}`
       *Verify:* `make stdlib-test PKG=net`
       *Done when:* `Dial`, `Listen`, TCP and UDP, `LookupHost`, `IP` parsing all correct; coverage ≥ 90%.
+      IPv4+IPv6 parse/format (RFC 5952), `Conn`/`Listener`/`Packet_Conn`
+      on GNAT.Sockets (v1 = IPv4-only; v6 literals/names yield clean
+      errors), `Lookup_Host`, compiler lowering for net-typed method
+      calls, `make([]byte, N)`, `[]byte(s)`. Runtime 100%, emit ≥95%,
+      translate ≥95%.
 
 - [ ] **Stdlib package: `encoding/json`**
-      *Files:* `stdlib/encoding/json/`
+      *Files:* `runtime/src/gada-std-json.{ads,adb}`, `runtime/tests/stdlib/json_suite.{ads,adb}`, `compiler/internal/{ir/stdlib.go,emit/emit.go,translate/translate.go}`
       *Verify:* `make stdlib-test PKG=encoding.json`
       *Done when:* `Marshal`, `Unmarshal` round-trip arbitrary structs (driven by `Gada.Reflect`); coverage ≥ 95%.
+      *Sub-items:*
+      - [ ] **2a: JSON text core + scalar Marshal/Unmarshal** —
+            `Gada.Std.Json`: string escape/unescape (incl. `\uXXXX`),
+            `Encode_Value`/`Decode_Value` driven by `Gada.Reflect` type
+            descriptors (Bool/Int/Float/String kinds), `Marshal` /
+            `Unmarshal` two-value out-call shape. Compiler maps
+            `encoding/json` → `Gada.Std.Json`; `json.Marshal(x)` /
+            `json.Unmarshal(data, &v)` for scalar-typed `x`/`v` lower
+            through `Gada.Reflect.Values.Value_Of`.
+            *Verify:* `make stdlib-test PKG=encoding.json` + Go unit tests.
+      - [ ] **2b: struct Marshal/Unmarshal (compiler-specialized)** —
+            the emitter generates a per-struct `Marshal_T` /
+            `Unmarshal_T` in the program unit, reading field names from
+            the emitted `Gada.Reflect` metadata (`Register_Type` /
+            `Add_Field`) and field values from the statically-typed
+            record; `json.Marshal(p)` / `json.Unmarshal(data, &p)`
+            route to them. Nested structs, slices, maps of string keys,
+            `json:"name"` tags.
+            *Verify:* Go transpile tests + `make stdlib-test PKG=encoding.json`.
 
 - [ ] **Stdlib package: `net/http` (server side)**
       *Files:* `stdlib/net/http/`

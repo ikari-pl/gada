@@ -301,7 +301,7 @@ reason = "Parse_IPv4 Dot=0 arm unreachable behind Count=3 guard — see runtime/
 # Rationale: runtime/COVERAGE.md (gada-std-net, gada-std-bytes).
 [[exclude]]
 file = "runtime/src/gada-std-net.adb"
-lines = [92, 96, 141, 176, 230, 279, 280, 484, 1014]
+lines = [92, 96, 141, 176, 230, 279, 280, 452, 453, 484, 820, 982, 1014]
 reason = "end-of-block/subprogram terminators — see runtime/COVERAGE.md"
 
 [[exclude]]

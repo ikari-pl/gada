@@ -516,8 +516,9 @@ test). Same misattribution class as gada-std-time.adb.
 the `Count (S, ".") = 3` guard at line 66 guarantees a dot remains
 in the searched suffix for parts 1..3 (each iteration consumes exactly
 one dot and advances Pos past it), so `Index` never returns 0 there.
-92, 96, 141, 176, 230, 279, 280, 484, 1014 — declare-block and
-subprogram terminators; lcov 2.4 no-return-block misattribution class
+92, 96, 141, 176, 230, 279, 280, 452, 453, 484, 820, 982, 1014 —
+declare-block, loop, exception-handler, and subprogram terminators;
+lcov 2.4 no-return-block misattribution class
 documented above (every contained line is hit by Net_Suite's parse,
 TCP, UDP, LookupHost, and error-path tests). 455-456 — `Resolve`'s
 "resolved but no IPv4 address" fall-through (v6-only names): v1

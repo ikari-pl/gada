@@ -393,21 +393,30 @@ package body Http_Suite is
       end if;
       Listen ("tcp", "127.0.0.1:0", Raw_L, Err);
       Assert (Err = Errors.No_Error, "raw listen: " & Err_Text (Err));
-      if not Scheduler_Up then
-         Scheduler.Init (Workers => 1);
-         Scheduler_Up := True;
-      end if;
+      --  capture the address NOW: once the acceptor is blocked in
+      --  Accept_K it holds the listener's protected lock, and any
+      --  Raw_L.all.* call from this task would deadlock
       declare
-         Unused_G : Scheduler.Goroutine_Id;
+         Raw_Addr : constant String := Raw_L.all.Addr;
       begin
-         Unused_G := Scheduler.Spawn (Raw_Acceptor_Body'Access);
+         if not Scheduler_Up then
+            Scheduler.Init (Workers => 1);
+            Scheduler_Up := True;
+         end if;
+         declare
+            Unused_G : Scheduler.Goroutine_Id;
+         begin
+            Unused_G := Scheduler.Spawn (Raw_Acceptor_Body'Access);
+         end;
+         for I in 1 .. 3 loop
+            Get ("http://" & Raw_Addr & "/", Resp, Err);
+            Assert (Err /= Errors.No_Error and then Resp = null,
+                    "expected parse error for garbage response"
+                    & I'Image & ", got <nil>");
+         end loop;
       end;
-      for I in 1 .. 3 loop
-         Get ("http://" & Raw_L.all.Addr & "/", Resp, Err);
-         Assert (Err /= Errors.No_Error and then Resp = null,
-                 "expected parse error for garbage response"
-                 & I'Image & ", got <nil>");
-      end loop;
+      --  the acceptor has finished all 3 accepts, so the listener lock
+      --  is free again
       Raw_L.all.Close;
       Scheduler.Shutdown;
       Scheduler_Up := False;

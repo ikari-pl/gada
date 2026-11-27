@@ -52,3 +52,33 @@ func TestBuildIntegration_Hello(t *testing.T) {
 		t.Fatalf("output = %q, want %q", got, "hello, GADA")
 	}
 }
+
+// TestBuildIntegration_SyncMethods compiles and runs a program that
+// calls every sync method lowering (RLock/RUnlock/TryRLock, Lock/
+// Unlock/TryLock, WaitGroup, Once.Do), runtime.Gosched/GOMAXPROCS and
+// a go-free time.Tick receive. Before the PR #46 review fixes the
+// emitted Ada did not compile (wrong member names, Do without
+// 'Access) and a Tick-only main never exited; the output is Go's.
+func TestBuildIntegration_SyncMethods(t *testing.T) {
+	if _, err := exec.LookPath("gprbuild"); err != nil {
+		t.Skip("gprbuild not installed on PATH; integration test skipped")
+	}
+	pkg, err := filepath.Abs(filepath.Join("testdata", "sync_methods"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(pkg, "sync_methods")
+	t.Cleanup(func() { _ = os.Remove(binary) })
+
+	var stdout, stderr bytes.Buffer
+	if code := runBuild([]string{pkg}, &stdout, &stderr); code != 0 {
+		t.Fatalf("runBuild exit = %d\nstdout=%s\nstderr=%s", code, stdout.String(), stderr.String())
+	}
+	out, err := exec.Command(binary).Output()
+	if err != nil {
+		t.Fatalf("run produced binary: %v", err)
+	}
+	if want := "once\nprocs ok\ndone\n"; string(out) != want {
+		t.Fatalf("output = %q, want %q", out, want)
+	}
+}

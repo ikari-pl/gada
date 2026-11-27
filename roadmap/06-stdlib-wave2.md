@@ -124,3 +124,15 @@ historical record.
   wait until f returns. TryLock/TryRLock are Boolean functions; Do_K
   takes an anonymous access-to-procedure.
   *Verify:* `make stdlib-test PKG=sync` (5 single-worker regressions).
+- **sync / runtime method names** (findings #5, #6). Sync method calls
+  map members through `goNameToAdaMember` (RLock -> `R_Lock`, TryLock
+  -> `Try_Lock`, TryRLock -> `Try_R_Lock`, Do -> `Do_K (F'Access)`,
+  rejecting non-`func()` arguments); Cond methods lower to the
+  package-level `Gada.Std.Sync.Wait (C)` etc. The runtime package now
+  declares `Gosched` / `GOMAXPROCS` (what the mechanical mapping
+  produces). Known gap: `sync.NewCond(&mu)` returns `*Cond`, and the
+  translator has no pointer types yet, so Cond is only reachable from
+  IR-level tests today.
+  *Verify:* `cd compiler && go test ./internal/emit -run 'TestSync|TestRuntimeGosched'`
+  and `go test -tags=integration ./cmd/gada -run SyncMethods` (compiles
+  and runs the emitted Ada).

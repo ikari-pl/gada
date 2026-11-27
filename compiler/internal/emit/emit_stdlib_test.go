@@ -937,3 +937,84 @@ func TestPlainMainHasNoProcessExit(t *testing.T) {
 		t.Errorf("unexpected process exit in a task-free main:\n%s", out)
 	}
 }
+
+// syncCallOut emits a main whose local `v` has the sync type typ and
+// whose body is the given method calls on v (plus an optional helper
+// function `hello` for Once.Do).
+func syncCallOut(t *testing.T, typ string, calls ...ir.Stmt) (string, error) {
+	t.Helper()
+	body := append([]ir.Stmt{&ir.Assign{
+		LHS:    []ir.Expr{idn("v")},
+		Define: true,
+		RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: typ}}},
+	}}, calls...)
+	hello := &ir.Function{Name: "hello", Body: []ir.Stmt{&ir.Return{}}}
+	withArg := &ir.Function{Name: "takesArg",
+		Params: []*ir.Param{{Name: "n", Type: &ir.IntType{}}},
+		Body:   []ir.Stmt{&ir.Return{}}}
+	pkg := &ir.Package{Name: "main", Files: []*ir.File{
+		{Name: "x.go", Imports: []string{"sync"},
+			Decls: []ir.Decl{hello, withArg, funcMain(body...)}},
+	}}
+	var buf bytes.Buffer
+	err := Package(pkg, &buf)
+	return flattenSpaces(buf.String()), err
+}
+
+func vcall(sel string, args ...ir.Expr) ir.Stmt {
+	return &ir.Call{Fun: &ir.Selector{X: idn("v"), Sel: sel}, Args: args}
+}
+
+// TestSyncMethodNamesEmit pins one lowering per sync method
+// (regression: members went through adaIdent, so RLock/RUnlock/TryLock
+// emitted names the runtime does not declare, Cond's package-level
+// procedures were dot-called, and once.Do passed a bare name where an
+// access value is required).
+func TestSyncMethodNamesEmit(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		typ  string
+		call ir.Stmt
+		want string
+	}{
+		{"Mutex", vcall("Lock"), "V.Lock;"},
+		{"Mutex", vcall("Unlock"), "V.Unlock;"},
+		{"Mutex", vcall("TryLock"), "if V.Try_Lock then null; end if;"},
+		{"RWMutex", vcall("Lock"), "V.Lock;"},
+		{"RWMutex", vcall("Unlock"), "V.Unlock;"},
+		{"RWMutex", vcall("RLock"), "V.R_Lock;"},
+		{"RWMutex", vcall("RUnlock"), "V.R_Unlock;"},
+		{"RWMutex", vcall("TryLock"), "if V.Try_Lock then null; end if;"},
+		{"RWMutex", vcall("TryRLock"), "if V.Try_R_Lock then null; end if;"},
+		{"WaitGroup", vcall("Add", litInt("2")), "V.Add (2);"},
+		{"WaitGroup", vcall("Done"), "V.Done;"},
+		{"WaitGroup", vcall("Wait"), "V.Wait;"},
+		{"Once", vcall("Do", idn("hello")), "V.Do_K (Hello'Access);"},
+		{"Cond", vcall("Wait"), "Gada.Std.Sync.Wait (V);"},
+		{"Cond", vcall("Signal"), "Gada.Std.Sync.Signal (V);"},
+		{"Cond", vcall("Broadcast"), "Gada.Std.Sync.Broadcast (V);"},
+	}
+	for _, tc := range cases {
+		out, err := syncCallOut(t, tc.typ, tc.call)
+		if err != nil {
+			t.Errorf("%s: emit: %v", tc.want, err)
+			continue
+		}
+		if !strings.Contains(out, tc.want) {
+			t.Errorf("%s.%s: missing %q in:\n%s", tc.typ,
+				tc.call.(*ir.Call).Fun.(*ir.Selector).Sel, tc.want, out)
+		}
+	}
+}
+
+// TestSyncOnceDoRejectsNonFunction pins the loud failure for once.Do
+// arguments that have no access-to-procedure lowering.
+func TestSyncOnceDoRejectsNonFunction(t *testing.T) {
+	t.Parallel()
+	for _, arg := range []ir.Expr{idn("takesArg"), idn("notAFunc"), litInt("1")} {
+		if _, err := syncCallOut(t, "Once", vcall("Do", arg)); err == nil ||
+			!strings.Contains(err.Error(), "sync.Once.Do") {
+			t.Errorf("once.Do(%T) err = %v, want a sync.Once.Do error", arg, err)
+		}
+	}
+}

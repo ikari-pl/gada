@@ -3805,16 +3805,7 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 			localType := e.localTypeNames[nt2Name(e.localTypes[id.Name])]
 			if nt, ok := e.localTypes[id.Name].(*ir.NamedType); ok &&
 				syncTypeNames[nt.Name] && syncImported && !localType {
-				fun := e.emitExpr(sel.X) + "." + adaIdent(sel.Sel)
-				args := make([]string, 0, len(c.Args))
-				for _, a := range c.Args {
-					args = append(args, e.emitExpr(a))
-				}
-				if len(args) == 0 {
-					e.println(fun + ";")
-				} else {
-					e.println(fun + " (" + strings.Join(args, ", ") + ");")
-				}
+				e.emitSyncMethodCall(nt.Name, sel, c.Args)
 				return
 			}
 		}
@@ -3842,6 +3833,63 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 		return
 	}
 	e.println(fun + " (" + strings.Join(args, ", ") + ");")
+}
+
+// emitSyncMethodCall lowers a statement-position method call on a
+// Gada.Std.Sync value. The member goes through goNameToAdaMember like
+// every stdlib name (RLock -> R_Lock, TryLock -> Try_Lock, Do -> Do_K);
+// Mutex/RWMutex/WaitGroup/Once are tagged, so the call is the Ada
+// prefixed form `Mu.Lock;`. Cond is an untagged record whose methods
+// are package-level procedures: `Gada.Std.Sync.Wait (C);`.
+func (e *emitter) emitSyncMethodCall(typ string, sel *ir.Selector, argExprs []ir.Expr) {
+	recv := e.emitExpr(sel.X)
+	member := goNameToAdaMember(sel.Sel)
+	if typ == "Cond" {
+		e.println("Gada.Std.Sync." + member + " (" + recv + ");")
+		return
+	}
+	switch member {
+	case "Try_Lock", "Try_R_Lock":
+		// Boolean function; Go lets a statement discard the result.
+		e.println("if " + recv + "." + member + " then")
+		e.indent++
+		e.println("null;")
+		e.indent--
+		e.println("end if;")
+		return
+	case "Do_K":
+		// once.Do(f): Do_K takes an access-to-procedure, so f must name
+		// a function declared in this file (closures are not values yet).
+		id, ok := argExprs[0].(*ir.Ident)
+		if !ok || !e.isFileFunction(id.Name) {
+			e.fail(fmt.Errorf("emit: sync.Once.Do: argument must name a top-level function (func literals as values are not supported yet)"))
+			return
+		}
+		e.println(recv + ".Do_K (" + e.emitExpr(id) + "'Access);")
+		return
+	}
+	args := make([]string, 0, len(argExprs))
+	for _, a := range argExprs {
+		args = append(args, e.emitExpr(a))
+	}
+	if len(args) == 0 {
+		e.println(recv + "." + member + ";")
+	} else {
+		e.println(recv + "." + member + " (" + strings.Join(args, ", ") + ");")
+	}
+}
+
+// isFileFunction reports whether name is a top-level func() (no
+// receiver, parameters or results) of the file being emitted — the
+// only shape whose 'Access matches Do_K's access-to-procedure.
+func (e *emitter) isFileFunction(name string) bool {
+	for _, d := range e.file.Decls {
+		if fn, ok := d.(*ir.Function); ok && fn.Receiver == nil &&
+			fn.Name == name && len(fn.Params) == 0 && len(fn.Results) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // isFmtPrintln reports whether x is the `fmt.Println` selector. The

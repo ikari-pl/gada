@@ -28,7 +28,7 @@ reflection end-to-end, `net/http` exercises everything.
       *Verify:* `make stdlib-test PKG=encoding.json`
       *Done when:* `Marshal`, `Unmarshal` round-trip arbitrary structs (driven by `Gada.Reflect`); coverage ≥ 95%.
       *Sub-items:*
-      - [ ] **2a: JSON text core + scalar Marshal/Unmarshal** —
+      - [x] **2a: JSON text core + scalar Marshal/Unmarshal** (done 2026-11-27, CI green on c920294) —
             `Gada.Std.Json`: string escape/unescape (incl. `\uXXXX`),
             `Encode_Value`/`Decode_Value` driven by `Gada.Reflect` type
             descriptors (Bool/Int/Float/String kinds), `Marshal` /

@@ -14,8 +14,9 @@ package body Gada.Std.Http is
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
 
-   --  TEMPORARY CI-debug trace (stderr, unbuffered). Remove once the
-   --  http_suite hang is root-caused.
+   --  stderr trace (unbuffered) for server-side faults: Serve_One's
+   --  exception handler reports and closes the connection, like Go's
+   --  server, instead of leaving the client blocked on a dead conn.
    procedure Dbg (S : String) is
    begin
       Ada.Text_IO.Put_Line (Ada.Text_IO.Standard_Error, "[http] " & S);
@@ -188,11 +189,14 @@ package body Gada.Std.Http is
             --  terminated).
             while Pos < Hd loop
                declare
+                  --  Index on a slice returns an index in the SLICE's
+                  --  bounds, i.e. absolute in Head (slice 'First = Pos),
+                  --  not relative to Pos.
                   Lf    : constant Natural :=
                     Index (Head (Pos .. Hd - 1), CRLF);
                   Hline : constant String :=
                     (if Lf = 0 then Head (Pos .. Hd - 1)
-                     else Head (Pos .. Pos + Lf - 2));
+                     else Head (Pos .. Lf - 1));
                   Colon : constant Natural := Index (Hline, ":");
                begin
                   if Lf = 0 then
@@ -218,7 +222,7 @@ package body Gada.Std.Http is
                         end if;
                      end;
                   end if;
-                  Pos := Pos + Lf + 1;
+                  Pos := Lf + 2;
                end;
             end loop;
             --  Body_K: the bytes already read past the header block,
@@ -292,18 +296,13 @@ package body Gada.Std.Http is
       W   : Response_Writer;
       H   : Handler_Func;
    begin
-      Dbg ("Serve_One: enter");
       Read_Request (C, Req, Err);
-      Dbg ("Serve_One: read_request err="
-             & (if Err = No_Error then "<nil>" else Err.all.Message));
       if Err /= No_Error then
          Write_Response (C, 400, To_Bytes ("bad request"),
                          Err);
          C.all.Close;
          return;
       end if;
-      Dbg ("Serve_One: dispatch " & To_String (Req.all.Method) & " "
-             & To_String (Req.all.Path));
       H := The_Mux.Lookup (To_String (Req.all.Path));
       if H = null then
          Write_Response (C, 404, To_Bytes ("404 page not found"), Err);
@@ -312,7 +311,6 @@ package body Gada.Std.Http is
          H (W, Req);
          Write_Response (C, W.all.Status, W.all.Get_Body, Err);
       end if;
-      Dbg ("Serve_One: response written, closing");
       C.all.Close;
    exception
       when X : others =>
@@ -382,20 +380,15 @@ package body Gada.Std.Http is
    begin
       Gada.Std.Net.Listen ("tcp", Addr, L, Err);
       if Err /= No_Error then
-         Dbg ("Listen_And_Serve: listen failed: " & Err.all.Message);
          return Err;
       end if;
-      Dbg ("Listen_And_Serve: listening on " & L.all.Addr);
       The_Listener.Set (L.all.Addr);
       loop
          if The_Listener.Stopping then
             L.all.Close;
-            Dbg ("Listen_And_Serve: stopping, listener closed");
             return No_Error;
          end if;
          L.all.Accept_K (C, Err);
-         Dbg ("Listen_And_Serve: accept err="
-                & (if Err = No_Error then "<nil>" else Err.all.Message));
          if Err /= No_Error then
             L.all.Close;
             return Err;
@@ -403,7 +396,6 @@ package body Gada.Std.Http is
          if The_Listener.Stopping then
             C.all.Close;
             L.all.Close;
-            Dbg ("Listen_And_Serve: stopping after accept, closed");
             return No_Error;
          end if;
          Serve_One (C);
@@ -476,8 +468,6 @@ package body Gada.Std.Http is
          return;
       end if;
       Gada.Std.Net.Dial ("tcp", To_String (Host), C, Err);
-      Dbg ("Do_Request: dial " & To_String (Host) & " err="
-             & (if Err = No_Error then "<nil>" else Err.all.Message));
       if Err /= No_Error then
          return;
       end if;
@@ -505,17 +495,13 @@ package body Gada.Std.Http is
          end if;
       end;
       --  read the whole response until EOF
-      Dbg ("Do_Request: wrote request, reading response");
       loop
          C.all.Read (Buf, N, E);
-         Dbg ("Do_Request: read n=" & N'Image & " err="
-                & (if E = No_Error then "<nil>" else E.all.Message));
          exit when E /= No_Error or else N = 0;
          for I in 1 .. N loop
             Append (Acc, Byte_Vectors.Element (Buf, I));
          end loop;
       end loop;
-      Dbg ("Do_Request: EOF, " & Length (Acc)'Image & " bytes");
       C.all.Close;
       --  split head / body at the blank line
       declare

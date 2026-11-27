@@ -212,8 +212,20 @@ example:
 	@echo "=== running examples/$(HELLO)/$(HELLO) ==="
 	@out=$$(mktemp -t gada-example.XXXXXX) ; \
 	    trap 'rm -f $$out' EXIT ; \
-	    timeout 120 $(ROOT)/examples/$(HELLO)/$(HELLO) > $$out ; \
+	    if command -v timeout >/dev/null 2>&1; then \
+	        tmo="timeout 120" ; \
+	    elif command -v gtimeout >/dev/null 2>&1; then \
+	        tmo="gtimeout 120" ; \
+	    else \
+	        echo "make example: neither timeout nor gtimeout on PATH; running without a time limit" >&2 ; \
+	        tmo="" ; \
+	    fi ; \
+	    $$tmo $(ROOT)/examples/$(HELLO)/$(HELLO) > $$out ; \
 	    rc=$$? ; \
+	    if [ -n "$$tmo" ] && [ $$rc -eq 124 ]; then \
+	        echo "make example: $(HELLO) timed out after 120s" >&2 ; \
+	        exit $$rc ; \
+	    fi ; \
 	    if [ $$rc -ne 0 ]; then \
 	        echo "make example: binary exited $$rc" >&2 ; \
 	        exit $$rc ; \

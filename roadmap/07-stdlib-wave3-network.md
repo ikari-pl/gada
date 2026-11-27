@@ -2,7 +2,7 @@
 
 [← Phase 6](06-stdlib-wave2.md) · [Index](README.md) · Next: [Phase 8 →](08-stdlib-wave4-crypto.md)
 
-**Status:** `IN_PROGRESS` (opened 2026-11-26)
+**Status:** `DONE` (opened 2026-11-26, closed 2026-11-27, CI green on f9ceb5e, run 45991722582)
 **Prerequisites:** [Phase 6](06-stdlib-wave2.md) `DONE`, [Phase 4](04-interfaces-reflection.md) `DONE`
 **Goal:** Port `net`, `net/http`, `encoding/json`. This is where GADA
 proves it can run real-world Go libraries: `encoding/json` exercises
@@ -47,22 +47,46 @@ reflection end-to-end, `net/http` exercises everything.
             `json:"name"` tags.
             *Verify:* Go transpile tests + `make stdlib-test PKG=encoding.json`.
 
-- [ ] **Stdlib package: `net/http` (server side)**
-      *Files:* `stdlib/net/http/`
+- [x] **Stdlib package: `net/http` (server side)** (done 2026-11-27, CI green on f9ceb5e)
+      *Files:* `runtime/src/gada-std-http.{ads,adb}`, `runtime/tests/stdlib/http_suite.{ads,adb}` (suite `stdlib.net.http`)
       *Verify:* `make stdlib-test PKG=net.http`
-      *Done when:* `ListenAndServe`, `Handler`, `Request`, `ResponseWriter` correct for a non-trivial subset; coverage ≥ 85%.
+      *Done when:* met — `Listen_And_Serve` with a stoppable accept loop
+      (Stop self-connects to wake a blocked Accept_K, which holds the
+      listener lock), `Read_Request` (request line, headers incl.
+      Content-Length, body), buffered `Response_Writer`, mux with "/"
+      catch-all, 400/404 paths, and a Serve_One exception handler that
+      closes the conn so a panicking handler can never wedge a client.
+      runtime/ 100% gate green (exclusions with rationale in
+      runtime/COVERAGE.md). CI surfaced and fixed a header-loop Index
+      base bug (slice-relative vs absolute — CONSTRAINT_ERROR on any
+      multi-header request) and the last-header-line parse arm.
 
-- [ ] **Stdlib package: `net/http` (client side)**
-      *Files:* `stdlib/net/http/` (extension)
-      *Verify:* `make stdlib-test PKG=net.http.client`
-      *Done when:* `http.Get`, `http.Post`, `http.Client` correct against a local test server.
+- [x] **Stdlib package: `net/http` (client side)** (done 2026-11-27, CI green on f9ceb5e)
+      *Files:* `runtime/src/gada-std-http.{ads,adb}` (extension)
+      *Verify:* `make stdlib-test PKG=net.http` (Test_Client_404 /
+      Test_Client_Errors / Test_Client_Echo)
+      *Done when:* met — `Get` / `Post` / `Client.Get` / `Client.Post`
+      over `Do_Request` (dial, request write, read-until-EOF, status
+      parse), `Response` record; error paths (bad scheme, empty host,
+      refused dial, malformed responses) all covered. Compiler:
+      `io.ReadAll(r.Body)`/`(resp.Body)` lower to a direct `Body_K`
+      assign + `No_Error` (emitIOReadAllBody, both the `:=` and `=`
+      out-call paths), and `http.Post(url, ct, bytes.NewReader(b))`
+      unwraps to the Byte_Slice (translate).
 
-- [ ] **`http_echo` example**
-      *Files:* `examples/http_echo/main.go`, `examples/http_echo/integration_test.sh`
+- [x] **`http_echo` example** (done 2026-11-27, CI green on f9ceb5e)
+      *Files:* `examples/http_echo/main.go`, `examples/http_echo/serve/main.go`, `examples/http_echo/integration_test.sh`
       *Verify:* `make example HELLO=http_echo` and `./examples/http_echo/integration_test.sh`
-      *Done when:* the server starts, curl roundtrips a JSON payload, output matches expected.
+      *Done when:* met — exit criterion satisfied in CI: the serve
+      variant listens on 127.0.0.1:8080, curl POSTs a JSON payload and
+      gets `{"N":42,"On":true,"R":0.5}` with status 200; the combo
+      example runs client+server in-process. Also fixed en route:
+      `Gada.Std.Time.Sleep` added (the port lacked it), JSON marshalers
+      now emitted before handler bodies in the Main_Types layout.
 
-- [ ] **`json_roundtrip` example** (deferred from Phase 4)
+- [x] **`json_roundtrip` example** (done 2026-11-27, CI green on f9ceb5e)
       *Files:* `examples/json_roundtrip/main.go`, `examples/json_roundtrip/expected_output.txt`
       *Verify:* `make example HELLO=json_roundtrip`
-      *Done when:* a struct with multiple field types round-trips through `json.Marshal` → `json.Unmarshal` and equals the original by deep comparison.
+      *Done when:* met — `make example HELLO=json_roundtrip` OK in CI;
+      multi-field struct round-trips through `json.Marshal` →
+      `json.Unmarshal` and matches the expected output.

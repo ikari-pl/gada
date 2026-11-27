@@ -2,7 +2,7 @@
 
 [← Phase 7](07-stdlib-wave3-network.md) · [Index](README.md) · Next: [Phase 9 →](09-verification-spark.md)
 
-**Status:** `NOT_STARTED`
+**Status:** `IN_PROGRESS` (opened 2026-11-27)
 **Prerequisites:** [Phase 5](05-stdlib-wave1.md) `DONE`
 **Goal:** Port `crypto/*`, `hash/*`, the rest of `encoding/*`. These
 are pure-Go packages; the work is mostly about correctness against

@@ -1517,3 +1517,45 @@ func fileKeys(m map[string]string) []string {
 	}
 	return out
 }
+
+// TestHTTPServerStopBeforeShutdown pins the Phase 7 teardown order:
+// a package main that spawns goroutines and calls
+// http.ListenAndServe must emit Gada.Std.Http.Stop_Server before
+// Gada.Async.Scheduler.Shutdown, because Shutdown's Drain waits for
+// every worker and the accept loop blocks in Accept forever otherwise.
+func TestHTTPServerStopBeforeShutdown(t *testing.T) {
+	t.Parallel()
+	// package must be named "main" for the scheduler wrap to emit
+	pkg := &ir.Package{Name: "main", Files: []*ir.File{
+		{Name: "x.go", Imports: []string{"net/http"}, Decls: []ir.Decl{
+			&ir.Function{Name: "f"},
+			funcMain(
+				&ir.Assign{
+					LHS:    []ir.Expr{idn("err")},
+					Define: true,
+					RHS: []ir.Expr{&ir.Call{
+						Fun:  &ir.Selector{X: idn("http"), Sel: "ListenAndServe"},
+						Args: []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"127.0.0.1:0"`}},
+						ResultTypes: []ir.Type{
+							&ir.ErrorType{},
+						},
+					}},
+				},
+				&ir.GoStmt{Call: &ir.Call{Fun: idn("f")}},
+			),
+		}},
+	}}
+	files, err := PackageFiles(pkg)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := flattenSpaces(files["main.adb"])
+	stop := strings.Index(out, "Gada.Std.Http.Stop_Server;")
+	shut := strings.Index(out, "Gada.Async.Scheduler.Shutdown;")
+	if stop < 0 {
+		t.Fatalf("missing Stop_Server in:\n%s", out)
+	}
+	if shut < 0 || stop > shut {
+		t.Fatalf("Stop_Server must precede Scheduler.Shutdown in:\n%s", out)
+	}
+}

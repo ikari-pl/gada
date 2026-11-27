@@ -100,17 +100,32 @@ package body Http_Suite is
                                                  Ada.Strings.Left));
    end Server_Body;
 
+   Scheduler_Up : Boolean := False;
+
    procedure Start_Server is
       Unused_G : Scheduler.Goroutine_Id;
    begin
       The_Port := Free_Port;
       pragma Assert (The_Port > 0);
-      Scheduler.Shutdown;
-      Scheduler.Init (Workers => 1);
+      if not Scheduler_Up then
+         Scheduler.Init (Workers => 1);
+         Scheduler_Up := True;
+      end if;
       Unused_G := Scheduler.Spawn (Server_Body'Access);
       --  the accept loop binds asynchronously; Do_Request retries the
       --  dial until it succeeds
    end Start_Server;
+
+   --  Stop the http accept loop first (Stop_Server closes the listener,
+   --  waking the blocked Accept), then drain the scheduler — Shutdown's
+   --  Drain waits for every worker to exit, so the server goroutine
+   --  must be finished before it runs.
+   procedure Stop_Server is
+   begin
+      Gada.Std.Http.Stop_Server;
+      Scheduler.Shutdown;
+      Scheduler_Up := False;
+   end Stop_Server;
 
    --  Do_Request sends raw request text and reads until the server
    --  closes the connection (Connection: close), returning the whole
@@ -200,7 +215,7 @@ package body Http_Suite is
          Assert (Ada.Strings.Fixed.Index (R, "HTTP/1.1 404") = 1,
                  "expected 404 status line, got: " & R);
       end;
-      Scheduler.Shutdown;
+      Stop_Server;
    end Test_Not_Found;
 
    --  Listen_And_Serve on an already-bound address must return the
@@ -273,7 +288,7 @@ package body Http_Suite is
             & CRLF & "abc"), N, Err);
          C.all.Close;
       end;
-      Scheduler.Shutdown;
+      Stop_Server;
    end Test_Bad_Requests;
 
    --  Client against the real server with an empty mux: a 404 status
@@ -298,7 +313,7 @@ package body Http_Suite is
       Assert (Err = Errors.No_Error, "GET no-path: " & Err_Text (Err));
       Assert (Resp /= null and then Resp.StatusCode = 404,
               "GET no-path expected 404");
-      Scheduler.Shutdown;
+      Stop_Server;
    end Test_Client_404;
 
    --  Client error paths: bad scheme, empty host, refused dial, and
@@ -326,8 +341,10 @@ package body Http_Suite is
       end;
       Listen ("tcp", "127.0.0.1:0", Raw_L, Err);
       Assert (Err = Errors.No_Error, "raw listen: " & Err_Text (Err));
-      Scheduler.Shutdown;
-      Scheduler.Init (Workers => 1);
+      if not Scheduler_Up then
+         Scheduler.Init (Workers => 1);
+         Scheduler_Up := True;
+      end if;
       declare
          Unused_G : Scheduler.Goroutine_Id;
       begin
@@ -341,6 +358,7 @@ package body Http_Suite is
       end loop;
       Raw_L.all.Close;
       Scheduler.Shutdown;
+      Scheduler_Up := False;
    end Test_Client_Errors;
 
    procedure Test_Echo_And_Catchall
@@ -372,7 +390,7 @@ package body Http_Suite is
          Assert (Ada.Strings.Fixed.Index (R, "root") > 0,
                  "catch-all expected root body, got: " & R);
       end;
-      Scheduler.Shutdown;
+      Stop_Server;
    end Test_Echo_And_Catchall;
 
    --  Client happy path against the echo server: package-level Post
@@ -398,7 +416,7 @@ package body Http_Suite is
               "client GET expected 200");
       Assert (To_String (Resp.Body_K) = "echo:",
               "client GET body mismatch: '" & To_String (Resp.Body_K) & "'");
-      Scheduler.Shutdown;
+      Stop_Server;
    end Test_Client_Echo;
 
 end Http_Suite;

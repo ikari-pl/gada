@@ -300,6 +300,36 @@ package body Gada.Std.Http is
       C.all.Close;
    end Serve_One;
 
+   --  The listener the accept loop is bound to, so Stop_Server can
+   --  close it from another task and wake the blocked Accept.
+   protected type Listener_Cell is
+      procedure Set (NL : Gada.Std.Net.Listener);
+      procedure Stop;
+   private
+      Cur : Gada.Std.Net.Listener;
+   end Listener_Cell;
+
+   protected body Listener_Cell is
+      procedure Set (NL : Gada.Std.Net.Listener) is
+      begin
+         Cur := NL;
+      end Set;
+
+      procedure Stop is
+      begin
+         if Cur /= null then
+            Cur.all.Close;
+         end if;
+      end Stop;
+   end Listener_Cell;
+
+   The_Listener : Listener_Cell;
+
+   procedure Stop_Server is
+   begin
+      The_Listener.Stop;
+   end Stop_Server;
+
    function Listen_And_Serve (Addr : String) return Error_Access is
       L   : Gada.Std.Net.Listener;
       Err : Error_Access;
@@ -309,6 +339,7 @@ package body Gada.Std.Http is
       if Err /= No_Error then
          return Err;
       end if;
+      The_Listener.Set (L);
       loop
          L.all.Accept_K (C, Err);
          if Err /= No_Error then

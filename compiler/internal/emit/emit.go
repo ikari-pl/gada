@@ -183,6 +183,7 @@ type emitter struct {
 	dispatchMethodNames  map[string]bool     // file-wide set of interface method names — the only methods with an emitted subprogram (5b-i abstract op + 5c overriding body) and hence the only callable ones. A method-call selector whose name is absent would emit a dangling `X.M`, so emitCallStmt rejects it. Populated alongside interfaceNames.
 	emptyInterfaceNames  map[string]bool     // file-wide set of method-less interface names (Go's `any`, or a named `interface{}`). No concrete type derives an empty interface (5b), so a type assertion `x.(T)` whose operand is one has no legal Ada view conversion; emitTypeAssert rejects it. Populated alongside interfaceNames.
 	needsHandlerAccess   bool                // a http.HandleFunc(p, fn) call takes fn'Address as a library-level access value, so package main must use the three-unit Main_Types layout (siblings at library level), not nest them in procedure Main
+	needsHTTPServerStop  bool                // a http.ListenAndServe call is live at exit; emit Gada.Std.Http.Stop_Server before Scheduler.Shutdown so the blocked accept loop can finish and Drain cannot hang
 	stdlibImports        map[string]string   // Go local import name → Ada package (e.g. "strings" → "Gada.Std.Strings"), from StdlibPackages. Drives the `with Gada.Std.*;` clauses and the qualified-call lowering of `strings.ToUpper(x)` → `Gada.Std.Strings.To_Upper (X)`.
 	needsUnbounded       bool                // a []string ([]string → String_Vectors of Unbounded_String) is used → `with Ada.Strings.Unbounded;`
 	needsStdErrors       bool                // an error-typed value (e.g. os.ReadFile's err) is used → `with Gada.Std.Errors;`
@@ -558,7 +559,16 @@ func (e *emitter) recordSliceElem(elem ir.Type) {
 // level) rather than nesting them in procedure Main.
 func (e *emitter) detectHandlerAccess(c *ir.Call) {
 	sel, ok := c.Fun.(*ir.Selector)
-	if !ok || sel.Sel != "HandleFunc" || len(c.Args) != 2 {
+	if !ok {
+		return
+	}
+	if id, ok := sel.X.(*ir.Ident); ok {
+		if pkg, ok := e.stdlibImports[id.Name]; ok && pkg == "Gada.Std.Http" &&
+			sel.Sel == "ListenAndServe" {
+			e.needsHTTPServerStop = true
+		}
+	}
+	if sel.Sel != "HandleFunc" || len(c.Args) != 2 {
 		return
 	}
 	id, ok := sel.X.(*ir.Ident)
@@ -1782,6 +1792,14 @@ func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
 		// would otherwise hang process exit (Go exits immediately).
 		if _, ok := e.stdlibImports["time"]; ok {
 			e.println("Gada.Std.Time.Stop_All;")
+		}
+		// Same finalization-hang class as the timers: a live
+		// Listen_And_Serve blocks its worker in Accept forever, and
+		// Scheduler.Shutdown's Drain waits for every worker — stop the
+		// server first so the accept loop can return (Go exits without
+		// waiting; the Ada port must tear down explicitly).
+		if e.needsHTTPServerStop {
+			e.println("Gada.Std.Http.Stop_Server;")
 		}
 		e.println("Gada.Async.Scheduler.Shutdown;")
 	}

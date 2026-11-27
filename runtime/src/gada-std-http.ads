@@ -73,6 +73,11 @@ package Gada.Std.Http is
    function Listen_And_Serve (Addr : String)
                               return Gada.Std.Errors.Error_Access;
 
+   --  Stop_Server closes the listener Listen_And_Serve is bound to,
+   --  which wakes the blocked Accept and lets the accept loop return
+   --  (test/teardown hook; Go would keep serving until process exit).
+   procedure Stop_Server;
+
    ---------------------------------------------------------------
    --  Response + Client (client side, item 4)
    ---------------------------------------------------------------

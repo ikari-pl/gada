@@ -21,7 +21,7 @@ package body Gada.Std.Hash.Adler32 is
               (if Remaining > NMAX then NMAX else Remaining);
          begin
             for K in 0 .. N - 1 loop
-               S1 := S1 + Unsigned_32 (Byte_Vectors.Element (Data, Pos + K));
+               S1 := S1 + Unsigned_32 (Character'Pos (Byte_Vectors.Element (Data, Pos + K)));
                S2 := S2 + S1;
             end loop;
             S1 := S1 mod Modulus;

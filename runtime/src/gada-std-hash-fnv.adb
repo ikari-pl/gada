@@ -21,7 +21,7 @@ package body Gada.Std.Hash.Fnv is
       for I in 1 .. Natural (Byte_Vectors.Length (Data)) loop
          declare
             B : constant Unsigned_32 :=
-              Unsigned_32 (Byte_Vectors.Element (Data, I));
+              Unsigned_32 (Character'Pos (Byte_Vectors.Element (Data, I)));
          begin
             if H.A then
                H.State := (H.State xor B) * Prime32;
@@ -37,7 +37,7 @@ package body Gada.Std.Hash.Fnv is
       for I in 1 .. Natural (Byte_Vectors.Length (Data)) loop
          declare
             B : constant Unsigned_64 :=
-              Unsigned_64 (Byte_Vectors.Element (Data, I));
+              Unsigned_64 (Character'Pos (Byte_Vectors.Element (Data, I)));
          begin
             if H.A then
                H.State := (H.State xor B) * Prime64;

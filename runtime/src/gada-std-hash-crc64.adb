@@ -33,7 +33,7 @@ package body Gada.Std.Hash.Crc64 is
       for I in 1 .. Natural (Byte_Vectors.Length (Data)) loop
          declare
             B : constant Unsigned_64 :=
-              Unsigned_64 (Byte_Vectors.Element (Data, I));
+              Unsigned_64 (Character'Pos (Byte_Vectors.Element (Data, I)));
          begin
             C := Tab (Natural ((C xor B) and 16#FF#)) xor Shift_Right (C, 8);
          end;

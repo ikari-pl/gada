@@ -91,7 +91,7 @@ package body Json_Suite is
       end Check_Bad;
    begin
       Check ("plain", "plain");
-      Check ("say \"hi\"", "say ""hi""");
+      Check ("say \""hi\""", "say ""hi""");
       Check ("back\\slash", "back\slash");
       Check ("nl\ncr\rbt\btbf\ff", "nl" & Character'Val (10)
               & "cr" & Character'Val (13) & "bt" & Character'Val (9)

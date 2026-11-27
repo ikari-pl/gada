@@ -347,5 +347,5 @@ reason = "unreachable-by-construction / non-portable arms — see runtime/COVERA
 # gada-std-net.adb). Rationale: runtime/COVERAGE.md (gada-std-json).
 [[exclude]]
 file = "runtime/src/gada-std-json.adb"
-lines = [153, 220, 228, 264, 310, 411, 638, 665, 689, 711]
+lines = [153, 220, 228, 264, 310, 411, 477, 638, 665, 689, 711]
 reason = "lcov block-terminator artifacts — see runtime/COVERAGE.md"

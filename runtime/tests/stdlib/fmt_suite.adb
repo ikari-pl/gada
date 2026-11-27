@@ -128,6 +128,25 @@ package body Fmt_Suite is
       Assert (Errors.Message (Err.all) = "100%w", "%%w is literal");
       Assert (Errors.Unwrap (Err.all) = Errors.No_Error,
               "%%w does not wrap");
+      --  Regression (PR #45 review #2): %w after other verbs wraps the
+      --  argument it consumes (Go: errors.Is is true for each).
+      Err := Errorf ("open %s: %w", (A ("f"), A (E)));
+      Assert (Errors.Message (Err.all) = "open f: root cause",
+              "%s then %w message");
+      Assert (Errors.Is_K (Err, E), "%s then %w wraps");
+      Err := Errorf ("%d %s %w", (A (1), A ("x"), A (E)));
+      Assert (Errors.Is_K (Err, E), "%w as third verb wraps");
+      Err := Errorf ("100%% %s: %w", (A ("x"), A (E)));
+      Assert (Errors.Message (Err.all) = "100% x: root cause"
+                and then Errors.Is_K (Err, E),
+              "%% before %w consumes no argument");
+      --  %w with no argument left, or a non-error argument: no wrap.
+      Err := Errorf ("%s %w", (1 => A ("x")));
+      Assert (Errors.Unwrap (Err.all) = Errors.No_Error,
+              "%w without an argument does not wrap");
+      Err := Errorf ("%w", (1 => A ("x")));
+      Assert (Errors.Unwrap (Err.all) = Errors.No_Error,
+              "%w of a non-error does not wrap");
    end Test_Errorf;
 
    procedure Test_Sscanf (T : in out AUnit.Test_Cases.Test_Case'Class) is

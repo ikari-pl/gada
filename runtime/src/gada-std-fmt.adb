@@ -346,54 +346,57 @@ package body Gada.Std.Fmt is
       Gada.Core.IO.Print (Sprintf (Format, Args));
    end Printf;
 
-   --  Scans Format for a real %w verb; %% is a literal percent and
-   --  must not trigger wrapping (Go: Errorf("%%w", e) does not wrap).
-   --  W_Pos is the verb's position when found.
-   function Has_W_Verb (Format : String; W_Pos : out Integer)
-      return Boolean is
+   --  Scans Format for the first real %w verb. W_Pos is the verb's
+   --  position; W_Arg is the 0-based ordinal of the argument it
+   --  consumes: every verb before it except a literal percent takes one
+   --  argument, exactly as Sprintf walks them. A literal percent (%%)
+   --  never triggers wrapping (Go: Errorf("%%w", e) does not wrap).
+   function Find_W_Verb (Format : String; W_Pos : out Integer;
+                         W_Arg : out Natural) return Boolean is
       I : Integer := Format'First;
    begin
       W_Pos := 0;
+      W_Arg := 0;
       while I <= Format'Last loop
          if Format (I) = '%' and then I < Format'Last then
-            if Format (I + 1) = '%' then
-               I := I + 2;
-            else
-               declare
-                  Sp : Spec;
-               begin
-                  Parse_Spec (Format, I, Sp);
-                  if Sp.Verb = 'w' then
-                     W_Pos := I - 1;
-                     return True;
-                  end if;
-               end;
-            end if;
+            declare
+               Sp : Spec;
+            begin
+               Parse_Spec (Format, I, Sp);
+               if Sp.Verb = 'w' then
+                  W_Pos := I - 1;
+                  return True;
+               elsif Sp.Verb /= '%' then
+                  W_Arg := W_Arg + 1;
+               end if;
+            end;
          else
             I := I + 1;
          end if;
       end loop;
       return False;
-   end Has_W_Verb;
+   end Find_W_Verb;
 
    function Errorf (Format : String; Args : Arg_Array)
       return Errors.Error_Access is
       W_Pos : Integer;
-      Has_W : constant Boolean := Has_W_Verb (Format, W_Pos);
+      W_Arg : Natural;
+      Has_W : constant Boolean := Find_W_Verb (Format, W_Pos, W_Arg);
       F2    : String (Format'Range) := Format;
    begin
-      --  %w wraps the error argument as the cause (Go 1.13); in the
-      --  message itself it formats like %v.
+      --  %w wraps the error argument it consumes as the cause (Go 1.13),
+      --  wherever it sits in the format; in the message itself it
+      --  formats like %v.
       if Has_W then
          F2 (W_Pos) := 'v';
       end if;
       declare
          Msg : constant String := Sprintf (F2, Args);
       begin
-         if Has_W and then Args'Length = 1
-           and then Args (Args'First).K = Err_Arg
+         if Has_W and then W_Arg < Args'Length
+           and then Args (Args'First + W_Arg).K = Err_Arg
          then
-            return Errors.With_Cause (Msg, Args (Args'First).E);
+            return Errors.With_Cause (Msg, Args (Args'First + W_Arg).E);
          end if;
          return Errors.New_K (Msg);
       end;

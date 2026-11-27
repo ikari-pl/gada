@@ -329,3 +329,23 @@ reason = "Resolve no-v4 arm + To_IP Inet6 arm + Addr_Image guard: v1 is IPv4-onl
 file = "runtime/src/gada-std-net.adb"
 lines = [704, 814, 976]
 reason = "Close_Socket failure arm in Socket_Error handlers — see runtime/COVERAGE.md"
+
+# Phase 7 wave 3 (json, item 2a). Unreachable-by-construction arms:
+# Unescape's `Code > 16#FFFF#` reject (145-146) — four hex digits cap
+# Code at 0xFFFF; Parse_Scalar's Constraint_Error arms on
+# Long_Float'Value (413-414, 425-426) — a syntactically valid JSON
+# number always parses as a float64; Marshal's NaN arm (485-487) —
+# no portable way to produce a non-finite Long_Float literal.
+# Rationale: runtime/COVERAGE.md (gada-std-json).
+[[exclude]]
+file = "runtime/src/gada-std-json.adb"
+lines = [145, 146, 413, 414, 425, 426, 485, 486, 487]
+reason = "unreachable-by-construction / non-portable arms — see runtime/COVERAGE.md"
+
+# lcov 2.4 no-return-block misattribution on declare/end-case/
+# subprogram-header lines in gada-std-json.adb (same class as
+# gada-std-net.adb). Rationale: runtime/COVERAGE.md (gada-std-json).
+[[exclude]]
+file = "runtime/src/gada-std-json.adb"
+lines = [153, 220, 228, 264, 329, 431, 435, 521, 548, 572, 591, 594, 613]
+reason = "lcov block-terminator artifacts — see runtime/COVERAGE.md"

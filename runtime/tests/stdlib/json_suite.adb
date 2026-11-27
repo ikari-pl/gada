@@ -99,6 +99,10 @@ package body Json_Suite is
       Check ("\u0041", "A");       --  A
       Check ("Euro" & "\u20ac" & "x", "Euro" & Character'Val (16#E2#)
               & Character'Val (16#82#) & Character'Val (16#AC#) & "x");
+      Check ("\u00e9", Character'Val (16#C3#) & Character'Val (16#A9#));
+      Check ("\u07ff", Character'Val (16#DF#) & Character'Val (16#BF#));
+      Check ("a\/b", "a/b");
+      Check ("a\bb", "a" & Character'Val (8) & "b");
       Check ("ctl\u0001", "ctl" & Character'Val (1));
       Check_Bad ("bad\xescape");
       Check_Bad ("trunc\u12");
@@ -135,6 +139,8 @@ package body Json_Suite is
               = "1.5", "float encode");
       Assert (To_String (Encode_Value (Values.Value_Of (Bool_Id, True)))
               = "true", "bool encode");
+      Assert (To_String (Encode_Value (Values.Value_Of (Bool_Id, False)))
+              = "false", "bool encode false");
       Assert (To_String (Encode_Value
                 (Values.Value_Of (String_Id, "a""b")))
               = """a\""b""", "string encode");
@@ -195,6 +201,18 @@ package body Json_Suite is
               "unmarshal int into float: " & Err_Text (Err));
       Unmarshal (To_Bytes ("true"), B, Err);
       Assert (Err = Errors.No_Error and then B, "unmarshal true");
+      Unmarshal (To_Bytes ("false"), B, Err);
+      Assert (Err = Errors.No_Error and then not B, "unmarshal false");
+      Unmarshal (To_Bytes ("1.5e3"), F, Err);
+      Assert (Err = Errors.No_Error and then F = 1500.0,
+              "unmarshal 1.5e3: " & Err_Text (Err));
+      Unmarshal (To_Bytes ("1E+2"), F, Err);
+      Assert (Err = Errors.No_Error and then F = 100.0,
+              "unmarshal 1E+2: " & Err_Text (Err));
+      --  20 digits overflow int64: Go widens the token to float64.
+      Unmarshal (To_Bytes ("99999999999999999999"), F, Err);
+      Assert (Err = Errors.No_Error and then F = 1.0e20,
+              "unmarshal big int into float: " & Err_Text (Err));
       Unmarshal (To_Bytes ("""a\u0041b\n"""), S, Err);
       Assert (Err = Errors.No_Error
               and then To_String (S) = "aAb" & Character'Val (10),
@@ -203,6 +221,16 @@ package body Json_Suite is
       I := 5;
       Unmarshal (To_Bytes ("null"), I, Err);
       Assert (Err = Errors.No_Error and then I = 5, "null is a no-op");
+      F := 2.5;
+      Unmarshal (To_Bytes ("null"), F, Err);
+      Assert (Err = Errors.No_Error and then F = 2.5, "null float no-op");
+      B := True;
+      Unmarshal (To_Bytes ("null"), B, Err);
+      Assert (Err = Errors.No_Error and then B, "null bool no-op");
+      S := To_Unbounded_String ("keep");
+      Unmarshal (To_Bytes ("null"), S, Err);
+      Assert (Err = Errors.No_Error and then To_String (S) = "keep",
+              "null string no-op");
    end Test_Unmarshal_Scalars;
 
    procedure Test_Unmarshal_Errors
@@ -232,6 +260,23 @@ package body Json_Suite is
       Assert (Err /= Errors.No_Error, "int into bool must error");
       Unmarshal (To_Bytes ("7"), S, Err);
       Assert (Err /= Errors.No_Error, "int into string must error");
+      Unmarshal (To_Bytes ("1e"), I, Err);
+      Assert (Err /= Errors.No_Error, "truncated exponent must error");
+      Unmarshal (To_Bytes ("1e+"), I, Err);
+      Assert (Err /= Errors.No_Error, "sign without digits must error");
+      --  Fits int64 but not 32-bit Integer: range error on the target.
+      Unmarshal (To_Bytes ("99999999999999999999"), I, Err);
+      Assert (Err /= Errors.No_Error, "int range overflow must error");
+      Unmarshal (To_Bytes (""), F, Err);
+      Assert (Err /= Errors.No_Error, "empty into float must error");
+      Unmarshal (To_Bytes ("""s"""), F, Err);
+      Assert (Err /= Errors.No_Error, "string into float must error");
+      Unmarshal (To_Bytes ("""abc"), S, Err);
+      Assert (Err /= Errors.No_Error, "unterminated string must error");
+      Unmarshal (To_Bytes (""""a\xb""""), S, Err);
+      Assert (Err /= Errors.No_Error, "bad escape in string must error");
+      Unmarshal (To_Bytes ("["), S, Err);
+      Assert (Err /= Errors.No_Error, "array token into string must error");
    end Test_Unmarshal_Errors;
 
    procedure Test_Float_Image (T : in out AUnit.Test_Cases.Test_Case'Class)
@@ -256,6 +301,7 @@ package body Json_Suite is
       --  Go's encoder switches to 'e' format only outside [1e-6, 1e21).
       Check (1.0e20, "100000000000000000000");
       Check (1.0e21, "1e+21");
+      Check (-1.0e21, "-1e+21");
       Check (1.5e-7, "1.5e-7");
    end Test_Float_Image;
 

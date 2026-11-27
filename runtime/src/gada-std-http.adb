@@ -1,8 +1,6 @@
 --  Gada.Std.Http body — see the spec for the v1 scope.
 
 with Ada.Containers.Vectors;
-with Ada.Text_IO;
-with Ada.Exceptions;
 with Ada.Strings;
 with Ada.Strings.Fixed;
 
@@ -131,8 +129,6 @@ package body Gada.Std.Http is
       Err := No_Error;
       loop
          C.all.Read (Buf, N, E);
-         Ada.Text_IO.Put_Line ("[dbg] server read N=" & N'Image & " err=" &
-           (if E = No_Error then "<nil>" else E.all.Message));
          if E /= No_Error then
             Err := E;
             return;
@@ -145,8 +141,6 @@ package body Gada.Std.Http is
             Append (Acc, Byte_Vectors.Element (Buf, I));
          end loop;
          Hd := Index (Acc, CRLF & CRLF);
-         Ada.Text_IO.Put_Line ("[dbg] server acc len=" & Length (Acc)'Image
-           & " hd=" & Hd'Image);
          exit when Hd > 0;
          if Length (Acc) > 1_048_576 then
             Err := New_K ("http: header section too large");
@@ -196,7 +190,7 @@ package body Gada.Std.Http is
                      exit;
                   end if;
                   if Colon > 0
-                    and then To_Lower (Trim (Hline (1 .. Colon - 1),
+                    and then To_Lower (Trim (Hline (Hline'First .. Colon - 1),
                                              Ada.Strings.Both))
                       = "content-length"
                   then
@@ -218,8 +212,6 @@ package body Gada.Std.Http is
                   Pos := Pos + Lf + 1;
                end;
             end loop;
-            Ada.Text_IO.Put_Line ("[dbg] server headers parsed, len=" &
-              Content_Len'Image & " pos=" & Pos'Image & " hd=" & Hd'Image);
             --  Body_K: the bytes already read past the header block,
             --  plus more reads up to Content_Len.
             declare
@@ -245,10 +237,8 @@ package body Gada.Std.Http is
                   Have := Have + N;
                end loop;
             end;
-            Ada.Text_IO.Put_Line ("[dbg] server body done");
          end;
       end;
-      Ada.Text_IO.Put_Line ("[dbg] read_request returning");
    end Read_Request;
 
    ---------------------------------------------------------------
@@ -293,17 +283,7 @@ package body Gada.Std.Http is
       W   : Response_Writer;
       H   : Handler_Func;
    begin
-      Ada.Text_IO.Put_Line ("[dbg] serve_one: accepted");
-      begin
-         Read_Request (C, Req, Err);
-      exception
-         when X : others =>
-            Ada.Text_IO.Put_Line ("[dbg] serve_one EXC: " &
-              Ada.Exceptions.Exception_Information (X));
-            raise;
-      end;
-      Ada.Text_IO.Put_Line ("[dbg] serve_one: read err=" &
-        (if Err = No_Error then "<nil>" else Err.all.Message));
+      Read_Request (C, Req, Err);
       if Err /= No_Error then
          Write_Response (C, 400, To_Bytes ("bad request"),
                          Err);
@@ -469,10 +449,7 @@ package body Gada.Std.Http is
       if Err /= No_Error then
          return;
       end if;
-      Ada.Text_IO.Put_Line ("[dbg] client dial " & To_String (Host));
       Gada.Std.Net.Dial ("tcp", To_String (Host), C, Err);
-      Ada.Text_IO.Put_Line ("[dbg] client dial err=" &
-        (if Err = No_Error then "<nil>" else Err.all.Message));
       if Err /= No_Error then
          return;
       end if;
@@ -499,12 +476,9 @@ package body Gada.Std.Http is
             return;
          end if;
       end;
-      Ada.Text_IO.Put_Line ("[dbg] client wrote request");
       --  read the whole response until EOF
       loop
          C.all.Read (Buf, N, E);
-         Ada.Text_IO.Put_Line ("[dbg] client read N=" & N'Image & " err=" &
-           (if E = No_Error then "<nil>" else E.all.Message));
          exit when E /= No_Error or else N = 0;
          for I in 1 .. N loop
             Append (Acc, Byte_Vectors.Element (Buf, I));

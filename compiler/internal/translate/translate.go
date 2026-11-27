@@ -60,6 +60,14 @@ func File(f *ast.File, info *types.Info) (*ir.Package, error) {
 			return nil, fmt.Errorf("translate: bad import path %s: %w", imp.Path.Value, err)
 		}
 		irFile.Imports = append(irFile.Imports, path)
+		if imp.Name != nil {
+			// Renamed import: the emitter must resolve `alias.Member`
+			// through the same local name the translator bound.
+			if irFile.Aliases == nil {
+				irFile.Aliases = map[string]string{}
+			}
+			irFile.Aliases[path] = imp.Name.Name
+		}
 	}
 
 	for _, d := range f.Decls {

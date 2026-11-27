@@ -1048,3 +1048,224 @@ func TestDeadlockDetectionOptIn(t *testing.T) {
 		t.Errorf("channel-free main must not opt in:\n%s", out)
 	}
 }
+
+// TestAliasedStdlibImport is the regression test for PR #45 review #13:
+// `import str "strings"; str.ToUpper(s)` must lower through the alias
+// (the emitter used to key stdlib imports by path segment only, so the
+// call fell through to the method-call path).
+func TestAliasedStdlibImport(t *testing.T) {
+	t.Parallel()
+	pkg := &ir.Package{Name: "p", Files: []*ir.File{{
+		Name:    "x.go",
+		Imports: []string{"strings"},
+		Aliases: map[string]string{"strings": "str"},
+		Decls: []ir.Decl{funcMain(
+			&ir.Assign{
+				LHS:    []ir.Expr{idn("u")},
+				Define: true,
+				RHS: []ir.Expr{&ir.Call{
+					Fun:         &ir.Selector{X: idn("str"), Sel: "ToUpper"},
+					Args:        []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"go"`}},
+					ResultTypes: []ir.Type{&ir.StringType{}},
+				}},
+			},
+			&ir.Call{
+				Fun:  &ir.Selector{X: idn("str"), Sel: "Contains"},
+				Args: []ir.Expr{idn("u"), &ir.Lit{Kind: ir.LitString, Value: `"G"`}},
+			},
+		)},
+	}}}
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := flattenSpaces(buf.String())
+	for _, want := range []string{
+		"with Gada.Std.Strings;",
+		`Gada.Std.Strings.To_Upper ("go")`,
+		`Gada.Std.Strings.Contains (`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Str.") {
+		t.Errorf("alias leaked into the Ada output:\n%s", out)
+	}
+}
+
+// TestUnsupportedImportForms pins the loud rejections that keep aliased
+// imports from silently miscompiling: a renamed fmt (whose Println
+// special case matches the literal `fmt` prefix) and dot imports.
+func TestUnsupportedImportForms(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		imp, alias, want string
+	}{
+		{"fmt", "f", `renamed import of "fmt"`},
+		{"strings", ".", "dot import"},
+	} {
+		pkg := &ir.Package{Name: "p", Files: []*ir.File{{
+			Name: "x.go", Imports: []string{c.imp},
+			Aliases: map[string]string{c.imp: c.alias},
+			Decls:   []ir.Decl{funcMain()},
+		}}}
+		var buf bytes.Buffer
+		err := Package(pkg, &buf)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("import %s %q: err = %v, want %q", c.alias, c.imp, err, c.want)
+		}
+	}
+}
+
+// TestErrorWithClauseFromBoundErrors is the regression test for PR #45
+// review #3: a strconv-only program binding `n, err := strconv.Atoi(s)`
+// names Gada.Std.Errors.Error_Access, so it needs the with/use type
+// clause even though neither os nor errors is imported. The same holds
+// for an `error` in a function signature.
+func TestErrorWithClauseFromBoundErrors(t *testing.T) {
+	t.Parallel()
+	const with = "with Gada.Std.Errors; use type Gada.Std.Errors.Error_Access;"
+	out := emitMain(t, []string{"strconv"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("n"), idn("err")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("strconv"), Sel: "Atoi"},
+				Args:        []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"12"`}},
+				ResultTypes: []ir.Type{&ir.IntType{}, &ir.ErrorType{}},
+			}},
+		},
+		&ir.If{
+			Cond: &ir.BinOp{Op: "!=", X: idn("err"), Y: &ir.Lit{Kind: ir.LitNil}},
+			Then: []ir.Stmt{&ir.Return{}},
+		},
+	)
+	if !strings.Contains(out, with) {
+		t.Errorf("strconv-only Atoi: missing %q in:\n%s", with, out)
+	}
+	if !strings.Contains(out, `Gada.Std.Strconv.Atoi ("12", N, Err);`) {
+		t.Errorf("missing the out-call in:\n%s", out)
+	}
+
+	// No imports at all: `func check() error` alone needs the clause.
+	pkg := &ir.Package{Name: "p", Files: []*ir.File{{
+		Name: "x.go",
+		Decls: []ir.Decl{&ir.Function{
+			Name:    "check",
+			Results: []*ir.Param{{Type: &ir.ErrorType{}}},
+			Body:    []ir.Stmt{&ir.Return{Results: []ir.Expr{&ir.Lit{Kind: ir.LitNil}}}},
+		}},
+	}}}
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if !strings.Contains(flattenSpaces(buf.String()), with) {
+		t.Errorf("error result: missing %q in:\n%s", with, buf.String())
+	}
+}
+
+// TestBlankOutCallLHS is the regression test for PR #45 review #10:
+// `n, _ := strconv.Atoi(s)` / `_, err := os.ReadFile(p)` emitted `_`
+// as an Ada identifier ("identifier cannot start with underline"). Each
+// blank gets its own Discard_N local in its out position.
+func TestBlankOutCallLHS(t *testing.T) {
+	t.Parallel()
+	atoi := func(lhs ...ir.Expr) *ir.Assign {
+		return &ir.Assign{
+			LHS:    lhs,
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("strconv"), Sel: "Atoi"},
+				Args:        []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"7"`}},
+				ResultTypes: []ir.Type{&ir.IntType{}, &ir.ErrorType{}},
+			}},
+		}
+	}
+	out := emitMain(t, []string{"strconv"},
+		atoi(idn("n"), idn("_")),
+		atoi(idn("_"), idn("err")),
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("_"), idn("q")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("strconv"), Sel: "Unquote"},
+				Args:        []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"x"`}},
+				ResultTypes: []ir.Type{&ir.StringType{}, &ir.ErrorType{}},
+			}},
+		},
+	)
+	for _, want := range []string{
+		"Discard_1 : Gada.Std.Errors.Error_Access;",
+		`Gada.Std.Strconv.Atoi ("7", N, Discard_1);`,
+		"Discard_2 : Integer;",
+		`Gada.Std.Strconv.Atoi ("7", Discard_2, Err);`,
+		`Discard_3 : Ada.Strings.Unbounded.Unbounded_String := Ada.Strings.Unbounded.To_Unbounded_String ("");`,
+		`Gada.Std.Strconv.Unquote ("x", Discard_3, Q);`,
+		"with Ada.Strings.Unbounded;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, " _ ") || strings.Contains(out, ", _") {
+		t.Errorf("blank identifier leaked into Ada:\n%s", out)
+	}
+}
+
+// TestFloatBitSizeDropped is the regression test for PR #45 review #4:
+// `f, err := strconv.ParseFloat(s, 64)` emitted `Parse_Float ("1.5",
+// 64, F, Err)`, but the Ada port has no bitSize parameter ("too many
+// arguments"). bitSize 64 is dropped for ParseFloat and FormatFloat;
+// 32 (float32) and a non-constant bitSize are rejected loudly.
+func TestFloatBitSizeDropped(t *testing.T) {
+	t.Parallel()
+	parse := func(bits ir.Expr) *ir.Assign {
+		return &ir.Assign{
+			LHS:    []ir.Expr{idn("f"), idn("err")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("strconv"), Sel: "ParseFloat"},
+				Args:        []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"1.5"`}, bits},
+				ResultTypes: []ir.Type{&ir.Float64Type{}, &ir.ErrorType{}},
+			}},
+		}
+	}
+	out := emitMain(t, []string{"strconv"},
+		parse(litInt("64")),
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("s")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("strconv"), Sel: "FormatFloat"},
+				Args:        []ir.Expr{idn("f"), idn("verb"), litInt("-1"), litInt("64")},
+				ResultTypes: []ir.Type{&ir.StringType{}},
+			}},
+		},
+	)
+	for _, want := range []string{
+		`Gada.Std.Strconv.Parse_Float ("1.5", F, Err);`,
+		`Gada.Std.Strconv.Format_Float (F, Verb, -1)`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	for _, c := range []struct {
+		bits ir.Expr
+		want string
+	}{
+		{litInt("32"), "bitSize 32"},
+		{idn("n"), "bitSize must be the constant 64"},
+	} {
+		pkg := &ir.Package{Name: "p", Files: []*ir.File{{
+			Name: "x.go", Imports: []string{"strconv"},
+			Decls: []ir.Decl{funcMain(parse(c.bits))},
+		}}}
+		var buf bytes.Buffer
+		if err := Package(pkg, &buf); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("bitSize %v: err = %v, want %q", c.bits, err, c.want)
+		}
+	}
+}

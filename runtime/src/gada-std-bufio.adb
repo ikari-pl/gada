@@ -91,15 +91,20 @@ package body Gada.Std.Bufio is
       end if;
    end Read;
 
-   procedure Read_Line (R : in out Reader;
-                        Line : out Unbounded_String;
-                        Is_Prefix : out Boolean;
-                        Err : out Errors.Error_Access) is
+   --  Read_Line plus At_End: True when the line was terminated by end
+   --  of input rather than a line feed (Scanner needs the distinction
+   --  for Go's dropCR at EOF; ReadLine itself keeps such a CR).
+   procedure Read_Line_Core (R : in out Reader;
+                             Line : out Unbounded_String;
+                             Is_Prefix : out Boolean;
+                             Err : out Errors.Error_Access;
+                             At_End : out Boolean) is
       LF_Pos : Integer;
    begin
       Line := Null_Unbounded_String;
       Is_Prefix := False;
       Err := Errors.No_Error;
+      At_End := False;
       loop
          --  Search the buffer for a line feed.
          LF_Pos := 0;
@@ -141,6 +146,7 @@ package body Gada.Std.Bufio is
                --  EOF surfaces on the next call).
                Line := R.Buf;
                R.Buf := Null_Unbounded_String;
+               At_End := True;
             else
                Err := IO.EOF;
             end if;
@@ -165,6 +171,15 @@ package body Gada.Std.Bufio is
          --  delivers it — with any buffered data — exactly once.
          Fill (R, Err);
       end loop;
+   end Read_Line_Core;
+
+   procedure Read_Line (R : in out Reader;
+                        Line : out Unbounded_String;
+                        Is_Prefix : out Boolean;
+                        Err : out Errors.Error_Access) is
+      At_End : Boolean;
+   begin
+      Read_Line_Core (R, Line, Is_Prefix, Err, At_End);
    end Read_Line;
 
    procedure Read_String (R : in out Reader; Delim : Character;
@@ -247,17 +262,13 @@ package body Gada.Std.Bufio is
             --  Keep only the unwritten tail buffered (Go's Flush).
             Delete (W.Buf, 1, N);
          end if;
-         if WE /= Errors.No_Error and then not Errors.Is_K (WE, IO.EOF) then
+         --  Go's Flush returns any write error — io.EOF included (a
+         --  closed pipe or full sink must not look like success).
+         if WE /= Errors.No_Error then
             Err := WE;
-            return;
-         end if;
-         if WE = Errors.No_Error and then N < Total then
+         elsif N < Total then
             --  Go: success with n < len(p) is io.ErrShortWrite.
             Err := IO.Err_Short_Write;
-            return;
-         end if;
-         if N = Total then
-            W.Buf := Null_Unbounded_String;
          end if;
       end if;
    end Flush;
@@ -278,13 +289,21 @@ package body Gada.Std.Bufio is
       Line   : Unbounded_String;
       Prefix : Boolean;
       E      : Errors.Error_Access;
+      At_End : Boolean;
    begin
       S.Cur := Null_Unbounded_String;
       loop
-         Read_Line (S.R, Line, Prefix, E);
+         Read_Line_Core (S.R, Line, Prefix, E, At_End);
          Append (S.Cur, Line);
          exit when not Prefix;
       end loop;
+      --  Go's ScanLines applies dropCR to a final line ended by EOF too:
+      --  "a\r\nb\r" scans as "a", "b".
+      if At_End and then Length (S.Cur) > 0
+        and then Element (S.Cur, Length (S.Cur)) = CR
+      then
+         S.Cur := Head (S.Cur, Length (S.Cur) - 1);
+      end if;
       if E /= Errors.No_Error then
          if Errors.Is_K (E, IO.EOF) then
             if Length (S.Cur) = 0 then

@@ -4,6 +4,9 @@
 --  same way (byte = Character), so the rune-oriented functions
 --  (Contains_Rune, Index_Rune, …) operate per byte. UTF-8-aware rune
 --  handling is a documented limitation (docs/imperfections.md).
+--  To_Upper/To_Lower/Equal_Fold map ASCII letters only; every byte
+--  >= 16#80# passes through unchanged, so UTF-8 text is never corrupted
+--  (Go also case-maps non-ASCII letters; v1 does not).
 --
 --  Index-returning functions keep Go's 0-based, -1-not-found contract
 --  (Integer, not Natural), so transpiled Go comparisons against -1 work
@@ -105,7 +108,9 @@ package Gada.Std.Strings is
 
    type Replacer is private;
    --  New_Replacer takes a flat old,new,old,new,… slice (Go's
-   --  variadic oldnew ...string); odd length raises Constraint_Error.
+   --  variadic oldnew ...string); odd length raises Constraint_Error
+   --  (Go panics). An empty old string is legal and matches at every
+   --  position, including the end of the input (Go's genericReplacer).
    function New_Replacer (Oldnew : String_Slice) return Replacer;
    function Replace (R : Replacer; S : String) return String;
 

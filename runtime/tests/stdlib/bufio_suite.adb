@@ -116,6 +116,20 @@ package body Bufio_Suite is
       return Errors.No_Error;
    end Write;
 
+   --  Fixed-capacity sink: accepts half the bytes and reports io.EOF
+   --  (a closed pipe / full device).
+   type Eof_Writer is new IO.Writer with record
+      Data : Unbounded_String;
+   end record;
+
+   overriding function Write (W : in out Eof_Writer; Data : String;
+                              N : out Natural) return Errors.Error_Access is
+   begin
+      N := Data'Length / 2;
+      Append (W.Data, Data (Data'First .. Data'First + N - 1));
+      return IO.EOF;
+   end Write;
+
    function Buf_Src (S : String) return IO.Reader_Access is
      (new Mem_Reader'(IO.Reader with Data => To_Unbounded_String (S),
                       Pos => 1));
@@ -303,6 +317,20 @@ package body Bufio_Suite is
               "short write = ErrShortWrite");
       Assert (Len (B) = 3, "unwritten tail stays buffered, got"
               & Integer'Image (Len (B)));
+      --  Regression (PR #45 review #12): io.EOF from the destination is
+      --  a write error too; Flush used to report success and keep the
+      --  tail buffered silently.
+      declare
+         Sink : constant IO.Writer_Access := new Eof_Writer;
+         B2   : Writer := New_Writer (Sink);
+      begin
+         Write_String (B2, "hello", N, E);
+         Flush (B2, E);
+         Assert (Errors.Is_K (E, IO.EOF), "Flush returns the writer's EOF");
+         Assert (Len (B2) = 3, "unwritten tail stays buffered");
+         Assert (To_String (Eof_Writer (Sink.all).Data) = "he",
+                 "written prefix reached the sink");
+      end;
    end Test_Flush_Short_Write;
 
    procedure Test_Read_Line_Stored_Error (T : in out
@@ -348,6 +376,34 @@ package body Bufio_Suite is
       Assert (Scan (S) and Text (S) = "three", "final token w/o LF");
       Assert (not Scan (S), "clean EOF");
       Assert (Err (S) = Errors.No_Error, "Err nil at clean EOF");
+      --  Regression (PR #45 review #16): Go drops one trailing CR from
+      --  a final line ended by EOF ("a\r\nb\r" -> "a", "b"); only one
+      --  ("a\r\r\nb\r\r" -> "a\r", "b\r"). Go-verified.
+      declare
+         C : Scanner := New_Scanner (Buf_Src ("a" & CR & LF & "b" & CR));
+      begin
+         Assert (Scan (C) and then Text (C) = "a", "CRLF line");
+         Assert (Scan (C) and then Text (C) = "b", "CR dropped at EOF");
+         Assert (not Scan (C), "then EOF");
+      end;
+      declare
+         C : Scanner := New_Scanner
+           (Buf_Src ("a" & CR & CR & LF & "b" & CR & CR));
+      begin
+         Assert (Scan (C) and then Text (C) = "a" & CR, "one CR kept");
+         Assert (Scan (C) and then Text (C) = "b" & CR,
+                 "only one CR dropped at EOF");
+      end;
+      --  ReadLine itself keeps a final CR that has no LF (Go).
+      declare
+         R    : Reader := New_Reader (Buf_Src ("b" & CR));
+         Line : Unbounded_String;
+         Pre  : Boolean;
+         E    : Errors.Error_Access;
+      begin
+         Read_Line (R, Line, Pre, E);
+         Assert (To_String (Line) = "b" & CR, "ReadLine keeps lone CR");
+      end;
    end Test_Scanner;
 
    procedure Test_Scanner_Long_And_Error (T : in out

@@ -1364,3 +1364,45 @@ func TestTypeAssertMissing(t *testing.T) {
 		}
 	}
 }
+
+// TestImportLocalName pins the shared local-name rule (PR #45 review
+// #13): alias when given, else the last path segment.
+func TestImportLocalName(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ path, alias, want string }{
+		{"strings", "", "strings"},
+		{"unicode/utf8", "", "utf8"},
+		{"strings", "str", "str"},
+		{"a/b/c", "_", "_"},
+	} {
+		if got := ImportLocalName(c.path, c.alias); got != c.want {
+			t.Errorf("ImportLocalName(%q, %q) = %q, want %q", c.path, c.alias, got, c.want)
+		}
+	}
+}
+
+// TestFileAliasesRoundTrip pins the omitempty JSON shape: aliases
+// survive a round trip, and files without renamed imports keep their
+// existing golden encoding (no "aliases" key).
+func TestFileAliasesRoundTrip(t *testing.T) {
+	t.Parallel()
+	in := &File{Name: "x.go", Imports: []string{"strings"}, Aliases: map[string]string{"strings": "str"}}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out File
+	if err := json.Unmarshal(b, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Aliases["strings"] != "str" {
+		t.Fatalf("aliases lost in round trip: %s", b)
+	}
+	plain, err := json.Marshal(&File{Name: "y.go", Imports: []string{"os"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "aliases") {
+		t.Fatalf("unaliased file must not encode an aliases key: %s", plain)
+	}
+}

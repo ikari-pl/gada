@@ -5,12 +5,20 @@
 --  with Unbounded_String and returned as String via To_String; the
 --  caller owns the (GC-managed) heap block.
 
-with Ada.Characters.Handling;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 
 package body Gada.Std.Strings is
 
-   use Ada.Characters.Handling;
+   --  ASCII-only case mapping. Ada.Characters.Handling maps Latin-1,
+   --  and UTF-8 lead bytes 16#C0#..16#FE# look like Latin-1 letters, so
+   --  per-byte Latin-1 mapping corrupts multi-byte text. Bytes >= 16#80#
+   --  therefore pass through unchanged (v1: non-ASCII letters are not
+   --  case-mapped — docs/imperfections.md).
+   function Upper (C : Character) return Character is
+     (if C in 'a' .. 'z' then Character'Val (Character'Pos (C) - 32) else C);
+
+   function Lower (C : Character) return Character is
+     (if C in 'A' .. 'Z' then Character'Val (Character'Pos (C) + 32) else C);
 
    --  Go's unicode.IsSpace for ASCII: space, HT, LF, VT, FF, CR.
    function Is_Go_Space (C : Character) return Boolean is
@@ -69,7 +77,7 @@ package body Gada.Std.Strings is
          return False;
       end if;
       for I in 0 .. A'Length - 1 loop
-         if To_Lower (A (A'First + I)) /= To_Lower (B (B'First + I)) then
+         if Lower (A (A'First + I)) /= Lower (B (B'First + I)) then
             return False;
          end if;
       end loop;
@@ -371,7 +379,7 @@ package body Gada.Std.Strings is
       R : String (S'Range);
    begin
       for I in S'Range loop
-         R (I) := To_Upper (S (I));
+         R (I) := Upper (S (I));
       end loop;
       return R;
    end To_Upper;
@@ -380,7 +388,7 @@ package body Gada.Std.Strings is
       R : String (S'Range);
    begin
       for I in S'Range loop
-         R (I) := To_Lower (S (I));
+         R (I) := Lower (S (I));
       end loop;
       return R;
    end To_Lower;
@@ -486,13 +494,6 @@ package body Gada.Std.Strings is
             --  Go: NewReplacer() with no pairs is a valid no-op.
             return Replacer'(Pairs => null);
          end if;
-         for I in 1 .. N loop
-            if Length (Element (Oldnew, 2 * I - 1)) = 0 then
-               --  Go panics on an empty old string.
-               raise Constraint_Error
-                 with "strings.New_Replacer: empty old string";
-            end if;
-         end loop;
          declare
             Pairs : constant Pair_Array (1 .. N) :=
               (for I in 1 .. N =>
@@ -504,52 +505,46 @@ package body Gada.Std.Strings is
       end;
    end New_Replacer;
 
+   --  Go's genericReplacer: at each position the earliest-listed
+   --  matching old string wins. An empty old matches everywhere,
+   --  including the end of S, but never twice at one position (Go's
+   --  prevMatchEmpty / ignoreRoot): after an empty match the scan
+   --  retries the position without it, then copies one byte.
    function Replace (R : Replacer; S : String) return String is
-      B     : Unbounded_String;
-      Start : Integer := S'First;
+      B          : Unbounded_String;
+      I          : Integer := S'First;
+      Prev_Empty : Boolean := False;
+      Best       : Natural;
    begin
       if R.Pairs = null then
          return S;
       end if;
-      while Start <= S'Last loop
-         --  Leftmost match; on ties the earlier pair in the list wins
-         --  (Go's priority rule).
-         declare
-            Best_Pos : Integer := -1;
-            Best_I   : Positive := 1;
-         begin
-            for I in R.Pairs'Range loop
-               declare
-                  Old : constant String := To_String (R.Pairs (I).Old);
-               begin
-                  --  First-listed pair wins at a position (Go's
-                  --  priority rule); Best_Pos stays < 0 until the
-                  --  first match at this Start.
-                  if Best_Pos < 0
-                    and then Old'Length > 0
-                    and then Start + Old'Length - 1 <= S'Last
-                    and then S (Start .. Start + Old'Length - 1) = Old
-                  then
-                     Best_Pos := Start;
-                     Best_I := I;
-                  end if;
-               end;
-            end loop;
-            if Best_Pos < 0 then
-               --  No pair matches at Start: copy one byte and
-               --  advance (Go scans for the leftmost match).
-               Append (B, S (Start .. Start));
-               Start := Start + 1;
-            else
+      while I <= S'Last + 1 loop
+         Best := 0;
+         for P in R.Pairs'Range loop
             declare
-               Old : constant String := To_String (R.Pairs (Best_I).Old);
+               Old : constant String := To_String (R.Pairs (P).Old);
             begin
-               Append (B, S (Start .. Best_Pos - 1));
-               Append (B, To_String (R.Pairs (Best_I).New_Text));
-               Start := Best_Pos + Old'Length;
+               if Best = 0
+                 and then not (Old'Length = 0 and then Prev_Empty)
+                 and then I + Old'Length - 1 <= S'Last
+                 and then S (I .. I + Old'Length - 1) = Old
+               then
+                  Best := P;
+               end if;
             end;
+         end loop;
+         if Best > 0 then
+            Append (B, R.Pairs (Best).New_Text);
+            I := I + Length (R.Pairs (Best).Old);
+            Prev_Empty := Length (R.Pairs (Best).Old) = 0;
+         else
+            if I <= S'Last then
+               Append (B, S (I));
             end if;
-         end;
+            I := I + 1;
+            Prev_Empty := False;
+         end if;
       end loop;
       return To_String (B);
    end Replace;

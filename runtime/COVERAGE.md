@@ -405,30 +405,25 @@ terminator block, or a switch to `gnatcoverage`).
 
 ### `runtime/src/gada-std-strconv.adb` (Phase 5)
 
-Excluded lines (see `tools/coverage_thresholds.toml`):
+Excluded lines (see `tools/coverage_thresholds.toml`; remapped after the
+PR #45 review fixes moved code):
 
-  * **405-406, 415-418, 431-432** — the three zero-pad loop bodies of
-    `Fmt_F`. These *are* executed — `Format_Float (123.0, 'f', 3) =
-    "123.000"` can only be produced through the `RDP >= RN` pad arm
-    (407-410), `Format_Float (1.5, 'f', 5) = "1.50000"` through the
-    middle-branch pad (423-424) — yet lcov 2.4 reports hit-count 0 on
-    the loop-body lines while crediting the `for` lines. Same
-    misattribution class as the approved `gada-async-race.adb:80`
-    terminator exclusion. (`Format_Float (0.5, 'f', 3) = "0.500"`
-    additionally exercises 397-398 semantically.)
-  * **451-452** — `return 17` fallback of `Shortest_K` plus its
-    terminator. Unreachable by construction: 17 significant decimal
-    digits always round-trip a binary64 (that is the worst case, and
-    the `K = 17` iteration returns first). Mathematical fact, not a
-    test gap.
-  * **522, 694, 695, 697, 740, 745, 845, 868, 890, 902** —
+  * **612-613** — the post-loop `Keep_All;` of `Shortest` plus its
+    terminator. Unreachable by construction: the loop runs over d's
+    trimmed digits, and lower < d. If lower agreed with d on every digit
+    up to d's last one, lower would be >= d; so at some position
+    `L /= M`, which makes `Ok_Down` true and the loop returns there.
+    (The structure mirrors Go's roundShortest, which has the same dead
+    fallthrough.) A 62,768-value differential run against Go never
+    reached it either.
+  * **683, 852, 853, 855, 898, 903, 1062, 1085, 1107, 1119** —
     `end X;` fall-through terminators and `declare`/`end;` block
     markers (`end Normalize;`, `end Format_Float;`, `end Message;`,
-    inner block ends in the 'g' branch, Parse_Float and Unquote).
-    lcov 2.x instruments the implicit basic block at 0 even when the
-    enclosing routine is fully covered — the same fixed toolchain
-    property documented for `gada-async-race.adb:80`.
-  * **751, 753, 755, 756** — `Parse_Float`'s `when Constraint_Error`
+    inner block ends in the 'g' branch, Parse_Float, Quote_Core and
+    Unquote). lcov 2.x instruments the implicit basic block at 0 even
+    when the enclosing routine is fully covered — the same fixed
+    toolchain property documented for `gada-async-race.adb:80`.
+  * **909, 911, 913, 914** — `Parse_Float`'s `when Constraint_Error`
     arm. The Alire FSF GNAT 15.1 runtime *returns* ±Inf on decimal
     overflow instead of raising, so this arm cannot fire on the CI
     toolchain; the `Value > Long_Float'Last` post-check right below it
@@ -436,23 +431,28 @@ Excluded lines (see `tools/coverage_thresholds.toml`):
     Err_Range tests. The arm is kept for GNAT modes/configurations
     that do raise.
 
+The previous `Shortest_K` `return 17` exclusion is gone with Shortest_K,
+and the Fmt_F pad-loop bodies are now credited by lcov, so they are no
+longer excluded.
+
 ### `runtime/src/gada-std-strings.adb` (Phase 5)
 
-Excluded lines: 142, 249, 377, 386, 395, 522, 544 — `end loop;` /
-`end To_Upper;` / `end To_Lower;` / `end Map;` terminators and two
-`declare` markers in `Replacer.Replace`. All executed — the Split,
-Case and Replacer tests are green in the same run — but lcov 2.4
-leaves hit-count 0 on in-loop returns and block markers. Same
-misattribution class as `gada-async-race.adb:80`.
+Excluded lines: 150, 257, 385, 394, 403, 525 — `end loop;` /
+`return Acc;` in Split_N / `end To_Upper;` / `end To_Lower;` /
+`end Map;` terminators and the `declare` marker in `Replacer.Replace`.
+All executed — the Split, Case and Replacer tests are green in the same
+run — but lcov 2.4 leaves hit-count 0 on in-loop returns and block
+markers. Same misattribution class as `gada-async-race.adb:80`.
 
 ### `runtime/src/gada-std-fmt.adb` (Phase 5)
 
-Excluded lines: 54, 55, 100, 143, 253, 314, 390, 400, 440, 509. Line 54
-(`when others => null;` in `Parse_Spec`) is unreachable by
+Excluded lines: 54, 55, 100, 157, 189, 298, 359, 459, 469, 509, 578.
+Line 54 (`when others => null;` in `Parse_Spec`) is unreachable by
 construction: the `while` guard already restricts `F (I)` to
 `'-' | '+' | ' ' | '#' | '0'`, so the `others` arm can never fire —
 defensive exhaustiveness. The rest are `end;`/`declare` block markers
-misattributed by lcov 2.4 (same class as above).
+and the `end Float_Text;` / `end Errorf;` terminators of always-
+returning functions, misattributed by lcov 2.4 (same class as above).
 
 ### `runtime/src/gada-std-os.adb` (Phase 5)
 
@@ -464,10 +464,9 @@ documented in the Phase 6 wave 2 section.
 ### `runtime/src/gada-std-bytes.adb`, `gada-std-bufio.adb`, `gada-std-io.adb` (Phase 5)
 
 bytes: 28, 122, 166 — `end To_String;` terminators and an `end loop;`
-marker. bufio: 51, 106, 179, 295 — `end Fill;`, two `declare` markers
-in the Read_Line/Read_String search loops, and the `end if;` after
-Scanner's final-token `return True;` (executed by the "final token
-w/o LF" assert). The stored-error branches of Read/Read_Line/
+marker. bufio: 51, 111, 194, 314 — `end Fill;`, two `declare` markers
+in the Read_Line/Read_String search loops, and Scanner's final-token
+`return True;` (executed by the "final token w/o LF" assert). The stored-error branches of Read/Read_Line/
 Read_String are covered by the readErr tests, not excluded. io: 44,
 57, 81 — the inner `end;`, `end Copy;`, `end Read_All;` markers (the
 ErrShortWrite arm itself is covered by the short-write test). All in

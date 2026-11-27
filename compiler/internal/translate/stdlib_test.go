@@ -190,6 +190,29 @@ func f() { s.TrimSpace("x") }
 	}
 }
 
+// TestFileRecordsImportAliases is the regression test for PR #45 review
+// #13: a renamed import must reach the IR so the emitter resolves
+// `str.ToUpper` through the same local name the translator bound.
+func TestFileRecordsImportAliases(t *testing.T) {
+	t.Parallel()
+	pkg := parseSrc(t, `package p
+
+import (
+	"os"
+	str "strings"
+)
+
+func f(s string) string { return str.ToUpper(s) }
+`, nil)
+	f := pkg.Files[0]
+	if got := f.Aliases["strings"]; got != "str" {
+		t.Fatalf("Aliases[strings] = %q, want str (aliases %v)", got, f.Aliases)
+	}
+	if _, ok := f.Aliases["os"]; ok {
+		t.Fatalf("unaliased import must not be recorded: %v", f.Aliases)
+	}
+}
+
 // TestStdlibCallRejections pins the ok=false shapes: non-selector Fun,
 // non-Ident prefix, unknown prefix, and a non-stdlib import path.
 func TestStdlibCallRejections(t *testing.T) {
@@ -226,9 +249,6 @@ func TestStdlibCallRejections(t *testing.T) {
 		X: &ast.Ident{Name: "strings"}, Sel: &ast.Ident{Name: "TrimSpace"},
 	})); !ok || err != nil {
 		t.Errorf("strings.TrimSpace: ok=%v err=%v", ok, err)
-	}
-	if lastSlash("noslash") != -1 || lastSlash("a/b") != 1 {
-		t.Errorf("lastSlash wrong")
 	}
 	if _, err := newTranslator(&ast.File{Name: &ast.Ident{Name: "p"}, Imports: []*ast.ImportSpec{
 		{Path: &ast.BasicLit{Kind: token.STRING, Value: `"bad`}},

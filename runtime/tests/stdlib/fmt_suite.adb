@@ -54,6 +54,38 @@ package body Fmt_Suite is
       Assert (Sprintf ("%b", (1 => A (5))) = "101", "%b");
       Assert (Sprintf ("%o", (1 => A (8))) = "10", "%o");
       Assert (Sprintf ("%c", (1 => A (65))) = "A", "%c");
+      --  Regression (PR #45 review #8): runes above 255 raised; Go
+      --  prints UTF-8, and U+FFFD for invalid code points.
+      declare
+         FFFD : constant String :=
+           (Character'Val (16#EF#), Character'Val (16#BF#),
+            Character'Val (16#BD#));
+      begin
+         Assert (Sprintf ("%c", (1 => A (16#4E16#)))
+                   = (Character'Val (16#E4#), Character'Val (16#B8#),
+                      Character'Val (16#96#)), "%c U+4E16");
+         Assert (Sprintf ("%c", (1 => A (16#E9#)))
+                   = (Character'Val (16#C3#), Character'Val (16#A9#)),
+                 "%c U+00E9");
+         Assert (Sprintf ("%c", (1 => A (16#1F600#)))
+                   = (Character'Val (16#F0#), Character'Val (16#9F#),
+                      Character'Val (16#98#), Character'Val (16#80#)),
+                 "%c U+1F600");
+         Assert (Sprintf ("%c", (1 => A (-1))) = FFFD, "%c negative");
+         Assert (Sprintf ("%c", (1 => A (16#D800#))) = FFFD,
+                 "%c surrogate");
+         Assert (Sprintf ("%c", (1 => A (16#110000#))) = FFFD,
+                 "%c beyond U+10FFFF");
+         Assert (Sprintf ("%5c", (1 => A (16#20AC#)))
+                   = "    " & (Character'Val (16#E2#), Character'Val (16#82#),
+                               Character'Val (16#AC#)),
+                 "%5c pads by runes, not bytes (Go)");
+         Assert (Sprintf ("%-6s|", (1 => A ("caf" & (Character'Val (16#C3#),
+                                                    Character'Val (16#A9#)))))
+                   = "caf" & (Character'Val (16#C3#), Character'Val (16#A9#))
+                     & "  |",
+                 "%-6s of café pads to 6 runes");
+      end;
       Assert (Sprintf ("%v", (1 => A (42))) = "42", "%v int");
       Assert (Sprintf ("100%%", (1 .. 0 => A (0))) = "100%", "%%");
    end Test_Sprintf_Int;
@@ -81,6 +113,39 @@ package body Fmt_Suite is
       Assert (Sprintf ("%e", (1 => A (31415.9))) = "3.141590e+04", "%e");
       Assert (Sprintf ("%g", (1 => A (3.14))) = "3.14", "%g");
       Assert (Sprintf ("%v", (1 => A (100000.0))) = "100000", "%v float");
+      --  Negative floats (PR #45 review #1; Go-verified).
+      Assert (Sprintf ("%v", (1 => A (-1.5))) = "-1.5", "%v negative");
+      Assert (Sprintf ("%.2f", (1 => A (-3.5))) = "-3.50", "%.2f negative");
+      Assert (Sprintf ("%e", (1 => A (-31415.9))) = "-3.141590e+04",
+              "%e negative");
+      --  Sign flags and sign-aware zero padding (PR #45 review #6);
+      --  every expected string is Go's fmt output.
+      Assert (Sprintf ("%+.1f", (1 => A (3.0))) = "+3.0", "%+.1f");
+      Assert (Sprintf ("% .1f", (1 => A (3.0))) = " 3.0", "% .1f");
+      Assert (Sprintf ("%+.2e", (1 => A (3.0))) = "+3.00e+00", "%+.2e");
+      Assert (Sprintf ("%08.2f", (1 => A (3.5))) = "00003.50", "%08.2f");
+      Assert (Sprintf ("%08.2f", (1 => A (-3.5))) = "-0003.50",
+              "%08.2f negative pads after the sign");
+      Assert (Sprintf ("%-8.2f|", (1 => A (-3.5))) = "-3.50   |",
+              "%-8.2f");
+      Assert (Sprintf ("%+08.2f", (1 => A (3.5))) = "+0003.50", "%+08.2f");
+      Assert (Sprintf ("% 08.2f", (1 => A (3.5))) = " 0003.50", "% 08.2f");
+      declare
+         Zero : Long_Float := 0.0;
+         Inf  : constant Long_Float := 1.0 / Zero;
+         NaN  : constant Long_Float := Inf - Inf;
+      begin
+         Assert (Sprintf ("%08.2f", (1 => A (Inf))) = "    +Inf",
+                 "Inf is space-padded, keeps its sign");
+         Assert (Sprintf ("%08.2f", (1 => A (-Inf))) = "    -Inf",
+                 "-Inf is space-padded");
+         Assert (Sprintf ("%v", (1 => A (Inf))) = "+Inf", "%v of Inf");
+         Assert (Sprintf ("% f", (1 => A (Inf))) = " Inf", "% f of Inf");
+         Assert (Sprintf ("%+f", (1 => A (NaN))) = "+NaN", "%+f of NaN");
+         Assert (Sprintf ("% f", (1 => A (NaN))) = " NaN", "% f of NaN");
+         Assert (Sprintf ("%-8f|", (1 => A (NaN))) = "NaN     |",
+                 "NaN drops the sign unless asked");
+      end;
    end Test_Sprintf_Float;
 
    procedure Test_Sprintf_Misc (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -123,6 +188,25 @@ package body Fmt_Suite is
       Assert (Errors.Message (Err.all) = "100%w", "%%w is literal");
       Assert (Errors.Unwrap (Err.all) = Errors.No_Error,
               "%%w does not wrap");
+      --  Regression (PR #45 review #2): %w after other verbs wraps the
+      --  argument it consumes (Go: errors.Is is true for each).
+      Err := Errorf ("open %s: %w", (A ("f"), A (E)));
+      Assert (Errors.Message (Err.all) = "open f: root cause",
+              "%s then %w message");
+      Assert (Errors.Is_K (Err, E), "%s then %w wraps");
+      Err := Errorf ("%d %s %w", (A (1), A ("x"), A (E)));
+      Assert (Errors.Is_K (Err, E), "%w as third verb wraps");
+      Err := Errorf ("100%% %s: %w", (A ("x"), A (E)));
+      Assert (Errors.Message (Err.all) = "100% x: root cause"
+                and then Errors.Is_K (Err, E),
+              "%% before %w consumes no argument");
+      --  %w with no argument left, or a non-error argument: no wrap.
+      Err := Errorf ("%s %w", (1 => A ("x")));
+      Assert (Errors.Unwrap (Err.all) = Errors.No_Error,
+              "%w without an argument does not wrap");
+      Err := Errorf ("%w", (1 => A ("x")));
+      Assert (Errors.Unwrap (Err.all) = Errors.No_Error,
+              "%w of a non-error does not wrap");
    end Test_Errorf;
 
    procedure Test_Sscanf (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -157,6 +241,18 @@ package body Fmt_Suite is
       Gada.Core.IO.New_Line;
       Println ((1 => A ("b")));
       Printf ("%d-%s" & Character'Val (10), (1 => A (7), 2 => A ("z")));
+      --  Regression (PR #45 review #7): Print/Sprint add a space only
+      --  between two non-string operands; Println/Sprintln always do.
+      --  Go: Sprint("a", "b") = "ab", Sprint(1, 2) = "1 2",
+      --  Sprint("a", 1, "b") = "a1b", Sprint(1, "a", 2) = "1a2".
+      Assert (Sprint ((A ("a"), A ("b"))) = "ab", "Sprint strings");
+      Assert (Sprint ((A (1), A (2))) = "1 2", "Sprint ints");
+      Assert (Sprint ((A ("a"), A (1), A ("b"))) = "a1b", "Sprint mixed");
+      Assert (Sprint ((A (1), A ("a"), A (2))) = "1a2", "Sprint mixed 2");
+      Assert (Sprint ((A (3.5), A (True), A (False))) = "3.5 true false",
+              "Sprint non-strings");
+      Assert (Sprintln ((A ("a"), A ("b"))) = "a b" & Character'Val (10),
+              "Sprintln always spaces");
    end Test_Print_Family;
 
    procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class) is

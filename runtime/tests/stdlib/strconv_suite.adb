@@ -4,6 +4,8 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 with AUnit.Assertions; use AUnit.Assertions;
 
 with Ada.Strings.Unbounded;
+with Ada.Unchecked_Conversion;
+with Interfaces;
 with Gada.Std.Errors;
 with Gada.Std.Strconv; use Gada.Std.Strconv;
 
@@ -38,6 +40,10 @@ package body Strconv_Suite is
       Register_Routine (T, Test_Num_Error_Is_As'Access,
                         "NumError Is/As/Message");
       Register_Routine (T, Test_Edges'Access, "escapes/UTF-8/rounding edges");
+      Register_Routine (T, Test_Format_Float_Negative'Access,
+                        "FormatFloat negative values");
+      Register_Routine (T, Test_Format_Float_Shortest_Exact'Access,
+                        "FormatFloat shortest exact (subnormals)");
    end Register_Tests;
 
    procedure Test_Itoa (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -264,6 +270,60 @@ package body Strconv_Suite is
       --  Apostrophe is printable: not escaped (Go contract).
       Assert (Quote ((1 => Character'Val (39))) = '"' & Character'Val (39)
                 & '"', "Quote apostrophe raw");
+      --  Bytes >= 16#80# (PR #45 review testing gap): valid UTF-8 passes
+      --  through, invalid bytes are \xNN, C1 controls are \u00XX.
+      --  Expected strings are Go's strconv.Quote output.
+      declare
+         E_Acute : constant String :=
+           (Character'Val (16#C3#), Character'Val (16#A9#));
+         Euro    : constant String :=
+           (Character'Val (16#E2#), Character'Val (16#82#),
+            Character'Val (16#AC#));
+         Smiley  : constant String :=
+           (Character'Val (16#F0#), Character'Val (16#9F#),
+            Character'Val (16#98#), Character'Val (16#80#));
+      begin
+         Assert (Quote ("caf" & Character'Val (16#E9#))
+                   = '"' & "caf\xe9" & '"', "Latin-1 byte is \xNN");
+         Assert (Quote ("caf" & E_Acute) = '"' & "caf" & E_Acute & '"',
+                 "valid 2-byte UTF-8 raw");
+         Assert (Quote (Euro) = '"' & Euro & '"', "valid 3-byte raw");
+         Assert (Quote ((Character'Val (16#E0#), Character'Val (16#A0#),
+                         Character'Val (16#80#)))
+                   = '"' & (Character'Val (16#E0#), Character'Val (16#A0#),
+                            Character'Val (16#80#)) & '"',
+                 "U+0800 (E0 lead, smallest 3-byte) raw");
+         Assert (Quote ((Character'Val (16#E0#), Character'Val (16#9F#),
+                         Character'Val (16#BF#)))
+                   = '"' & "\xe0\x9f\xbf" & '"', "E0 overlong rejected");
+         Assert (Quote (Smiley) = '"' & Smiley & '"', "valid 4-byte raw");
+         Assert (Quote ((Character'Val (16#FF#), Character'Val (16#FE#)))
+                   = '"' & "\xff\xfe" & '"', "invalid lead bytes");
+         Assert (Quote ((Character'Val (16#C2#), Character'Val (16#85#)))
+                   = '"' & "\u0085" & '"', "C1 control is \u00XX");
+         Assert (Quote ((Character'Val (16#C0#), Character'Val (16#AF#)))
+                   = '"' & "\xc0\xaf" & '"', "overlong rejected");
+         Assert (Quote ((Character'Val (16#ED#), Character'Val (16#A0#),
+                         Character'Val (16#80#)))
+                   = '"' & "\xed\xa0\x80" & '"', "surrogate rejected");
+         Assert (Quote ((Character'Val (16#F4#), Character'Val (16#90#),
+                         Character'Val (16#80#), Character'Val (16#80#)))
+                   = '"' & "\xf4\x90\x80\x80" & '"', "> U+10FFFF rejected");
+         Assert (Quote ((Character'Val (16#E2#), Character'Val (16#82#)))
+                   = '"' & "\xe2\x82" & '"', "truncated sequence");
+         Assert (Quote ((1 => Character'Val (16#C2#)))
+                   = '"' & "\xc2" & '"', "lead byte at end");
+         Assert (Quote (Euro (1 .. 2) & "x")
+                   = '"' & "\xe2\x82x" & '"', "bad continuation byte");
+      end;
+      --  Quote_Rune of the delimiters (Go: '\'' and '"').
+      Assert (Quote_Rune (Character'Val (39)) = "'\''", "QuoteRune '");
+      Assert (Quote_Rune ('"') = "'""'", "QuoteRune dquote unescaped");
+      Assert (Quote_Rune (Character'Val (16#E9#))
+                = "'" & Character'Val (16#C3#) & Character'Val (16#A9#) & "'",
+              "QuoteRune U+00E9 is UTF-8");
+      Assert (Quote_Rune (Character'Val (16#85#)) = "'\u0085'",
+              "QuoteRune C1 control");
    end Test_Quote;
 
    procedure Test_Unquote (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -427,5 +487,108 @@ package body Strconv_Suite is
                  "static 0.1 + 0.2 folds to fl(0.3)");
       end;
    end Test_Edges;
+
+   --  Regression (PR #45 review #1): Exact_Digits got the signed value,
+   --  so every negative non-zero float raised ('g'/'e') or printed
+   --  -0.0 ('f'). Expected strings are Go's FormatFloat output.
+   procedure Test_Format_Float_Negative (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+   begin
+      Assert (Format_Float (-1.5) = "-1.5", "-1.5 g/-1");
+      Assert (Format_Float (-2.5, 'f', 1) = "-2.5", "-2.5 f/1");
+      Assert (Format_Float (-3.5, 'f', 2) = "-3.50", "-3.5 f/2");
+      Assert (Format_Float (-31415.9, 'e', 3) = "-3.142e+04", "-31415.9 e/3");
+      Assert (Format_Float (-0.1) = "-0.1", "-0.1 g/-1");
+      Assert (Format_Float (-1.0e21) = "-1e+21", "-1e21 g/-1");
+      Assert (Format_Float (-0.000012) = "-1.2e-05", "-1.2e-05 g/-1");
+   end Test_Format_Float_Negative;
+
+   --  Regression (PR #45 review #9): shortest formatting chose its digit
+   --  count by round-tripping through GNAT's Long_Float'Value, which
+   --  misrounds subnormals — ~17% of random subnormals came out wrong.
+   --  Shortest now runs Go's exact roundShortest on the half-ulp
+   --  neighbours. Cases: 24 subnormals the old code got wrong (drawn
+   --  from a 47k-value differential run against Go, seed 45: 3404
+   --  mismatches before, 0 after) plus boundary values. Expected
+   --  strings are Go's FormatFloat(f, 'g'/'e', -1, 64).
+   procedure Test_Format_Float_Shortest_Exact (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      function To_F is new Ada.Unchecked_Conversion
+        (Interfaces.Unsigned_64, Long_Float);
+      procedure Check (Bits : Interfaces.Unsigned_64; G : String;
+                       E : String := "") is
+         X : constant Long_Float := To_F (Bits);
+      begin
+         Assert (Format_Float (X) = G,
+                 "g: want " & G & ", got " & Format_Float (X));
+         Assert (Format_Float (X, 'e', -1) = (if E = "" then G else E),
+                 "e: want " & G & ", got " & Format_Float (X, 'e', -1));
+      end Check;
+   begin
+      Check (16#000f_aba2_97e5_fde1#,
+             "2.17924425250681e-308");
+      Check (16#000c_bd92_5c6b_7f6a#,
+             "1.7717866156888607e-308");
+      Check (16#000c_72e3_fd94_d146#,
+             "1.7312175140357073e-308");
+      Check (16#0006_3461_91ab_70c9#,
+             "8.62857745964021e-309");
+      Check (16#000d_ffde_908e_91ae#,
+             "1.9468686765757967e-308");
+      Check (16#000a_0c37_091d_a790#,
+             "1.3973067179669507e-308");
+      Check (16#000f_0ea7_b345_035b#,
+             "2.093967834536238e-308");
+      Check (16#000f_3c47_c456_631a#,
+             "2.1187528868510497e-308");
+      Check (16#000e_dc63_c598_8d03#,
+             "2.066662144605801e-308");
+      Check (16#0009_a8bd_1055_fdc7#,
+             "1.343268033001685e-308");
+      Check (16#0005_28e1_2c24_cdff#,
+             "7.1754263264568e-309");
+      Check (16#000c_f375_6196_b416#,
+             "1.8010595904694196e-308");
+      Check (16#0001_b8bc_9bb5_c9da#,
+             "2.394218317913137e-309");
+      Check (16#000b_9e2e_116d_7b8f#,
+             "1.61566651974178e-308");
+      Check (16#0007_6889_db70_8496#,
+             "1.0302583614032363e-308");
+      Check (16#000b_224e_06bf_283e#,
+             "1.5483737006837296e-308");
+      Check (16#0003_3df6_6d2f_d64d#,
+             "4.50861350761334e-309");
+      Check (16#000f_a1c2_cc3c_95d8#,
+             "2.1738802809814667e-308");
+      Check (16#000e_1dfa_603a_af18#,
+             "1.9632246195422233e-308");
+      Check (16#000a_1ee7_c690_29fe#,
+             "1.4074599161683463e-308");
+      Check (16#000c_7b57_ba0b_f744#,
+             "1.7358089531301407e-308");
+      Check (16#000d_2c38_206f_1a2c#,
+             "1.8318937712376907e-308");
+      Check (16#000d_1bdb_b37a_3614#,
+             "1.8230059497188073e-308");
+      Check (16#0006_74f2_d4b8_acb0#,
+             "8.979327701874767e-309");
+      Check (16#0010_0000_0000_0000#,
+             "2.2250738585072014e-308");
+      Check (16#7fef_ffff_ffff_ffff#,
+             "1.7976931348623157e+308");
+      Check (16#0000_0000_0000_0001#,
+             "5e-324");
+      Check (16#4340_0000_0000_0000#,
+             "9.007199254740992e+15");
+      --  Upper_Delta 1 -> 2 transition (found by the differential run).
+      Check (16#4351_6380_09c4_1fed#,
+             "1.9577904699572148e+16");
+      --  float64(1e23) is 9.999999999999999e22 but owns 1e23: shortest
+      --  rounds up past the leading digit to the next power of ten.
+      Check (16#44b5_2d02_c7e1_4af6#, "1e+23");
+      Check (16#3fb9_9999_9999_999a#,
+             "0.1", "1e-01");
+   end Test_Format_Float_Shortest_Exact;
 
 end Strconv_Suite;

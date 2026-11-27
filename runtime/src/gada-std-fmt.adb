@@ -116,17 +116,31 @@ package body Gada.Std.Fmt is
    function Bool_Text (B : Boolean) return String is
      (if B then "true" else "false");
 
-   --  Pads Acc to Sp.Width (space or zero padding, sign-aware for
+   --  Pads Acc to Sp.Width runes (space or zero padding, sign-aware for
    --  Zero_Pad when Sign_Pos > 0).
+   --  Go measures width in runes, not bytes: count every byte that is
+   --  not a UTF-8 continuation byte (16#80#..16#BF#).
+   function Rune_Count (S : String) return Natural is
+      N : Natural := 0;
+   begin
+      for C of S loop
+         if Character'Pos (C) not in 16#80# .. 16#BF# then
+            N := N + 1;
+         end if;
+      end loop;
+      return N;
+   end Rune_Count;
+
    function Pad (Acc : String; Sp : Spec; Numeric : Boolean;
                  Sign_Pos : Natural := 0) return String is
       N : constant Natural := Sp.Width;
+      W : constant Natural := Rune_Count (Acc);
    begin
-      if Acc'Length >= N then
+      if W >= N then
          return Acc;
       end if;
       declare
-         Fill : constant Natural := N - Acc'Length;
+         Fill : constant Natural := N - W;
       begin
          if Sp.Minus then
             return Acc & (1 .. Fill => ' ');
@@ -142,6 +156,37 @@ package body Gada.Std.Fmt is
          return (1 .. Fill => ' ') & Acc;
       end;
    end Pad;
+
+   --  Applies the sign flags and padding to a formatted float, the way
+   --  Go's fmt.fmtFloat does: '+' forces a sign, ' ' puts a space where
+   --  a '+' would go, zero padding goes after the sign, and Inf/NaN are
+   --  only ever space-padded (NaN drops its sign unless one was asked
+   --  for).
+   function Float_Text (Raw : String; Sp : Spec) return String is
+      Signed : constant String :=
+        (if Raw (Raw'First) in '-' | '+' then Raw else '+' & Raw);
+      Digits_Part : constant String :=
+        Signed (Signed'First + 1 .. Signed'Last);
+      Sign   : constant Character :=
+        (if Signed (Signed'First) = '+' and then Sp.Space
+           and then not Sp.Plus
+         then ' ' else Signed (Signed'First));
+      No_Zero : Spec := Sp;
+   begin
+      if Digits_Part (Digits_Part'First) in 'I' | 'N' then
+         No_Zero.Zero := False;
+         if Digits_Part (Digits_Part'First) = 'N'
+           and then not Sp.Space and then not Sp.Plus
+         then
+            return Pad (Digits_Part, No_Zero, False);
+         end if;
+         return Pad (Sign & Digits_Part, No_Zero, False);
+      end if;
+      if Sp.Plus or else Sign /= '+' then
+         return Pad (Sign & Digits_Part, Sp, True, Sign_Pos => 1);
+      end if;
+      return Pad (Digits_Part, Sp, True);
+   end Float_Text;
 
    --  Formats one argument per the spec; Bad is set for a verb that
    --  does not apply to the argument kind.
@@ -161,8 +206,7 @@ package body Gada.Std.Fmt is
                --  (X.I is a 32-bit Integer, so 0 - V cannot overflow),
                --  then convert the non-negative result — converting a
                --  negative through U64 trips GNAT's overflow check.
-               Mag  : constant U64 :=
-                 (if Neg then U64 (0 - V) else U64 (V));
+               Mag  : constant U64 := (if Neg then U64 (0 - V) else U64 (V));
                Sign : constant String :=
                  (if Neg then "-"
                   elsif Sp.Plus then "+"
@@ -186,8 +230,9 @@ package body Gada.Std.Fmt is
                      if Sp.Hash then Append (Acc, "0X"); end if;
                      Append (Acc, Int_Base_U (Mag, 16, True));
                   when 'c' =>
-                     return Pad (String'(1 => Character'Val (X.I)),
-                                 Sp, False);
+                     --  Go writes the rune's UTF-8 encoding (U+FFFD
+                     --  for invalid code points).
+                     return Pad (Strconv.Encode_Rune (X.I), Sp, False);
                   when others =>
                      Bad := True;
                      return "%!" & Sp.Verb & "(BADVERB)";
@@ -223,8 +268,8 @@ package body Gada.Std.Fmt is
                      if Prec < 0 and then Verb in 'f' | 'F' | 'e' | 'E' then
                         Prec := 6;  --  Go's default for fixed/exponent
                      end if;
-                     return Pad
-                       (Strconv.Format_Float (X.F, Verb, Prec), Sp, True);
+                     return Float_Text
+                       (Strconv.Format_Float (X.F, Verb, Prec), Sp);
                   when others =>
                      Bad := True;
                      return "%!" & Sp.Verb & "(BADVERB)";
@@ -320,24 +365,45 @@ package body Gada.Std.Fmt is
       return To_String (R);
    end Sprintf;
 
-   procedure Print (Args : Arg_Array) is
+   --  Operands in %v form. Go's doPrint (Print/Sprint) separates two
+   --  operands with a space only when neither is a string; doPrintln
+   --  (Println/Sprintln) always separates them.
+   function Join_Operands (Args : Arg_Array; Always_Space : Boolean)
+      return String is
+      R   : Unbounded_String;
+      Bad : Boolean;
    begin
       for I in Args'Range loop
-         if I > Args'First then
-            Gada.Core.IO.Print (" ");
+         if I > Args'First
+           and then (Always_Space
+                     or else (Args (I - 1).K /= Str_Arg
+                              and then Args (I).K /= Str_Arg))
+         then
+            Append (R, ' ');
          end if;
-         declare
-            Bad : Boolean;
-         begin
-            Gada.Core.IO.Print (Format_Arg (Args (I), (Verb => 'v',
-                                               others => <>), Bad));
-         end;
+         Append (R, Format_Arg (Args (I), (Verb => 'v', others => <>), Bad));
       end loop;
+      return To_String (R);
+   end Join_Operands;
+
+   function Sprint (Args : Arg_Array) return String is
+   begin
+      return Join_Operands (Args, Always_Space => False);
+   end Sprint;
+
+   function Sprintln (Args : Arg_Array) return String is
+   begin
+      return Join_Operands (Args, Always_Space => True) & Character'Val (10);
+   end Sprintln;
+
+   procedure Print (Args : Arg_Array) is
+   begin
+      Gada.Core.IO.Print (Sprint (Args));
    end Print;
 
    procedure Println (Args : Arg_Array) is
    begin
-      Print (Args);
+      Gada.Core.IO.Print (Join_Operands (Args, Always_Space => True));
       Gada.Core.IO.New_Line;
    end Println;
 
@@ -346,54 +412,57 @@ package body Gada.Std.Fmt is
       Gada.Core.IO.Print (Sprintf (Format, Args));
    end Printf;
 
-   --  Scans Format for a real %w verb; %% is a literal percent and
-   --  must not trigger wrapping (Go: Errorf("%%w", e) does not wrap).
-   --  W_Pos is the verb's position when found.
-   function Has_W_Verb (Format : String; W_Pos : out Integer)
-      return Boolean is
+   --  Scans Format for the first real %w verb. W_Pos is the verb's
+   --  position; W_Arg is the 0-based ordinal of the argument it
+   --  consumes: every verb before it except a literal percent takes one
+   --  argument, exactly as Sprintf walks them. A literal percent (%%)
+   --  never triggers wrapping (Go: Errorf("%%w", e) does not wrap).
+   function Find_W_Verb (Format : String; W_Pos : out Integer;
+                         W_Arg : out Natural) return Boolean is
       I : Integer := Format'First;
    begin
       W_Pos := 0;
+      W_Arg := 0;
       while I <= Format'Last loop
          if Format (I) = '%' and then I < Format'Last then
-            if Format (I + 1) = '%' then
-               I := I + 2;
-            else
-               declare
-                  Sp : Spec;
-               begin
-                  Parse_Spec (Format, I, Sp);
-                  if Sp.Verb = 'w' then
-                     W_Pos := I - 1;
-                     return True;
-                  end if;
-               end;
-            end if;
+            declare
+               Sp : Spec;
+            begin
+               Parse_Spec (Format, I, Sp);
+               if Sp.Verb = 'w' then
+                  W_Pos := I - 1;
+                  return True;
+               elsif Sp.Verb /= '%' then
+                  W_Arg := W_Arg + 1;
+               end if;
+            end;
          else
             I := I + 1;
          end if;
       end loop;
       return False;
-   end Has_W_Verb;
+   end Find_W_Verb;
 
    function Errorf (Format : String; Args : Arg_Array)
       return Errors.Error_Access is
       W_Pos : Integer;
-      Has_W : constant Boolean := Has_W_Verb (Format, W_Pos);
+      W_Arg : Natural;
+      Has_W : constant Boolean := Find_W_Verb (Format, W_Pos, W_Arg);
       F2    : String (Format'Range) := Format;
    begin
-      --  %w wraps the error argument as the cause (Go 1.13); in the
-      --  message itself it formats like %v.
+      --  %w wraps the error argument it consumes as the cause (Go 1.13),
+      --  wherever it sits in the format; in the message itself it
+      --  formats like %v.
       if Has_W then
          F2 (W_Pos) := 'v';
       end if;
       declare
          Msg : constant String := Sprintf (F2, Args);
       begin
-         if Has_W and then Args'Length = 1
-           and then Args (Args'First).K = Err_Arg
+         if Has_W and then W_Arg < Args'Length
+           and then Args (Args'First + W_Arg).K = Err_Arg
          then
-            return Errors.With_Cause (Msg, Args (Args'First).E);
+            return Errors.With_Cause (Msg, Args (Args'First + W_Arg).E);
          end if;
          return Errors.New_K (Msg);
       end;

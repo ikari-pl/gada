@@ -211,8 +211,8 @@ package body Http_Suite is
 
    procedure Test_Not_Found (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      Trace ("Test_Listen_Error");
    begin
+      Trace ("Test_Not_Found");
       Start_Server;
       declare
          R : constant String := Do_Request
@@ -231,10 +231,10 @@ package body Http_Suite is
    --  needing the scheduler).
    procedure Test_Listen_Error (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      Trace ("Test_Not_Found");
       L   : Listener;
       Err : Errors.Error_Access;
    begin
+      Trace ("Test_Listen_Error");
       Listen ("tcp", "127.0.0.1:0", L, Err);
       Assert (Err = Errors.No_Error, "listen failed: " & Err_Text (Err));
       declare
@@ -251,8 +251,8 @@ package body Http_Suite is
    --  sending anything (EOF arm).
    procedure Test_Bad_Requests (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      Trace ("Test_Bad_Requests");
    begin
+      Trace ("Test_Bad_Requests");
       Start_Server;
       declare
          R : constant String := Do_Request ("GARBAGE" & CRLF & CRLF);
@@ -306,10 +306,10 @@ package body Http_Suite is
    --  registered).
    procedure Test_Client_404 (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      Trace ("Test_Client_404");
       Resp : Response_Access;
       Err  : Errors.Error_Access;
    begin
+      Trace ("Test_Client_404");
       Start_Server;
       Get (Base_URL & "/nope", Resp, Err);
       Assert (Err = Errors.No_Error, "GET 404: " & Err_Text (Err));
@@ -332,10 +332,10 @@ package body Http_Suite is
    --  spaces / non-digit status code).
    procedure Test_Client_Errors (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      Trace ("Test_Client_Errors");
       Resp : Response_Access;
       Err  : Errors.Error_Access;
    begin
+      Trace ("Test_Client_Errors");
       Get ("ftp://example.com/", Resp, Err);
       Assert (Err /= Errors.No_Error and then Resp = null,
               "expected scheme error");
@@ -377,8 +377,8 @@ package body Http_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      Trace ("Test_Echo_And_Catchall");
    begin
+      Trace ("Test_Echo_And_Catchall");
       Start_Server;
       Handle_Func ("/echo", Echo_Body'Access);
       Handle_Func ("/", Root_Body'Access);
@@ -411,11 +411,11 @@ package body Http_Suite is
    --  Test_Echo_And_Catchall so the mux already has "/echo".
    procedure Test_Client_Echo (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      Trace ("Test_Client_Echo");
       Resp : Response_Access;
       Err  : Errors.Error_Access;
       C    : Client;
    begin
+      Trace ("Test_Client_Echo");
       Start_Server;
       Post (Base_URL & "/echo", "text/plain", To_Bytes ("hello"),
             Resp, Err);

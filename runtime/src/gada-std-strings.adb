@@ -5,12 +5,20 @@
 --  with Unbounded_String and returned as String via To_String; the
 --  caller owns the (GC-managed) heap block.
 
-with Ada.Characters.Handling;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 
 package body Gada.Std.Strings is
 
-   use Ada.Characters.Handling;
+   --  ASCII-only case mapping. Ada.Characters.Handling maps Latin-1,
+   --  and UTF-8 lead bytes 16#C0#..16#FE# look like Latin-1 letters, so
+   --  per-byte Latin-1 mapping corrupts multi-byte text. Bytes >= 16#80#
+   --  therefore pass through unchanged (v1: non-ASCII letters are not
+   --  case-mapped — docs/imperfections.md).
+   function Upper (C : Character) return Character is
+     (if C in 'a' .. 'z' then Character'Val (Character'Pos (C) - 32) else C);
+
+   function Lower (C : Character) return Character is
+     (if C in 'A' .. 'Z' then Character'Val (Character'Pos (C) + 32) else C);
 
    --  Go's unicode.IsSpace for ASCII: space, HT, LF, VT, FF, CR.
    function Is_Go_Space (C : Character) return Boolean is
@@ -69,7 +77,7 @@ package body Gada.Std.Strings is
          return False;
       end if;
       for I in 0 .. A'Length - 1 loop
-         if To_Lower (A (A'First + I)) /= To_Lower (B (B'First + I)) then
+         if Lower (A (A'First + I)) /= Lower (B (B'First + I)) then
             return False;
          end if;
       end loop;
@@ -371,7 +379,7 @@ package body Gada.Std.Strings is
       R : String (S'Range);
    begin
       for I in S'Range loop
-         R (I) := To_Upper (S (I));
+         R (I) := Upper (S (I));
       end loop;
       return R;
    end To_Upper;
@@ -380,7 +388,7 @@ package body Gada.Std.Strings is
       R : String (S'Range);
    begin
       for I in S'Range loop
-         R (I) := To_Lower (S (I));
+         R (I) := Lower (S (I));
       end loop;
       return R;
    end To_Lower;

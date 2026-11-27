@@ -4,6 +4,9 @@
 --  same way (byte = Character), so the rune-oriented functions
 --  (Contains_Rune, Index_Rune, …) operate per byte. UTF-8-aware rune
 --  handling is a documented limitation (docs/imperfections.md).
+--  To_Upper/To_Lower/Equal_Fold map ASCII letters only; every byte
+--  >= 16#80# passes through unchanged, so UTF-8 text is never corrupted
+--  (Go also case-maps non-ASCII letters; v1 does not).
 --
 --  Index-returning functions keep Go's 0-based, -1-not-found contract
 --  (Integer, not Natural), so transpiled Go comparisons against -1 work

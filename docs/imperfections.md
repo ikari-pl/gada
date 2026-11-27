@@ -136,6 +136,12 @@ section at the bottom with the resolution commit / PR reference.
 *What "fixed" looks like:* the original `s = append(s, x)` shape compiles cleanly; the rewrite becomes a documented emit pass with its own unit test; the slice_append fixture restores its idiomatic Go shape.
 *Tracker:* none yet — Phase 3 will need similar hoisting for goroutine-captured locals.
 
+### Stdlib wave 1 is byte-oriented: no rune decoding
+*Where:* `runtime/src/gada-std-strings.adb`, `gada-std-strconv.adb`, `gada-std-fmt.adb` — Go strings are UTF-8 byte sequences and the ports treat Ada `String` the same way, but the rune-aware Go functions operate per byte.
+*Why not fixed yet:* Unicode case tables and `unicode.IsPrint` tables are a sizeable port of their own (Go's `unicode` package); wave 1 shipped the byte layer first. The rule the ports follow is "never corrupt UTF-8": non-ASCII bytes pass through unchanged rather than being mapped as Latin-1.
+*What "fixed" looks like:* `strings.ToUpper/ToLower/EqualFold` case-map non-ASCII letters (`ToUpper("café") = "CAFÉ"`); `Contains_Rune`/`Index_Rune` take a rune and decode UTF-8; `strconv.Quote` escapes non-printable runes as `\uXXXX` using the `unicode.IsPrint` tables.
+*Tracker:* `roadmap/05-stdlib-wave1.md` (strings / strconv items); revisit when a `unicode` port lands.
+
 ## Resolved
 
 ### In-tree bench harness scaffolding pending

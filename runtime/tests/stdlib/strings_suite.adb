@@ -112,6 +112,17 @@ package body Strings_Suite is
       Assert (Equal_Fold ("ABC", "abc"), "EqualFold ABC/abc");
       Assert (not Equal_Fold ("Go", "go1"), "length mismatch");
       Assert (not Equal_Fold ("abc", "abd"), "content mismatch");
+      --  Regression (PR #45 review #5): Latin-1 folding mapped the
+      --  UTF-8 lead byte 16#C0# onto 16#E0#, so distinct multi-byte
+      --  sequences compared equal. Only ASCII folds now.
+      Assert (not Equal_Fold ((1 => Character'Val (16#C0#)),
+                              (1 => Character'Val (16#E0#))),
+              "bytes >= 16#80# are not case-folded");
+      Assert (Equal_Fold ("Caf" & Character'Val (16#C3#)
+                            & Character'Val (16#A9#),
+                          "CAF" & Character'Val (16#C3#)
+                            & Character'Val (16#A9#)),
+              "ASCII folds around an intact UTF-8 rune");
    end Test_Equal_Fold;
 
    procedure Test_Prefix_Suffix (T : in out
@@ -264,6 +275,22 @@ package body Strings_Suite is
    begin
       Assert (To_Upper ("go") = "GO", "ToUpper");
       Assert (To_Lower ("GO") = "go", "ToLower");
+      --  Regression (PR #45 review #5): UTF-8 must survive case mapping
+      --  (Go: ToLower("Café") = "café", ToUpper("€uro") = "€URO").
+      declare
+         E_Acute : constant String :=
+           (Character'Val (16#C3#), Character'Val (16#A9#));
+         Euro    : constant String :=
+           (Character'Val (16#E2#), Character'Val (16#82#),
+            Character'Val (16#AC#));
+      begin
+         Assert (To_Lower ("Caf" & E_Acute) = "caf" & E_Acute,
+                 "ToLower keeps UTF-8 bytes");
+         Assert (To_Upper (Euro & "uro") = Euro & "URO",
+                 "ToUpper keeps UTF-8 bytes");
+         Assert (To_Upper ("Caf" & E_Acute) = "CAF" & E_Acute,
+                 "ToUpper leaves non-ASCII letters unmapped (v1)");
+      end;
       Assert (Map (Shout'Access, "abc1") = "ABC1", "Map");
    end Test_Case_And_Map;
 

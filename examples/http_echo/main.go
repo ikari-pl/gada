@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -18,7 +20,14 @@ func echo(w http.ResponseWriter, r *http.Request) {
 	var b []byte
 	var err error
 	var err2 error
-	err = json.Unmarshal(r.Body, &m)
+	var body []byte
+	var rerr error
+	body, rerr = io.ReadAll(r.Body)
+	if rerr != nil {
+		w.Write([]byte("read body failed"))
+		return
+	}
+	err = json.Unmarshal(body, &m)
 	if err != nil {
 		w.Write([]byte("bad json"))
 		return
@@ -40,6 +49,8 @@ func serve() {
 func main() {
 	var resp *http.Response
 	var err error
+	var rb []byte
+	var rerr2 error
 	http.HandleFunc("/echo", echo)
 	go serve()
 	for i := 0; i < 20; i = i + 1 {
@@ -52,11 +63,16 @@ func main() {
 	}
 	fmt.Println(resp.StatusCode)
 	resp, err = http.Post("http://127.0.0.1:18099/echo", "application/json",
-		[]byte("{\"N\":41,\"On\":true,\"R\":0.5}"))
+		bytes.NewReader([]byte("{\"N\":41,\"On\":true,\"R\":0.5}")))
 	if err != nil {
 		fmt.Println("post failed")
 		return
 	}
 	fmt.Println(resp.StatusCode)
-	fmt.Println(string(resp.Body))
+	rb, rerr2 = io.ReadAll(resp.Body)
+	if rerr2 != nil {
+		fmt.Println("read resp body failed")
+		return
+	}
+	fmt.Println(string(rb))
 }

@@ -109,6 +109,21 @@ func (tr *translator) stdlibCall(c *ast.CallExpr) (*ir.Call, bool, error) {
 			args[1] = u.X
 		}
 	}
+	// Phase 7: `http.Post(url, ct, bytes.NewReader(b))` — the port's
+	// Post takes the body as a Byte_Slice directly, so unwrap the
+	// NewReader wrapper and pass the slice itself.
+	if path == "net/http" && sel.Sel.Name == "Post" && len(args) == 3 {
+		if c2, ok := args[2].(*ir.Call); ok && len(c2.Args) == 1 {
+			if fsel, ok := c2.Fun.(*ir.Selector); ok &&
+				fsel.Sel == "NewReader" {
+				if xid, ok := fsel.X.(*ir.Ident); ok {
+					if tr.imports[xid.Name] == "bytes" {
+						args[2] = c2.Args[0]
+					}
+				}
+			}
+		}
+	}
 	call := &ir.Call{
 		Fun:  &ir.Selector{X: &ir.Ident{Name: id.Name}, Sel: sel.Sel.Name},
 		Args: args,

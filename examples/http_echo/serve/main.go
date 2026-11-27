@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -17,7 +18,12 @@ func echo(w http.ResponseWriter, r *http.Request) {
 	var b []byte
 	var err error
 	var err2 error
-	err = json.Unmarshal(r.Body, &m)
+	body, rerr := io.ReadAll(r.Body)
+	if rerr != nil {
+		w.Write([]byte("read body failed"))
+		return
+	}
+	err = json.Unmarshal(body, &m)
 	if err != nil {
 		w.Write([]byte("bad json"))
 		return

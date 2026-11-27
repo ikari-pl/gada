@@ -705,3 +705,53 @@ func f() {
 	check(fn.Body.List[1], "http.Get")
 	check(fn.Body.List[3], "c.Post")
 }
+
+// TestHTTPPostNewReaderUnwrap pins the Phase 7 translate rule:
+// `http.Post(url, ct, bytes.NewReader(b))` unwraps the NewReader so
+// the emitter passes the Byte_Slice directly — the port's Post takes
+// the body as a Byte_Slice, not an io.Reader.
+func TestHTTPPostNewReaderUnwrap(t *testing.T) {
+	t.Parallel()
+	src := `package p
+
+import (
+	"bytes"
+	"net/http"
+)
+
+func f() {
+	_, _ = http.Post("http://x/", "application/json", bytes.NewReader([]byte("{}")))
+}
+`
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "x.go", src, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	conf := types.Config{Importer: importer.Default()}
+	info := &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+	}
+	if _, err = conf.Check("p", fset, []*ast.File{af}, info); err != nil {
+		t.Fatalf("typecheck: %v", err)
+	}
+	tr, err := newTranslator(af, info)
+	if err != nil {
+		t.Fatalf("newTranslator: %v", err)
+	}
+	fn := af.Decls[1].(*ast.FuncDecl)
+	assign := fn.Body.List[0].(*ast.AssignStmt)
+	postCall := assign.Rhs[0].(*ast.CallExpr)
+	post, ok, err := tr.stdlibCall(postCall)
+	if err != nil || !ok {
+		t.Fatalf("stdlibCall(Post) = %v, %v, %v", post, ok, err)
+	}
+	if len(post.Args) != 3 {
+		t.Fatalf("Post args = %d, want 3", len(post.Args))
+	}
+	if _, stillCall := post.Args[2].(*ir.Call); stillCall {
+		t.Fatalf("Post body arg still a call (NewReader not unwrapped): %#v", post.Args[2])
+	}
+}

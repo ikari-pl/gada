@@ -1448,6 +1448,46 @@ func TestHTTPClientLowering(t *testing.T) {
 	}
 }
 
+// TestIOReadAllOverHTTPBody pins the Phase 7 `io.ReadAll(r.Body)`
+// lowering: the http port's Request/Response Body_K component is
+// already the whole body as a Byte_Slice, so the 2-LHS out-call
+// lowers to a direct assign plus a nil error rather than a call into
+// Gada.Std.IO.Read_All (whose Reader_Access signature does not apply).
+func TestIOReadAllOverHTTPBody(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"io", "net/http"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("r")},
+			Define: true,
+			RHS: []ir.Expr{&ir.ZeroVal{
+				Type: &ir.PointerType{Elem: &ir.NamedType{Name: "Request"}},
+			}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("body"), idn("rerr")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:  &ir.Selector{X: idn("io"), Sel: "ReadAll"},
+				Args: []ir.Expr{&ir.Selector{X: idn("r"), Sel: "Body"}},
+				ResultTypes: []ir.Type{
+					&ir.SliceType{Elem: &ir.ByteType{}}, &ir.ErrorType{},
+				},
+			}},
+		},
+	)
+	for _, want := range []string{
+		"Body_K := R.Body_K;",
+		"Rerr := Gada.Std.Errors.No_Error;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Read_All") {
+		t.Errorf("Read_All must not appear for a Body selector arg:\n%s", out)
+	}
+}
+
 // TestHTTPHandleFuncForcesMainTypesLayout pins the Phase 7 layout
 // rule: a package main file containing `http.HandleFunc(p, fn)` must
 // emit the three-unit Main_Types layout, because `fn'Access` is only

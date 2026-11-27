@@ -2138,6 +2138,35 @@ func (e *emitter) emitPendingHead() {
 	for _, ph := range e.pendingHead {
 		if ph.outCall != nil {
 			po := ph.outCall
+			// Phase 7: `body, err := io.ReadAll(r.Body)` — the http
+			// port's Request/Response Body_K component is already the
+			// whole body as a Byte_Slice, so the read lowers to a
+			// direct assign plus a nil error (the body is in memory;
+			// Gada.Std.IO.Read_All's Reader_Access signature does not
+			// apply).
+			if sel, ok := po.call.Fun.(*ir.Selector); ok && sel.Sel == "ReadAll" &&
+				len(po.call.Args) == 1 && len(po.lhs) == 2 {
+				if xid, ok := sel.X.(*ir.Ident); ok && xid.Name == "io" {
+					if _, imported := e.stdlibImports["io"]; imported {
+						if bsel, ok := po.call.Args[0].(*ir.Selector); ok &&
+							bsel.Sel == "Body" {
+							if bid, ok := bsel.X.(*ir.Ident); ok {
+								if pt, ok := e.localTypes[bid.Name].(*ir.PointerType); ok {
+									if nt, ok := pt.Elem.(*ir.NamedType); ok &&
+										(nt.Name == "Request" || nt.Name == "Response") {
+										e.needsStdErrors = true
+										e.println(po.lhs[0] + " := " +
+											e.emitExpr(po.call.Args[0]) + ";")
+										e.println(po.lhs[1] +
+											" := Gada.Std.Errors.No_Error;")
+										continue
+									}
+								}
+							}
+						}
+					}
+				}
+			}
 			args := make([]string, 0, len(po.call.Args)+len(po.lhs))
 			for _, a := range po.call.Args {
 				args = append(args, e.emitExpr(a))

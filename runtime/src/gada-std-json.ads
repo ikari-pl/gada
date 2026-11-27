@@ -20,7 +20,7 @@
 --  no type-id plumbing for the common case; the Value overloads are
 --  the reflect-driven path.
 
-with Ada.Containers;
+with Ada.Containers.Vectors;
 with Ada.Strings.Unbounded;
 with Gada.Reflect.Types;
 with Gada.Reflect.Values;

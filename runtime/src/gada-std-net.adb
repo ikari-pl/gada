@@ -749,7 +749,7 @@ package body Gada.Std.Net is
             --  shutdown(2) first: on POSIX, close alone does not wake a
             --  thread blocked in accept(2) on the same socket
             begin
-               GS.Shutdown_Socket (Sock, GS.Shut_Read_Write);
+               GS.Shutdown_Socket (Sock, GS.Shutdown_Both);
             exception
                when GS.Socket_Error => null;
             end;
@@ -918,7 +918,7 @@ package body Gada.Std.Net is
             --  shutdown(2) first: on POSIX, close alone does not wake a
             --  thread blocked in accept(2) on the same socket
             begin
-               GS.Shutdown_Socket (Sock, GS.Shut_Read_Write);
+               GS.Shutdown_Socket (Sock, GS.Shutdown_Both);
             exception
                when GS.Socket_Error => null;
             end;

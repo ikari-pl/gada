@@ -499,8 +499,12 @@ package body Gada.Std.Json is
                   if not VOK then
                      return;
                   end if;
-                  Member_Vectors.Append
-                    (Members, (To_Unbounded_String (Uc), V));
+                  declare
+                     M : constant Member :=
+                       (Key => To_Unbounded_String (Uc), Val => V);
+                  begin
+                     Member_Vectors.Append (Members, M);
+                  end;
                end;
             end;
          end;

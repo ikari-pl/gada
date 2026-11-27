@@ -77,26 +77,28 @@ package body Gada.Std.Strconv is
       return V;
    end Hex_N;
 
-   --  Appends the UTF-8 encoding of Rune (Go strings are UTF-8, so
-   --  \u/\U escapes in Unquote produce UTF-8 bytes).
-   procedure Append_Utf8 (Rune : Natural; Value : in out Unbounded_String) is
+   function Encode_Rune (Rune : Integer) return String is
+      --  Go's utf8.RuneError for anything that is not a scalar value.
+      R : constant Natural :=
+        (if Rune < 0 or else Rune > 16#10FFFF#
+           or else Rune in 16#D800# .. 16#DFFF#
+         then 16#FFFD# else Rune);
    begin
-      if Rune < 16#80# then
-         Append (Value, Character'Val (Rune));
-      elsif Rune < 16#800# then
-         Append (Value, Character'Val (16#C0# + Rune / 16#40#));
-         Append (Value, Character'Val (16#80# + Rune mod 16#40#));
-      elsif Rune < 16#10000# then
-         Append (Value, Character'Val (16#E0# + Rune / 16#1000#));
-         Append (Value, Character'Val (16#80# + Rune / 16#40# mod 16#40#));
-         Append (Value, Character'Val (16#80# + Rune mod 16#40#));
-      else
-         Append (Value, Character'Val (16#F0# + Rune / 16#40000#));
-         Append (Value, Character'Val (16#80# + Rune / 16#1000# mod 16#40#));
-         Append (Value, Character'Val (16#80# + Rune / 16#40# mod 16#40#));
-         Append (Value, Character'Val (16#80# + Rune mod 16#40#));
+      if R < 16#80# then
+         return (1 => Character'Val (R));
+      elsif R < 16#800# then
+         return (Character'Val (16#C0# + R / 16#40#),
+                 Character'Val (16#80# + R mod 16#40#));
+      elsif R < 16#10000# then
+         return (Character'Val (16#E0# + R / 16#1000#),
+                 Character'Val (16#80# + R / 16#40# mod 16#40#),
+                 Character'Val (16#80# + R mod 16#40#));
       end if;
-   end Append_Utf8;
+      return (Character'Val (16#F0# + R / 16#40000#),
+              Character'Val (16#80# + R / 16#1000# mod 16#40#),
+              Character'Val (16#80# + R / 16#40# mod 16#40#),
+              Character'Val (16#80# + R mod 16#40#));
+   end Encode_Rune;
 
    --  Decodes one escape sequence at S (I) (S (I) = '\'), appending the
    --  decoded bytes to Value and advancing I past the sequence. False
@@ -141,7 +143,8 @@ package body Gada.Std.Strconv is
                then
                   return False;
                end if;
-               Append_Utf8 (V, Value);
+               --  Go strings are UTF-8: \\u/\\U escapes encode it.
+               Append (Value, Encode_Rune (V));
                I := I + 2 + N;
             end;
          when '0' .. '7' =>

@@ -28,7 +28,7 @@ record `Fmt.Arg`, built with the `A` constructor overloads:
 | `%q` | double-quoted Go string literal | via `strconv.Quote` |
 | `%d` | decimal integer | `Int_Arg` |
 | `%b` `%o` `%x` `%X` | binary / octal / hex | `Int_Arg`; `#` adds `0b`/`0o`/`0x`/`0X` |
-| `%c` | character | `Int_Arg` (code point) or `Char_Arg` |
+| `%c` | character | `Int_Arg` (code point, written as UTF-8; U+FFFD for invalid code points) or `Char_Arg` |
 | `%t` | boolean | `true` / `false` |
 | `%f` `%F` | fixed float | default precision 6 |
 | `%e` `%E` | scientific | default precision 6 |
@@ -44,7 +44,7 @@ record `Fmt.Arg`, built with the `A` constructor overloads:
   Integers and floats both honour `+`/` `/`0`; float `±Inf`/`NaN` are
   only ever space-padded, `Inf` always carries its sign and `NaN` shows
   one only under `+`/` ` (Go's `fmtFloat`).
-- Width: decimal digits, e.g. `%5d`. Precision: `%.2f`, `%.3s`
+- Width: decimal digits, e.g. `%5d`, counted in runes (UTF-8 aware) like Go. Precision: `%.2f`, `%.3s`
   (truncates strings).
 - `*` (width from argument) is **not** supported in v1.
 

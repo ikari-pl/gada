@@ -116,17 +116,31 @@ package body Gada.Std.Fmt is
    function Bool_Text (B : Boolean) return String is
      (if B then "true" else "false");
 
-   --  Pads Acc to Sp.Width (space or zero padding, sign-aware for
+   --  Pads Acc to Sp.Width runes (space or zero padding, sign-aware for
    --  Zero_Pad when Sign_Pos > 0).
+   --  Go measures width in runes, not bytes: count every byte that is
+   --  not a UTF-8 continuation byte (16#80#..16#BF#).
+   function Rune_Count (S : String) return Natural is
+      N : Natural := 0;
+   begin
+      for C of S loop
+         if Character'Pos (C) not in 16#80# .. 16#BF# then
+            N := N + 1;
+         end if;
+      end loop;
+      return N;
+   end Rune_Count;
+
    function Pad (Acc : String; Sp : Spec; Numeric : Boolean;
                  Sign_Pos : Natural := 0) return String is
       N : constant Natural := Sp.Width;
+      W : constant Natural := Rune_Count (Acc);
    begin
-      if Acc'Length >= N then
+      if W >= N then
          return Acc;
       end if;
       declare
-         Fill : constant Natural := N - Acc'Length;
+         Fill : constant Natural := N - W;
       begin
          if Sp.Minus then
             return Acc & (1 .. Fill => ' ');
@@ -220,8 +234,9 @@ package body Gada.Std.Fmt is
                      if Sp.Hash then Append (Acc, "0X"); end if;
                      Append (Acc, Int_Base_U (Mag, 16, True));
                   when 'c' =>
-                     return Pad (String'(1 => Character'Val (X.I)),
-                                 Sp, False);
+                     --  Go writes the rune's UTF-8 encoding (U+FFFD
+                     --  for invalid code points).
+                     return Pad (Strconv.Encode_Rune (X.I), Sp, False);
                   when others =>
                      Bad := True;
                      return "%!" & Sp.Verb & "(BADVERB)";

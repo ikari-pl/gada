@@ -54,6 +54,38 @@ package body Fmt_Suite is
       Assert (Sprintf ("%b", (1 => A (5))) = "101", "%b");
       Assert (Sprintf ("%o", (1 => A (8))) = "10", "%o");
       Assert (Sprintf ("%c", (1 => A (65))) = "A", "%c");
+      --  Regression (PR #45 review #8): runes above 255 raised; Go
+      --  prints UTF-8, and U+FFFD for invalid code points.
+      declare
+         FFFD : constant String :=
+           (Character'Val (16#EF#), Character'Val (16#BF#),
+            Character'Val (16#BD#));
+      begin
+         Assert (Sprintf ("%c", (1 => A (16#4E16#)))
+                   = (Character'Val (16#E4#), Character'Val (16#B8#),
+                      Character'Val (16#96#)), "%c U+4E16");
+         Assert (Sprintf ("%c", (1 => A (16#E9#)))
+                   = (Character'Val (16#C3#), Character'Val (16#A9#)),
+                 "%c U+00E9");
+         Assert (Sprintf ("%c", (1 => A (16#1F600#)))
+                   = (Character'Val (16#F0#), Character'Val (16#9F#),
+                      Character'Val (16#98#), Character'Val (16#80#)),
+                 "%c U+1F600");
+         Assert (Sprintf ("%c", (1 => A (-1))) = FFFD, "%c negative");
+         Assert (Sprintf ("%c", (1 => A (16#D800#))) = FFFD,
+                 "%c surrogate");
+         Assert (Sprintf ("%c", (1 => A (16#110000#))) = FFFD,
+                 "%c beyond U+10FFFF");
+         Assert (Sprintf ("%5c", (1 => A (16#20AC#)))
+                   = "    " & (Character'Val (16#E2#), Character'Val (16#82#),
+                               Character'Val (16#AC#)),
+                 "%5c pads by runes, not bytes (Go)");
+         Assert (Sprintf ("%-6s|", (1 => A ("caf" & (Character'Val (16#C3#),
+                                                    Character'Val (16#A9#)))))
+                   = "caf" & (Character'Val (16#C3#), Character'Val (16#A9#))
+                     & "  |",
+                 "%-6s of café pads to 6 runes");
+      end;
       Assert (Sprintf ("%v", (1 => A (42))) = "42", "%v int");
       Assert (Sprintf ("100%%", (1 .. 0 => A (0))) = "100%", "%%");
    end Test_Sprintf_Int;

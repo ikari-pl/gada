@@ -76,6 +76,12 @@ package Gada.Std.Strconv is
    --  Go: func QuoteRune(c rune) string — single-quoted Go char literal.
    function Quote_Rune (C : Character) return String;
 
+   --  UTF-8 encoding of a rune (Go: string(r) / utf8.AppendRune). Values
+   --  that are not Unicode scalar values (negative, > 16#10FFFF#, or a
+   --  surrogate) encode as U+FFFD, exactly like Go. A GADA helper shared
+   --  by Unquote's \u escapes and fmt's %c.
+   function Encode_Rune (Rune : Integer) return String;
+
    --  Go: func Quote(s string) string — double-quoted Go literal with
    --  \a \b \f \n \r \t \v \\ \" and \xNN for other control bytes.
    function Quote (S : String) return String;

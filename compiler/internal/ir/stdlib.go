@@ -1,6 +1,9 @@
 package ir
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // StdlibPackages maps a Go standard-library import path to the Ada
 // package that ports it (Phase 5, stdlib wave 1). "fmt" is deliberately
@@ -29,3 +32,16 @@ var StdlibWave1 = func() []string {
 	sort.Strings(out)
 	return out
 }()
+
+// ImportLocalName is the name an import binds in its file: the alias
+// when one is given, otherwise the last path segment ("strings" for
+// "strings", "utf8" for "unicode/utf8"). The translator and the
+// emitter both resolve qualified names through it, so an aliased
+// import (`import str "strings"; str.ToUpper(x)`) lowers identically
+// on both sides.
+func ImportLocalName(path, alias string) string {
+	if alias != "" {
+		return alias
+	}
+	return path[strings.LastIndex(path, "/")+1:]
+}

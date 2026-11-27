@@ -40,6 +40,11 @@ type Package struct {
 type File struct {
 	Name    string
 	Imports []string
+	// Aliases maps an import path to its local name, for renamed
+	// imports only (`import str "strings"` → "strings": "str"). An
+	// unaliased import's local name is its last path segment; use
+	// ImportLocalName rather than reading this map directly.
+	Aliases map[string]string
 	Decls   []Decl
 }
 
@@ -1088,17 +1093,19 @@ func (p *Package) UnmarshalJSON(b []byte) error {
 
 func (f *File) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Kind    string   `json:"kind"`
-		Name    string   `json:"name"`
-		Imports []string `json:"imports"`
-		Decls   []Decl   `json:"decls"`
-	}{"File", f.Name, f.Imports, f.Decls})
+		Kind    string            `json:"kind"`
+		Name    string            `json:"name"`
+		Imports []string          `json:"imports"`
+		Aliases map[string]string `json:"aliases,omitempty"`
+		Decls   []Decl            `json:"decls"`
+	}{"File", f.Name, f.Imports, f.Aliases, f.Decls})
 }
 
 func (f *File) UnmarshalJSON(b []byte) error {
 	var aux struct {
 		Name    string            `json:"name"`
 		Imports []string          `json:"imports"`
+		Aliases map[string]string `json:"aliases"`
 		Decls   []json.RawMessage `json:"decls"`
 	}
 	if err := json.Unmarshal(b, &aux); err != nil {
@@ -1106,6 +1113,7 @@ func (f *File) UnmarshalJSON(b []byte) error {
 	}
 	f.Name = aux.Name
 	f.Imports = aux.Imports
+	f.Aliases = aux.Aliases
 	if aux.Decls == nil {
 		f.Decls = nil
 	} else {

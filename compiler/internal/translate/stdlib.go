@@ -28,14 +28,11 @@ func newTranslator(f *ast.File, info *types.Info) (*translator, error) {
 		if err != nil {
 			return nil, fmt.Errorf("translate: bad import path %s: %w", imp.Path.Value, err)
 		}
-		name := path
-		if i := lastSlash(path); i >= 0 {
-			name = path[i+1:]
-		}
+		alias := ""
 		if imp.Name != nil {
-			name = imp.Name.Name
+			alias = imp.Name.Name
 		}
-		tr.imports[name] = path
+		tr.imports[ir.ImportLocalName(path, alias)] = path
 	}
 	return tr, nil
 }
@@ -54,15 +51,6 @@ func transTypeAssert(e *ast.TypeAssertExpr) (*ir.TypeAssert, error) {
 }
 func transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
 	return (&translator{}).transTypeSwitch(s)
-}
-
-func lastSlash(s string) int {
-	for i := len(s) - 1; i >= 0; i-- {
-		if s[i] == '/' {
-			return i
-		}
-	}
-	return -1
 }
 
 // stdlibCall recognises `pkg.Member(args...)` where pkg is the local

@@ -263,7 +263,19 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		unboundedStrings:    map[string]bool{},
 	}
 	for _, imp := range f.Imports {
+		local := ir.ImportLocalName(imp, f.Aliases[imp])
+		if local == "." {
+			e.err = fmt.Errorf("emit: dot import of %q is not supported (qualified stdlib calls only)", imp)
+			return e
+		}
 		if imp == "fmt" {
+			if local != "fmt" {
+				// The fmt special case (isFmtPrintln) matches the
+				// literal `fmt` prefix; a renamed fmt would silently
+				// fall through to the method-call path.
+				e.err = fmt.Errorf("emit: renamed import of \"fmt\" (as %q) is not supported yet", local)
+				return e
+			}
 			// `fmt` keeps its Phase 1 special case (Gada.Core.IO.Print
 			// family) until Gada.Std.Fmt lands and supersedes it.
 			e.needsCoreIO = true
@@ -274,14 +286,9 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 			e.err = fmt.Errorf("emit: unsupported import %q (Phase 5 stdlib wave 1: %s)", imp, strings.Join(ir.StdlibWave1, ", "))
 			return e
 		}
-		// The local name of an unaliased import is the last path
-		// segment ("strings" for "strings"); aliased imports ride a
-		// later item.
-		base := imp
-		if i := strings.LastIndex(base, "/"); i >= 0 {
-			base = base[i+1:]
-		}
-		e.stdlibImports[base] = ada
+		// Keyed by the import's local name — the alias when renamed —
+		// exactly as the translator bound it.
+		e.stdlibImports[local] = ada
 		// Side with-clauses the ports need: strings pulls in
 		// Ada.Strings.Unbounded ([]string → String_Vectors of
 		// Unbounded_String, with To_String/To_Unbounded_String at

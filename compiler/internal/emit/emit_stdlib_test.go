@@ -456,3 +456,72 @@ func TestStdlibOutCallStringResultEmit(t *testing.T) {
 		}
 	}
 }
+
+// TestAliasedStdlibImport is the regression test for PR #45 review #13:
+// `import str "strings"; str.ToUpper(s)` must lower through the alias
+// (the emitter used to key stdlib imports by path segment only, so the
+// call fell through to the method-call path).
+func TestAliasedStdlibImport(t *testing.T) {
+	t.Parallel()
+	pkg := &ir.Package{Name: "p", Files: []*ir.File{{
+		Name:    "x.go",
+		Imports: []string{"strings"},
+		Aliases: map[string]string{"strings": "str"},
+		Decls: []ir.Decl{funcMain(
+			&ir.Assign{
+				LHS:    []ir.Expr{idn("u")},
+				Define: true,
+				RHS: []ir.Expr{&ir.Call{
+					Fun:         &ir.Selector{X: idn("str"), Sel: "ToUpper"},
+					Args:        []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"go"`}},
+					ResultTypes: []ir.Type{&ir.StringType{}},
+				}},
+			},
+			&ir.Call{
+				Fun:  &ir.Selector{X: idn("str"), Sel: "Contains"},
+				Args: []ir.Expr{idn("u"), &ir.Lit{Kind: ir.LitString, Value: `"G"`}},
+			},
+		)},
+	}}}
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := flattenSpaces(buf.String())
+	for _, want := range []string{
+		"with Gada.Std.Strings;",
+		`Gada.Std.Strings.To_Upper ("go")`,
+		`Gada.Std.Strings.Contains (`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Str.") {
+		t.Errorf("alias leaked into the Ada output:\n%s", out)
+	}
+}
+
+// TestUnsupportedImportForms pins the loud rejections that keep aliased
+// imports from silently miscompiling: a renamed fmt (whose Println
+// special case matches the literal `fmt` prefix) and dot imports.
+func TestUnsupportedImportForms(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		imp, alias, want string
+	}{
+		{"fmt", "f", `renamed import of "fmt"`},
+		{"strings", ".", "dot import"},
+	} {
+		pkg := &ir.Package{Name: "p", Files: []*ir.File{{
+			Name: "x.go", Imports: []string{c.imp},
+			Aliases: map[string]string{c.imp: c.alias},
+			Decls:   []ir.Decl{funcMain()},
+		}}}
+		var buf bytes.Buffer
+		err := Package(pkg, &buf)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("import %s %q: err = %v, want %q", c.alias, c.imp, err, c.want)
+		}
+	}
+}

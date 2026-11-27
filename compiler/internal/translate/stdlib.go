@@ -142,6 +142,14 @@ var fallbackResultTypes = map[string][]ir.Type{
 	},
 	"encoding/json.Unmarshal": {&ir.ErrorType{}},
 	"net/http.ListenAndServe": {&ir.ErrorType{}},
+	"net/http.Get": {
+		&ir.PointerType{Elem: &ir.NamedType{Name: "Response"}},
+		&ir.ErrorType{},
+	},
+	"net/http.Post": {
+		&ir.PointerType{Elem: &ir.NamedType{Name: "Response"}},
+		&ir.ErrorType{},
+	},
 }
 
 // goTypesToIR converts a go/types type to the IR type(s) it denotes.
@@ -188,6 +196,12 @@ func (tr *translator) goOneToIR(t types.Type) ir.Type {
 	case *types.Chan:
 		if elem := tr.goOneToIR(t.Elem()); elem != nil {
 			return &ir.ChanType{Elem: elem}
+		}
+	case *types.Pointer:
+		// Phase 7: *http.Response / *http.Request arrive here from
+		// call result types; carry the pointee.
+		if elem := tr.goOneToIR(t.Elem()); elem != nil {
+			return &ir.PointerType{Elem: elem}
 		}
 	case *types.Named:
 		// The predeclared `error` arrives as a *types.Named whose

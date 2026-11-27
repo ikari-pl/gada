@@ -1370,3 +1370,150 @@ func TestHTTPRequestPointerType(t *testing.T) {
 		}
 	}
 }
+
+// TestHTTPClientLowering pins the Phase 7 net/http client lowering:
+// `resp, err := http.Get(url)` is a 2-LHS out-call declaring
+// `Resp : Gada.Std.Http.Response_Access;` and emitting
+// `Gada.Std.Http.Get (Url, Resp, Err);`, `var c http.Client` declares
+// the protected object `C : Gada.Std.Http.Client;`, the method define
+// `resp2, err2 := c.Post(url, ct, body)` lowers to
+// `C.Post (Url, Ct, Body_K, Resp2, Err2);` (no `.all` — Client is a
+// protected object, not an access type), `resp.StatusCode` reads the
+// record component, and `string(resp.Body)` lowers to To_String over
+// the reserved-word-escaped `Resp.Body_K`.
+func TestHTTPClientLowering(t *testing.T) {
+	t.Parallel()
+	str := func(v string) *ir.Lit {
+		return &ir.Lit{Kind: ir.LitString, Value: "\"" + v + "\""}
+	}
+	respT := &ir.PointerType{Elem: &ir.NamedType{Name: "Response"}}
+	out := emitMain(t, []string{"net/http", "fmt"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("resp"), idn("err")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:  &ir.Selector{X: idn("http"), Sel: "Get"},
+				Args: []ir.Expr{str("http://x/")},
+				ResultTypes: []ir.Type{
+					respT, &ir.ErrorType{},
+				},
+			}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("c")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "Client"}}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("body")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.MakeSlice{Elem: &ir.ByteType{}, Len: litInt("2")}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("resp2"), idn("err2")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun: &ir.Selector{X: idn("c"), Sel: "Post"},
+				Args: []ir.Expr{
+					str("http://x/"), str("text/plain"), idn("body"),
+				},
+				ResultTypes: []ir.Type{
+					respT, &ir.ErrorType{},
+				},
+			}},
+		},
+		&ir.Assign{
+			LHS: []ir.Expr{idn("n")},
+			RHS: []ir.Expr{&ir.Selector{X: idn("resp"), Sel: "StatusCode"}},
+		},
+		&ir.ExprStmt{X: &ir.Call{
+			Fun: &ir.Selector{X: idn("fmt"), Sel: "Println"},
+			Args: []ir.Expr{&ir.BuiltinCall{
+				Name: "string",
+				Args: []ir.Expr{&ir.Selector{X: idn("resp"), Sel: "Body"}},
+			}},
+		}},
+	)
+	for _, want := range []string{
+		"Resp : Gada.Std.Http.Response_Access;",
+		"Gada.Std.Http.Get (\"http://x/\", Resp, Err);",
+		"C : Gada.Std.Http.Client;",
+		"C.Post (\"http://x/\", \"text/plain\", Body_K, Resp2, Err2);",
+		"N := Resp.StatusCode;",
+		"Gada.Std.Bytes.To_String (Resp.Body_K)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestHTTPHandleFuncForcesMainTypesLayout pins the Phase 7 layout
+// rule: a package main file containing `http.HandleFunc(p, fn)` must
+// emit the three-unit Main_Types layout, because `fn'Access` is only
+// legal for a library-level subprogram (Handler_Func is a
+// library-level access type) — nesting fn inside procedure Main would
+// be a non-local-pointer error. A file that imports net/http but only
+// calls ListenAndServe keeps the single-unit layout.
+func TestHTTPHandleFuncForcesMainTypesLayout(t *testing.T) {
+	t.Parallel()
+	str := &ir.Lit{Kind: ir.LitString, Value: `"/echo"`}
+	handleFunc := &ir.ExprStmt{X: &ir.Call{
+		Fun:  &ir.Selector{X: idn("http"), Sel: "HandleFunc"},
+		Args: []ir.Expr{str, idn("echo")},
+	}}
+	listenOnly := &ir.Assign{
+		LHS:    []ir.Expr{idn("err")},
+		Define: true,
+		RHS: []ir.Expr{&ir.Call{
+			Fun:  &ir.Selector{X: idn("http"), Sel: "ListenAndServe"},
+			Args: []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"127.0.0.1:0"`}},
+			ResultTypes: []ir.Type{
+				&ir.ErrorType{},
+			},
+		}},
+	}
+	mk := func(stmt ir.Stmt) *ir.Package {
+		return &ir.Package{Name: "main", Files: []*ir.File{
+			{Name: "x.go", Imports: []string{"net/http"}, Decls: []ir.Decl{
+				&ir.Function{Name: "echo"},
+				funcMain(stmt),
+			}},
+		}}
+	}
+	files, err := PackageFiles(mk(handleFunc))
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if _, ok := files["main_types.ads"]; !ok {
+		t.Errorf("HandleFunc file missing main_types.ads; got %v", fileKeys(files))
+	}
+	if _, ok := files["main_types.adb"]; !ok {
+		t.Errorf("HandleFunc file missing main_types.adb; got %v", fileKeys(files))
+	}
+	if !strings.Contains(files["main.adb"],
+		"Gada.Std.Http.Handle_Func (\"/echo\", Echo'Access);") {
+		t.Errorf("main.adb missing Handle_Func 'Access call:\n%s",
+			files["main.adb"])
+	}
+	if !strings.Contains(files["main_types.adb"], "procedure Echo") {
+		t.Errorf("main_types.adb missing library-level Echo:\n%s",
+			files["main_types.adb"])
+	}
+	files, err = PackageFiles(mk(listenOnly))
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if _, ok := files["main_types.ads"]; ok {
+		t.Errorf("ListenAndServe-only file must keep single-unit layout; got %v",
+			fileKeys(files))
+	}
+}
+
+func fileKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}

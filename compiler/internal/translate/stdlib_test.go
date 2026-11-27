@@ -155,9 +155,15 @@ func TestGoTypesToIR(t *testing.T) {
 	if len(rts) != 2 || rts[0].NodeKind() != "SliceType" || rts[1].NodeKind() != "ErrorType" {
 		t.Fatalf("(&translator{}).goTypesToIR(tuple) = %#v", rts)
 	}
+	// Phase 7: pointer shapes are carried as PointerType (emit later
+	// rejects non-stdlib pointees loudly).
+	rts = (&translator{}).goTypesToIR(types.NewPointer(types.Typ[types.Int]))
+	if len(rts) != 1 || rts[0].NodeKind() != "PointerType" {
+		t.Fatalf("(&translator{}).goTypesToIR(*int) = %#v, want [PointerType]", rts)
+	}
 	// Unknown shapes yield nil entries (callers fail loudly).
-	if rts := (&translator{}).goTypesToIR(types.NewPointer(types.Typ[types.Int])); len(rts) != 1 || rts[0] != nil {
-		t.Fatalf("(&translator{}).goTypesToIR(*int) = %#v, want [nil]", rts)
+	if rts := (&translator{}).goTypesToIR(types.NewSignatureType(nil, nil, nil, nil, nil, false)); len(rts) != 1 || rts[0] != nil {
+		t.Fatalf("(&translator{}).goTypesToIR(func) = %#v, want [nil]", rts)
 	}
 	if rts := (&translator{}).goTypesToIR(nil); rts != nil {
 		t.Fatalf("(&translator{}).goTypesToIR(nil) = %#v, want nil", rts)
@@ -634,4 +640,68 @@ func g(w http.ResponseWriter, r *http.Request) {}
 	if !ok || sel.Sel != "HandleFunc" {
 		t.Fatalf("HandleFunc Fun = %#v", hf.Fun)
 	}
+}
+
+// TestHTTPClientTranslate pins the Phase 7 net/http client result
+// types: `http.Get(url)` (stdlibCall path) and `c.Post(...)` (method
+// call path) both resolve to (*http.Response, error) — PointerType
+// over NamedType Response, then ErrorType — via go/types.
+func TestHTTPClientTranslate(t *testing.T) {
+	t.Parallel()
+	src := `package p
+
+import "net/http"
+
+func f() {
+	var c http.Client
+	resp, err := http.Get("http://x/")
+	_, _ = resp, err
+	r2, e2 := c.Post("http://x/", "text/plain", nil)
+	_, _ = r2, e2
+	_ = c
+}
+`
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "x.go", src, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	conf := types.Config{Importer: importer.Default()}
+	info := &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+	}
+	if _, err = conf.Check("p", fset, []*ast.File{af}, info); err != nil {
+		t.Fatalf("typecheck: %v", err)
+	}
+	tr, err := newTranslator(af, info)
+	if err != nil {
+		t.Fatalf("newTranslator: %v", err)
+	}
+	fn := af.Decls[1].(*ast.FuncDecl)
+	check := func(stmt ast.Stmt, want string) {
+		t.Helper()
+		as := stmt.(*ast.AssignStmt)
+		got, err := tr.transExpr(as.Rhs[0])
+		if err != nil {
+			t.Fatalf("transExpr: %v", err)
+		}
+		c, ok := got.(*ir.Call)
+		if !ok {
+			t.Fatalf("translated to %T, want *ir.Call", got)
+		}
+		if len(c.ResultTypes) != 2 ||
+			c.ResultTypes[0].NodeKind() != "PointerType" ||
+			c.ResultTypes[1].NodeKind() != "ErrorType" {
+			t.Fatalf("%s ResultTypes = %#v, want [PointerType, ErrorType]",
+				want, c.ResultTypes)
+		}
+		pt := c.ResultTypes[0].(*ir.PointerType)
+		if nt, ok := pt.Elem.(*ir.NamedType); !ok || nt.Name != "Response" {
+			t.Fatalf("%s pointee = %#v, want NamedType Response", want, pt.Elem)
+		}
+	}
+	check(fn.Body.List[1], "http.Get")
+	check(fn.Body.List[3], "c.Post")
 }

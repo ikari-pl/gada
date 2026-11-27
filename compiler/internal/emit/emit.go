@@ -182,6 +182,7 @@ type emitter struct {
 	interfaceNames       map[string]bool     // file-wide set of interface type names, so typeName renders a NamedType referring to an interface as the class-wide `Name'Class` view (which dispatches) rather than a plain type name. Populated alongside structByName.
 	dispatchMethodNames  map[string]bool     // file-wide set of interface method names — the only methods with an emitted subprogram (5b-i abstract op + 5c overriding body) and hence the only callable ones. A method-call selector whose name is absent would emit a dangling `X.M`, so emitCallStmt rejects it. Populated alongside interfaceNames.
 	emptyInterfaceNames  map[string]bool     // file-wide set of method-less interface names (Go's `any`, or a named `interface{}`). No concrete type derives an empty interface (5b), so a type assertion `x.(T)` whose operand is one has no legal Ada view conversion; emitTypeAssert rejects it. Populated alongside interfaceNames.
+	needsHandlerAccess   bool                // a http.HandleFunc(p, fn) call takes fn'Address as a library-level access value, so package main must use the three-unit Main_Types layout (siblings at library level), not nest them in procedure Main
 	stdlibImports        map[string]string   // Go local import name → Ada package (e.g. "strings" → "Gada.Std.Strings"), from StdlibPackages. Drives the `with Gada.Std.*;` clauses and the qualified-call lowering of `strings.ToUpper(x)` → `Gada.Std.Strings.To_Upper (X)`.
 	needsUnbounded       bool                // a []string ([]string → String_Vectors of Unbounded_String) is used → `with Ada.Strings.Unbounded;`
 	needsStdErrors       bool                // an error-typed value (e.g. os.ReadFile's err) is used → `with Gada.Std.Errors;`
@@ -549,6 +550,29 @@ func (e *emitter) recordSliceElem(elem ir.Type) {
 	}
 }
 
+// detectHandlerAccess implements the Phase 7 needsHandlerAccess
+// pre-scan: `http.HandleFunc(p, fn)` lowers to `Handle_Func (p,
+// fn'Access)`; fn'Access to the library-level Handler_Func is only
+// legal when fn is a library-level subprogram, so a package main file
+// with such a call must use the Main_Types layout (siblings at library
+// level) rather than nesting them in procedure Main.
+func (e *emitter) detectHandlerAccess(c *ir.Call) {
+	sel, ok := c.Fun.(*ir.Selector)
+	if !ok || sel.Sel != "HandleFunc" || len(c.Args) != 2 {
+		return
+	}
+	id, ok := sel.X.(*ir.Ident)
+	if !ok {
+		return
+	}
+	if pkg, ok := e.stdlibImports[id.Name]; !ok || pkg != "Gada.Std.Http" {
+		return
+	}
+	if _, ok := c.Args[1].(*ir.Ident); ok {
+		e.needsHandlerAccess = true
+	}
+}
+
 func (e *emitter) walkStmts(stmts []ir.Stmt) {
 	for _, s := range stmts {
 		e.walkStmt(s)
@@ -578,6 +602,7 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 			e.walkExpr(x)
 		}
 	case *ir.Call:
+		e.detectHandlerAccess(s)
 		e.walkExpr(s.Fun)
 		for _, x := range s.Args {
 			e.walkExpr(x)
@@ -725,6 +750,7 @@ func (e *emitter) walkExpr(x ir.Expr) {
 		// Call args are expressions too — the pre-scan must see them
 		// (e.g. `time.After(200 * time.Millisecond)` sets the Duration
 		// use-type flag from inside the arg list).
+		e.detectHandlerAccess(x)
 		e.walkExpr(x.Fun)
 		for _, a := range x.Args {
 			e.walkExpr(a)
@@ -895,7 +921,7 @@ func (e *emitter) run() error {
 	// emit three units: a spec (types + abstract op specs + overriding
 	// specs + plain-function specs), a body (subprogram bodies +
 	// metadata elaboration), and the Main procedure itself.
-	if e.pkgName == "main" && e.fileHasInterfaces() {
+	if e.pkgName == "main" && (e.fileHasInterfaces() || e.needsHandlerAccess) {
 		e.emitMainUnits(withs)
 		return e.err
 	}
@@ -1226,6 +1252,7 @@ func (e *emitter) stdlibValueType(name string) (string, bool) {
 // the port's Ada types when the net/http import is present.
 var httpTypeNames = map[string]bool{
 	"ResponseWriter": true, "Request": true,
+	"Response": true, "Client": true,
 }
 
 // httpAccessTypeNames are the http types that are access-to-protected
@@ -4566,6 +4593,19 @@ func (e *emitter) emitBuiltinCall(b *ir.BuiltinCall) string {
 		if elem, ok := e.sliceElemForExpr(b.Args[0]); ok {
 			if _, isByte := elem.(*ir.ByteType); isByte {
 				return "Gada.Std.Bytes.To_String (" + e.emitExpr(b.Args[0]) + ")"
+			}
+		}
+		// Phase 7: string(resp.Body) / string(r.Body) — the http port's
+		// Request/Response Body_K component is a Byte_Slice.
+		if sel, ok := b.Args[0].(*ir.Selector); ok && sel.Sel == "Body" {
+			if id, ok := sel.X.(*ir.Ident); ok {
+				if pt, ok := e.localTypes[id.Name].(*ir.PointerType); ok {
+					if nt, ok := pt.Elem.(*ir.NamedType); ok &&
+						(nt.Name == "Response" || nt.Name == "Request") {
+						return "Gada.Std.Bytes.To_String (" +
+							e.emitExpr(b.Args[0]) + ")"
+					}
+				}
 			}
 		}
 		e.fail(fmt.Errorf("emit: string(x) conversion supported only for []byte, got %T", b.Args[0]))

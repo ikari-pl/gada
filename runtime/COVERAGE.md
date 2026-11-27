@@ -541,24 +541,24 @@ parse/format tables, Split_Address, Resolve, Dial/Listen/Listen_Packet
 happy + error paths, Conn/Listener/Packet_Conn ops incl. closed-socket
 and EOF arms, Lookup_Host — are covered by Net_Suite, not excluded.
 
-### `runtime/src/gada-std-json.adb` (Phase 7 wave 3, item 2a)
+### `runtime/src/gada-std-json.adb` (Phase 7 wave 3, items 2a/2b)
 
 145-146 — `Unescape`'s `Code > 16#FFFF#` reject: unreachable, four hex
 digits cap Code at 0xFFFF (the surrogate-half reject at 140-142 IS
-covered by the `\uD800` bad case). 413-414, 425-426 — `Parse_Scalar`'s
+covered by the `\uD800` bad case). 392-393, 404-405 — `Parse_Scalar_At`'s
 `Constraint_Error` arms on `Long_Float'Value`: a syntactically valid
 JSON number always parses as a float64, so these cannot fire (the
-int64-overflow → float-widening arm 420-423 IS covered by the
-20-digit test). 485-487 — `Marshal`'s NaN arm: Go's encoder rejects
-NaN, but Ada has no portable non-finite `Long_Float` literal to test
-with. 153, 220, 228, 264, 329, 431, 435, 521, 548, 572, 591, 594,
-613 — lcov 2.4 no-return-block misattribution on declare / end-case /
-subprogram-header lines (same class as gada-std-net.adb). Everything
-else — Escape/Unescape tables incl. 2/3-byte UTF-8, Float_Image in
-both plain and scientific forms, Parse_Scalar over all scalar tokens
-plus malformed inputs, Encode_Value over registered descriptors, and
-all four Marshal/Unmarshal overloads incl. null no-op and kind
-mismatch — is covered by Json_Suite, not excluded.
+int64-overflow → float-widening arm IS covered by the 20-digit test).
+606-608 — `Marshal`'s NaN arm: Go's encoder rejects NaN, but Ada has no
+portable non-finite `Long_Float` literal to test with. 153, 220, 228,
+264, 310, 411, 638, 665, 689, 711 — lcov 2.4 no-return-block
+misattribution on declare / end / subprogram-header lines (same class
+as gada-std-net.adb). Everything else — Escape/Unescape tables incl.
+2/3-byte UTF-8, Float_Image in both plain and scientific forms,
+Parse_Scalar over all scalar tokens plus malformed inputs, Parse_Object
+(member kinds, escaped keys, every malformed shape), Encode_Value over
+registered descriptors, and all four Marshal/Unmarshal overloads incl.
+null no-op and kind mismatch — is covered by Json_Suite, not excluded.
 
 ### `runtime/src/gada-std-bytes.adb` (Phase 7 wave 3 delta)
 

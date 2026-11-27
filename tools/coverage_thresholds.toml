@@ -339,7 +339,7 @@ reason = "Close_Socket failure arm in Socket_Error handlers — see runtime/COVE
 # Rationale: runtime/COVERAGE.md (gada-std-json).
 [[exclude]]
 file = "runtime/src/gada-std-json.adb"
-lines = [145, 146, 413, 414, 425, 426, 485, 486, 487]
+lines = [145, 146, 392, 393, 404, 405, 606, 607, 608]
 reason = "unreachable-by-construction / non-portable arms — see runtime/COVERAGE.md"
 
 # lcov 2.4 no-return-block misattribution on declare/end-case/
@@ -347,5 +347,5 @@ reason = "unreachable-by-construction / non-portable arms — see runtime/COVERA
 # gada-std-net.adb). Rationale: runtime/COVERAGE.md (gada-std-json).
 [[exclude]]
 file = "runtime/src/gada-std-json.adb"
-lines = [153, 220, 228, 264, 329, 431, 435, 521, 548, 572, 591, 594, 613]
+lines = [153, 220, 228, 264, 310, 411, 638, 665, 689, 711]
 reason = "lcov block-terminator artifacts — see runtime/COVERAGE.md"

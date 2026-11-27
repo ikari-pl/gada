@@ -296,10 +296,10 @@ package body Json_Suite is
       Assert (OK and then Member_Vectors.Is_Empty (M), "empty object");
 
       Parse_Object
-        ("  { ""x"" : 42, ""s"" : ""a\nb"", ""b"" : true," &
+        ("  { ""x"" : 42, ""s"" : ""a\nb"", ""k\u0041y"" : 1," &
          " ""f"" : -1.5, ""n"" : null }  ", M, OK);
       Assert (OK, "object parse failed");
-      Assert (Integer (Member_Vectors.Length (M)) = 5,
+      Assert (Integer (Member_Vectors.Length (M)) = 6,
               "member count: " & Integer'Image
                 (Integer (Member_Vectors.Length (M))));
       declare
@@ -308,17 +308,20 @@ package body Json_Suite is
          M3 : constant Member := Member_Vectors.Element (M, 3);
          M4 : constant Member := Member_Vectors.Element (M, 4);
          M5 : constant Member := Member_Vectors.Element (M, 5);
+         M6 : constant Member := Member_Vectors.Element (M, 6);
       begin
          Assert (To_String (M1.Key) = "x" and then M1.Val.Kind = K_Int
                  and then M1.Val.I = 42, "member x");
          Assert (To_String (M2.Key) = "s" and then M2.Val.Kind = K_String
                  and then To_String (M2.Val.S) = "a" & Character'Val (10)
                  & "b", "member s");
-         Assert (To_String (M3.Key) = "b" and then M3.Val.Kind = K_Bool
-                 and then M3.Val.B, "member b");
-         Assert (To_String (M4.Key) = "f" and then M4.Val.Kind = K_Float
-                 and then M4.Val.F = -1.5, "member f");
-         Assert (To_String (M5.Key) = "n" and then M5.Val.Kind = K_Null,
+         Assert (To_String (M3.Key) = "kAy" and then M3.Val.Kind = K_Int
+                 and then M3.Val.I = 1, "member escaped key");
+         Assert (To_String (M4.Key) = "b" and then M4.Val.Kind = K_Bool
+                 and then M4.Val.B, "member b");
+         Assert (To_String (M5.Key) = "f" and then M5.Val.Kind = K_Float
+                 and then M5.Val.F = -1.5, "member f");
+         Assert (To_String (M6.Key) = "n" and then M6.Val.Kind = K_Null,
                  "member n");
       end;
 
@@ -332,6 +335,9 @@ package body Json_Suite is
       Check_Bad ("{""k"": 1,}");
       Check_Bad ("not an object");
       Check_Bad ("{""k"": 1} x");
+      Check_Bad ("{""k");
+      Check_Bad ("{""a\x"": 1}");
+      Check_Bad ("{""k"" 1}");
    end Test_Parse_Object;
 
    procedure Test_Float_Image (T : in out AUnit.Test_Cases.Test_Case'Class)

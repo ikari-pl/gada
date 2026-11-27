@@ -466,27 +466,54 @@ package body Http_Suite is
    begin
       Trace ("Test_Client_Echo");
       Start_Server;
+      Trace ("Client_Echo: server started, port" & The_Port'Image);
       for I in 1 .. 500 loop
-         Post (Base_URL & "/echo", "text/plain", To_Bytes ("hello"),
-               Resp, Err);
+         begin
+            Post (Base_URL & "/echo", "text/plain", To_Bytes ("hello"),
+                  Resp, Err);
+         exception
+            when X : others =>
+               Trace ("Client_Echo: Post raised: "
+                        & Ada.Exceptions.Exception_Information (X));
+               raise;
+         end;
+         if I <= 3 or else I = 500 then
+            Trace ("Client_Echo: post iter" & I'Image
+                     & " err=" & Err_Text (Err));
+         end if;
          exit when Err = Errors.No_Error;
          delay 0.001;
       end loop;
+      Trace ("Client_Echo: post loop done, err=" & Err_Text (Err));
       Assert (Err = Errors.No_Error, "POST: " & Err_Text (Err));
       Assert (Resp /= null and then Resp.StatusCode = 200,
               "POST expected 200");
       Assert (To_String (Resp.Body_K) = "echo:hello",
               "POST body mismatch: '" & To_String (Resp.Body_K) & "'");
+      Trace ("Client_Echo: post asserts ok, entering GET loop");
       for I in 1 .. 500 loop
-         C.Get (Base_URL & "/echo", Resp, Err);
+         begin
+            C.Get (Base_URL & "/echo", Resp, Err);
+         exception
+            when X : others =>
+               Trace ("Client_Echo: Get raised: "
+                        & Ada.Exceptions.Exception_Information (X));
+               raise;
+         end;
+         if I <= 3 or else I = 500 then
+            Trace ("Client_Echo: get iter" & I'Image
+                     & " err=" & Err_Text (Err));
+         end if;
          exit when Err = Errors.No_Error;
          delay 0.001;
       end loop;
+      Trace ("Client_Echo: get loop done, err=" & Err_Text (Err));
       Assert (Err = Errors.No_Error, "client GET: " & Err_Text (Err));
       Assert (Resp /= null and then Resp.StatusCode = 200,
               "client GET expected 200");
       Assert (To_String (Resp.Body_K) = "echo:",
               "client GET body mismatch: '" & To_String (Resp.Body_K) & "'");
+      Trace ("Client_Echo: stopping server");
       Stop_Server;
    end Test_Client_Echo;
 

@@ -114,6 +114,12 @@ package body Http_Suite is
    procedure Start_Server is
       Unused_G : Scheduler.Goroutine_Id;
    begin
+      --  an aborted predecessor test (failed assert skips its
+      --  Stop_Server) leaves the scheduler up with a blocked server
+      --  worker; recover first or our spawn would never run
+      if Scheduler_Up then
+         Stop_Server;
+      end if;
       The_Port := Free_Port;
       pragma Assert (The_Port > 0);
       if not Scheduler_Up then
@@ -177,6 +183,20 @@ package body Http_Suite is
       C.all.Close;
       return To_String (Acc);
    end Do_Request;
+
+   --  Get_Retry calls Get until it succeeds or the retry budget runs
+   --  out: the server binds asynchronously on the spawned worker, and
+   --  the http client (unlike Go's http.Get) does not retry a refused
+   --  dial itself.
+   procedure Get_Retry (URL : String; Resp : out Response_Access;
+                        Err : out Errors.Error_Access) is
+   begin
+      for I in 1 .. 500 loop
+         Get (URL, Resp, Err);
+         exit when Err = Errors.No_Error;
+         delay 0.001;
+      end loop;
+   end Get_Retry;
 
    procedure Echo_Body (W : Response_Writer; R : Request_Access) is
       N   : Natural;
@@ -317,7 +337,7 @@ package body Http_Suite is
       Trace ("Test_Client_404");
       Start_Server;
       Trace ("Client_404: server up, first GET");
-      Get (Base_URL & "/nope", Resp, Err);
+      Get_Retry (Base_URL & "/nope", Resp, Err);
       Trace ("Client_404: first GET done");
       Assert (Err = Errors.No_Error, "GET 404: " & Err_Text (Err));
       Assert (Resp /= null, "GET 404 returned null response");
@@ -328,7 +348,7 @@ package body Http_Suite is
               "expected 404 body");
       --  no path in the URL: Split_URL defaults Path to "/"
       Trace ("Client_404: second GET (no path)");
-      Get (Base_URL, Resp, Err);
+      Get_Retry (Base_URL, Resp, Err);
       Trace ("Client_404: second GET done");
       Assert (Err = Errors.No_Error, "GET no-path: " & Err_Text (Err));
       Assert (Resp /= null and then Resp.StatusCode = 404,
@@ -360,6 +380,9 @@ package body Http_Suite is
          Assert (Err /= Errors.No_Error and then Resp = null,
                  "expected refused-dial error");
       end;
+      if Scheduler_Up then
+         Stop_Server;
+      end if;
       Listen ("tcp", "127.0.0.1:0", Raw_L, Err);
       Assert (Err = Errors.No_Error, "raw listen: " & Err_Text (Err));
       if not Scheduler_Up then
@@ -426,14 +449,22 @@ package body Http_Suite is
    begin
       Trace ("Test_Client_Echo");
       Start_Server;
-      Post (Base_URL & "/echo", "text/plain", To_Bytes ("hello"),
-            Resp, Err);
+      for I in 1 .. 500 loop
+         Post (Base_URL & "/echo", "text/plain", To_Bytes ("hello"),
+               Resp, Err);
+         exit when Err = Errors.No_Error;
+         delay 0.001;
+      end loop;
       Assert (Err = Errors.No_Error, "POST: " & Err_Text (Err));
       Assert (Resp /= null and then Resp.StatusCode = 200,
               "POST expected 200");
       Assert (To_String (Resp.Body_K) = "echo:hello",
               "POST body mismatch: '" & To_String (Resp.Body_K) & "'");
-      C.Get (Base_URL & "/echo", Resp, Err);
+      for I in 1 .. 500 loop
+         C.Get (Base_URL & "/echo", Resp, Err);
+         exit when Err = Errors.No_Error;
+         delay 0.001;
+      end loop;
       Assert (Err = Errors.No_Error, "client GET: " & Err_Text (Err));
       Assert (Resp /= null and then Resp.StatusCode = 200,
               "client GET expected 200");

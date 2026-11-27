@@ -2,7 +2,7 @@
 --
 --  Covers Duration arithmetic + String (pinned to Go's output),
 --  Now/Since monotonic elapsed, Date + calendar accessors, UTC/Local
---  zone formatting, and After/NewTimer/Tick via goroutines.
+--  zone formatting (pinned TZ=UTC / Europe/Warsaw / Asia/Kolkata), and After/NewTimer/Tick via goroutines.
 
 with AUnit;
 with AUnit.Test_Cases;
@@ -22,6 +22,8 @@ package Time_Suite is
    procedure Test_Date_Accessors (T : in out
       AUnit.Test_Cases.Test_Case'Class);
    procedure Test_UTC_Local_Format (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Zones_Non_UTC (T : in out
       AUnit.Test_Cases.Test_Case'Class);
    procedure Test_After (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Timer_Stop (T : in out AUnit.Test_Cases.Test_Case'Class);

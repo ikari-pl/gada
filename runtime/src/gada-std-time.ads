@@ -3,8 +3,11 @@
 --  Go's time.Time carries a wall clock and a monotonic reading; the
 --  port stores both (Ada.Calendar.Time for the wall, Ada.Real_Time
 --  for the monotonic clock) so Since/Until measure real elapsed time,
---  not wall adjustments. The display zone is a UTC flag on the value:
---  Now returns Local (Go's default), UTC()/Local() convert the zone.
+--  not wall adjustments. Wall is always the true instant; the display
+--  zone is a UTC flag on the value (Now returns Local, Go's default;
+--  UTC()/Local() only flip it). Every calendar split and the RFC3339
+--  rendering pass the display zone's offset explicitly (0, or the
+--  host offset at that instant).
 --
 --  Go's time.Duration is int64 nanoseconds — modelled as a derived
 --  Long_Integer with the Go unit constants and String() formatting.
@@ -77,8 +80,8 @@ package Gada.Std.Time is
    function Since (T : Time) return Duration;
    function Until_K (T : Time; U : Time) return Duration;
 
-   --  Zone conversions (Go: t.UTC(), t.Local()) — same instant,
-   --  different display zone.
+   --  Zone conversions (Go: t.UTC(), t.Local()) — same instant (Wall
+   --  untouched), different display zone.
    function UTC (T : Time) return Time;
    function Local (T : Time) return Time;
 

@@ -9,7 +9,9 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 
 with AUnit.Assertions; use AUnit.Assertions;
 
+with Ada.Environment_Variables;
 with Ada.Real_Time;
+with Ada.Strings.Unbounded;
 with Gada.Async.Scheduler;
 with Gada.Std.Time; use Gada.Std.Time;
 
@@ -75,6 +77,8 @@ package body Time_Suite is
         (T, Test_Date_Accessors'Access, "Date + accessors");
       Register_Routine
         (T, Test_UTC_Local_Format'Access, "UTC/Local RFC3339");
+      Register_Routine
+        (T, Test_Zones_Non_UTC'Access, "Warsaw/Kolkata zone splits");
       Register_Routine (T, Test_After'Access, "After fires");
       Register_Routine (T, Test_Timer_Stop'Access, "NewTimer + Stop");
       Register_Routine (T, Test_Tick'Access, "Tick repeats");
@@ -144,39 +148,120 @@ package body Time_Suite is
       Assert (Nanosecond_Of (D) = 123_456_789, "nanosecond");
    end Test_Date_Accessors;
 
+   --  Pins the process time zone for a zone-dependent test: TZ plus
+   --  tzset(3) so the C library re-reads it (GNAT's UTC_Time_Offset
+   --  goes through localtime_r). Restore_TZ puts the host value back.
+   procedure C_Tzset with Import, Convention => C, External_Name => "tzset";
+
+   Saved_TZ     : Ada.Strings.Unbounded.Unbounded_String;
+   Saved_TZ_Set : Boolean := False;
+
+   procedure Set_TZ (Name : String) is
+   begin
+      if not Saved_TZ_Set then
+         Saved_TZ_Set := Ada.Environment_Variables.Exists ("TZ");
+         if Saved_TZ_Set then
+            Saved_TZ := Ada.Strings.Unbounded.To_Unbounded_String
+              (Ada.Environment_Variables.Value ("TZ"));
+         end if;
+      end if;
+      Ada.Environment_Variables.Set ("TZ", Name);
+      C_Tzset;
+   end Set_TZ;
+
+   procedure Restore_TZ is
+   begin
+      if Saved_TZ_Set then
+         Ada.Environment_Variables.Set
+           ("TZ", Ada.Strings.Unbounded.To_String (Saved_TZ));
+      else
+         Ada.Environment_Variables.Clear ("TZ");
+      end if;
+      Saved_TZ_Set := False;
+      C_Tzset;
+   end Restore_TZ;
+
    procedure Test_UTC_Local_Format (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
-      D  : constant Time :=
-        Date (2026, 11, 26, 7, 8, 9, 123_456_789, True);
-      LU : constant Time := Local (UTC (D));
    begin
-      Assert (RFC3339_Nano (UTC (D)) = "2026-11-26T07:08:09.123456789Z",
-              "UTC format, got " & RFC3339_Nano (UTC (D)));
-      --  Local keeps the instant; only the zone suffix differs.
-      Assert (Year (LU) = 2026 and Nanosecond_Of (LU) = 123_456_789,
-              "Local keeps instant");
+      Set_TZ ("UTC");
       declare
-         S : constant String := RFC3339_Nano (LU);
-      begin
-         Assert (S'Length >= 29 and then S (S'First .. S'First + 28)
-                   = "2026-11-26T07:08:09.123456789",
-                 "Local date-time part, got " & S);
-      end;
-      --  Converting a Local value exercises UTC's wall-shift body;
-      --  Local() on a Local value is the identity early return.
-      declare
+         D  : constant Time :=
+           Date (2026, 11, 26, 7, 8, 9, 123_456_789, True);
+         LU : constant Time := Local (UTC (D));
          DL : constant Time := Date (2026, 11, 26, 7, 8, 9, 123_456_789,
                                      False);
          U2 : constant Time := UTC (DL);
          L2 : constant Time := Local (DL);
       begin
+         Assert (RFC3339_Nano (UTC (D)) = "2026-11-26T07:08:09.123456789Z",
+                 "UTC format, got " & RFC3339_Nano (UTC (D)));
+         Assert (RFC3339_Nano (LU) = "2026-11-26T07:08:09.123456789+00:00",
+                 "Local under TZ=UTC, got " & RFC3339_Nano (LU));
          Assert (U2.UTC and then not L2.UTC,
                  "UTC() sets the zone flag, Local() keeps it");
          Assert (Nanosecond_Of (U2) = 123_456_789
                    and then Nanosecond_Of (L2) = 123_456_789,
                  "zone conversion keeps the instant");
       end;
+      Restore_TZ;
    end Test_UTC_Local_Format;
+
+   --  Regression (#2): Formatting splits defaulted to UTC while Calendar
+   --  splits and Time_Of were local, and UTC()/Local() shifted the
+   --  instant on top — every non-UTC host printed wrong hours. Pinned
+   --  against Go for a whole-hour and a half-hour offset zone.
+   procedure Test_Zones_Non_UTC (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      type Case_Rec is record
+         Zone, In_Local, Local_Date, Local_As_UTC, Midnight : access String;
+      end record;
+      Cases : constant array (1 .. 2) of Case_Rec :=
+        [(new String'("Europe/Warsaw"),
+          new String'("2026-11-26T08:08:09.123456789+01:00"),
+          new String'("2026-11-26T07:08:09.123456789+01:00"),
+          new String'("2026-11-26T06:08:09.123456789Z"),
+          new String'("2026-11-27T00:30:00+01:00")),
+         (new String'("Asia/Kolkata"),
+          new String'("2026-11-26T12:38:09.123456789+05:30"),
+          new String'("2026-11-26T07:08:09.123456789+05:30"),
+          new String'("2026-11-26T01:38:09.123456789Z"),
+          new String'("2026-11-27T05:00:00+05:30"))];
+   begin
+      for C of Cases loop
+         Set_TZ (C.Zone.all);
+         declare
+            U : constant Time :=
+              Date (2026, 11, 26, 7, 8, 9, 123_456_789, True);
+            L : constant Time :=
+              Date (2026, 11, 26, 7, 8, 9, 123_456_789, False);
+            M : constant Time := Local (Date (2026, 11, 26, 23, 30, 0, 0,
+                                              True));
+         begin
+            Assert (RFC3339_Nano (U) = "2026-11-26T07:08:09.123456789Z"
+                      and then Hour_Of (U) = 7,
+                    C.Zone.all & ": UTC date, got " & RFC3339_Nano (U));
+            Assert (RFC3339_Nano (Local (U)) = C.In_Local.all,
+                    C.Zone.all & ": UTC->Local, got "
+                    & RFC3339_Nano (Local (U)));
+            Assert (RFC3339_Nano (L) = C.Local_Date.all
+                      and then Hour_Of (L) = 7 and then Minute_Of (L) = 8,
+                    C.Zone.all & ": local date, got " & RFC3339_Nano (L));
+            Assert (RFC3339_Nano (UTC (L)) = C.Local_As_UTC.all,
+                    C.Zone.all & ": Local->UTC, got "
+                    & RFC3339_Nano (UTC (L)));
+            Assert (RFC3339_Nano (M) = C.Midnight.all and then Day (M) = 27
+                      and then Month (M) = 11 and then Year (M) = 2026,
+                    C.Zone.all & ": date rolls with the hour, got "
+                    & RFC3339_Nano (M));
+         end;
+      end loop;
+      Restore_TZ;
+   exception
+      when others =>
+         Restore_TZ;
+         raise;
+   end Test_Zones_Non_UTC;
 
    procedure Test_After (T : in out AUnit.Test_Cases.Test_Case'Class) is
       Unused_G : Scheduler.Goroutine_Id;

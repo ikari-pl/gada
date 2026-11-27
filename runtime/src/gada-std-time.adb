@@ -144,17 +144,34 @@ package body Gada.Std.Time is
               UTC  => False);
    end Now;
 
+   package TZ renames Ada.Calendar.Time_Zones;
+
+   --  The display zone's offset at T's instant: 0 for UTC, the host
+   --  zone's offset (DST-aware) for Local. Wall always holds the true
+   --  instant; every split passes this explicitly, because
+   --  Ada.Calendar.Formatting defaults to UTC while Ada.Calendar's own
+   --  Year/Month/Day/Time_Of use the host zone.
+   function Zone (T : Time) return TZ.Time_Offset is
+     (if T.UTC then 0 else TZ.UTC_Time_Offset (T.Wall));
+
    function Date (Year : Cal.Year_Number;
                   Month : Cal.Month_Number;
                   Day : Cal.Day_Number;
                   Hour, Minute, Second : Natural;
                   Ns : Natural;
                   In_UTC : Boolean) return Time is
+      Secs : constant Cal.Day_Duration :=
+        Cal.Day_Duration (Hour * 3600 + Minute * 60 + Second);
+      --  Components read as UTC first; for Local, re-read them in the
+      --  host offset in force at (approximately) that instant.
+      As_UTC : constant Cal.Time :=
+        Fmt.Time_Of (Year, Month, Day, Secs, Time_Zone => 0);
+      Off    : constant TZ.Time_Offset :=
+        (if In_UTC then 0 else TZ.UTC_Time_Offset (As_UTC));
    begin
       return (Mono => RT.Clock,
-              Wall => Cal.Time_Of
-                (Year, Month, Day,
-                 Cal.Day_Duration (Hour * 3600 + Minute * 60 + Second)),
+              Wall => Fmt.Time_Of (Year, Month, Day, Secs,
+                                   Time_Zone => Off),
               Ns   => Ns,
               UTC  => In_UTC);
    end Date;
@@ -173,56 +190,24 @@ package body Gada.Std.Time is
            (RT."-" (U.Mono, T.Mono))) * 1_000_000_000.0));
    end Until_K;
 
-   --  Zone conversions convert the WALL clock (Go: same instant, other
-   --  zone). The offset comes from Ada.Calendar.Time_Zones.
+   --  Zone conversions (Go: same instant, other zone): only the
+   --  display flag changes; Wall is the instant either way.
    function UTC (T : Time) return Time is
-   begin
-      if T.UTC then
-         return T;   --  already UTC: same wall
-      end if;
-      declare
-         Off : constant Ada.Calendar.Time_Zones.Time_Offset :=
-           Ada.Calendar.Time_Zones.UTC_Time_Offset (T.Wall);
-      begin
-         return (Mono => T.Mono,
-                 Wall => Cal."-"
-                   (T.Wall,
-                    Cal.Day_Duration
-                      (Standard.Duration (Integer (Off)) * 60.0)),
-                 Ns   => T.Ns,
-                 UTC  => True);
-      end;
-   end UTC;
+     ((T with delta UTC => True));
 
    function Local (T : Time) return Time is
-   begin
-      if not T.UTC then
-         return T;   --  already Local: same wall
-      end if;
-      declare
-         Off : constant Ada.Calendar.Time_Zones.Time_Offset :=
-           Ada.Calendar.Time_Zones.UTC_Time_Offset (T.Wall);
-      begin
-         return (Mono => T.Mono,
-                 Wall => Cal."+"
-                   (T.Wall,
-                    Cal.Day_Duration
-                      (Standard.Duration (Integer (Off)) * 60.0)),
-                 Ns   => T.Ns,
-                 UTC  => False);
-      end;
-   end Local;
+     ((T with delta UTC => False));
 
    function Year (T : Time) return Cal.Year_Number is
-     (Cal.Year (T.Wall));
+     (Fmt.Year (T.Wall, Time_Zone => Zone (T)));
    function Month (T : Time) return Cal.Month_Number is
-     (Cal.Month (T.Wall));
+     (Fmt.Month (T.Wall, Time_Zone => Zone (T)));
    function Day (T : Time) return Cal.Day_Number is
-     (Cal.Day (T.Wall));
+     (Fmt.Day (T.Wall, Time_Zone => Zone (T)));
    function Hour_Of (T : Time) return Natural is
-     (Natural (Fmt.Hour (T.Wall)));
+     (Natural (Fmt.Hour (T.Wall, Time_Zone => Zone (T))));
    function Minute_Of (T : Time) return Natural is
-     (Natural (Fmt.Minute (T.Wall)));
+     (Natural (Fmt.Minute (T.Wall, Time_Zone => Zone (T))));
    function Second_Of (T : Time) return Natural is
      (Natural (Fmt.Second (T.Wall)));
    function Nanosecond_Of (T : Time) return Natural is (T.Ns);
@@ -238,15 +223,15 @@ package body Gada.Std.Time is
       end if;
    end Dig2;
 
-   --  "2026-11-26T07:08:09" from the wall clock.
+   --  "2026-11-26T07:08:09" in T's display zone.
    function Image_Date_Time (T : Time) return String is
    begin
-      return Dig2 (Natural (Fmt.Year (T.Wall)))
-        & '-' & Dig2 (Natural (Fmt.Month (T.Wall)))
-        & '-' & Dig2 (Natural (Fmt.Day (T.Wall)))
-        & 'T' & Dig2 (Natural (Fmt.Hour (T.Wall)))
-        & ':' & Dig2 (Natural (Fmt.Minute (T.Wall)))
-        & ':' & Dig2 (Natural (Fmt.Second (T.Wall)));
+      return Dig2 (Natural (Year (T)))
+        & '-' & Dig2 (Natural (Month (T)))
+        & '-' & Dig2 (Natural (Day (T)))
+        & 'T' & Dig2 (Hour_Of (T))
+        & ':' & Dig2 (Minute_Of (T))
+        & ':' & Dig2 (Second_Of (T));
    end Image_Date_Time;
 
    --  "2026-11-26T07:08:09.123456789Z" (UTC) or "…+01:00" (Local).
@@ -259,9 +244,7 @@ package body Gada.Std.Time is
          Append (B, 'Z');
       else
          declare
-            Off  : constant Ada.Calendar.Time_Zones.Time_Offset :=
-              Ada.Calendar.Time_Zones.UTC_Time_Offset (T.Wall);
-            Mins : constant Integer := Integer (Off);
+            Mins : constant Integer := Integer (Zone (T));
             Sign : constant Character :=
               (if Mins < 0 then '-' else '+');
             A    : constant Natural := (if Mins < 0 then -Mins else Mins);

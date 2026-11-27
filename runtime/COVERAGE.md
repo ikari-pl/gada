@@ -475,13 +475,14 @@ the lcov 2.4 misattribution class documented above.
 
 ### `runtime/src/gada-std-time.adb` (Phase 6 wave 2)
 
-69, 231, 242, 455 — `end Append_Frac;`, `end Dig2;`, `end Image_Date_Time;`,
+70, 224, 235, 446 — `end Append_Frac;`, `end Dig2;`, `end Image_Date_Time;`,
 `end New_Timer;` terminators. Every contained line of these subprograms is
 hit by Time_Suite (Duration.String/Arith, Date + accessors, UTC/Local
 RFC3339, NewTimer + Stop are all green in the same run); lcov 2.4 leaves
 hit-count 0 on the block terminator itself. Same misattribution class as
-`gada-async-race.adb:80` documented above. The zone-conversion bodies of
-UTC()/Local() (from a Local value) are covered by Test_UTC_Local_Format,
+`gada-async-race.adb:80` documented above. UTC()/Local() and the
+zone-explicit splits are covered by Test_UTC_Local_Format and
+Test_Zones_Non_UTC (pinned TZ=UTC / Europe/Warsaw / Asia/Kolkata),
 the public Stop_All wrapper by Test_Stop_All, the Repeater's atomic
 Tick_Fire path by Test_Tick, and the one-shot Try_Fire claim by
 Test_Timer_Stop — none excluded.

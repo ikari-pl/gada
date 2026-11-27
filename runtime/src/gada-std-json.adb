@@ -321,19 +321,22 @@ package body Gada.Std.Json is
                end;
             end;
          when 't' =>
-            if Text (I .. Text'Last) = "true" then
+            if Text'Last - I + 1 >= 4 and then Text (I .. I + 3) = "true"
+            then
                V := (K_Bool, True);
                I := I + 4;
                OK := True;
             end if;
          when 'f' =>
-            if Text (I .. Text'Last) = "false" then
+            if Text'Last - I + 1 >= 5 and then Text (I .. I + 4) = "false"
+            then
                V := (K_Bool, False);
                I := I + 5;
                OK := True;
             end if;
          when 'n' =>
-            if Text (I .. Text'Last) = "null" then
+            if Text'Last - I + 1 >= 4 and then Text (I .. I + 3) = "null"
+            then
                V := (Kind => K_Null);
                I := I + 4;
                OK := True;

@@ -69,14 +69,18 @@ package body Gada.Std.Time is
       end;
    end Append_Frac;
 
+   use type Interfaces.Unsigned_64;
+
+   --  |N| in Unsigned_64: -Long_Integer'First overflows Long_Integer.
+   function Magnitude (N : Long_Integer) return Interfaces.Unsigned_64 is
+     (if N < 0 then Interfaces.Unsigned_64 (-(N + 1)) + 1
+      else Interfaces.Unsigned_64 (N));
+
    function To_String (D : Duration) return String is
-      use type Interfaces.Unsigned_64;
       Ns : constant Long_Integer := Long_Integer (D);
       --  Magnitude in Unsigned_64: -Long_Integer'First overflows
       --  (Go's math.MinInt64 Duration prints "-2562047h47m16.854775808s").
-      U  : constant Interfaces.Unsigned_64 :=
-        (if Ns < 0 then Interfaces.Unsigned_64 (-(Ns + 1)) + 1
-         else Interfaces.Unsigned_64 (Ns));
+      U  : constant Interfaces.Unsigned_64 := Magnitude (Ns);
       function L (X : Interfaces.Unsigned_64) return Long_Integer is
         (Long_Integer (X));
       B  : Unbounded_String;

@@ -1543,15 +1543,19 @@ func (e *emitter) emitMainUnits(withs []string) {
 		e.println("package body " + typesPkg + " is")
 		e.println("")
 		e.indent++
+		// JSON marshalers must precede the subprogram bodies that call
+		// them: Ada has no forward references within a declarative
+		// part, so a Json_Marshal_T emitted after the handler body
+		// that references it would not compile.
+		if len(e.jsonStructOrder) > 0 {
+			e.emitJSONMarshalers()
+			e.println("")
+		}
 		for i, fn := range l.others {
 			if i > 0 {
 				e.println("")
 			}
 			e.emitSubprogram(fn)
-		}
-		if len(e.jsonStructOrder) > 0 {
-			e.println("")
-			e.emitJSONMarshalers()
 		}
 		e.indent--
 		e.println("")

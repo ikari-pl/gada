@@ -43,7 +43,9 @@ func echo(w http.ResponseWriter, r *http.Request) {
 func serve() {
 	var err error
 	err = http.ListenAndServe("127.0.0.1:18099", nil)
-	fmt.Println(err)
+	if err != nil {
+		fmt.Println("serve returned")
+	}
 }
 
 func main() {

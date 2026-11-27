@@ -1599,3 +1599,54 @@ func TestHTTPServerStopBeforeShutdown(t *testing.T) {
 		t.Fatalf("Stop_Server must precede Scheduler.Shutdown in:\n%s", out)
 	}
 }
+
+// TestMainTypesLayoutJSONMarshalersBeforeBodies pins the ordering fix:
+// in the three-unit Main_Types layout, the generated Json_Marshal_T
+// subprograms must be emitted BEFORE the handler bodies that call them
+// (Ada has no forward references inside a declarative part), otherwise
+// main_types.adb does not compile ("Json_Marshal_Msg is undefined").
+func TestMainTypesLayoutJSONMarshalersBeforeBodies(t *testing.T) {
+	t.Parallel()
+	msg := &ir.TypeDecl{Name: "Msg", Underlying: &ir.StructType{Fields: []*ir.StructField{
+		{Name: "N", Type: &ir.IntType{}},
+	}}}
+	echo := &ir.Function{Name: "echo", Body: []ir.Stmt{
+		&ir.Assign{LHS: []ir.Expr{idn("m")}, Define: true,
+			RHS: []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "Msg"}}}},
+		&ir.Assign{LHS: []ir.Expr{idn("b"), idn("err")}, Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:  &ir.Selector{X: idn("json"), Sel: "Marshal"},
+				Args: []ir.Expr{idn("m")},
+				ResultTypes: []ir.Type{
+					&ir.SliceType{Elem: &ir.ByteType{}}, &ir.ErrorType{},
+				},
+			}}},
+	}}
+	pkg := &ir.Package{Name: "main", Files: []*ir.File{
+		{Name: "x.go", Imports: []string{"net/http", "encoding/json"}, Decls: []ir.Decl{
+			msg,
+			echo,
+			funcMain(&ir.ExprStmt{X: &ir.Call{
+				Fun:  &ir.Selector{X: idn("http"), Sel: "HandleFunc"},
+				Args: []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"/echo"`}, idn("echo")},
+			}}),
+		}},
+	}}
+	files, err := PackageFiles(pkg)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	body, ok := files["main_types.adb"]
+	if !ok {
+		t.Fatalf("missing main_types.adb; got %v", fileKeys(files))
+	}
+	mi := strings.Index(body, "Json_Marshal_Msg")
+	ei := strings.Index(body, "procedure Echo")
+	if mi < 0 || ei < 0 {
+		t.Fatalf("marshaler or Echo body missing in main_types.adb:\n%s", body)
+	}
+	if mi > ei {
+		t.Errorf("Json_Marshal_Msg (offset %d) emitted after the Echo body (offset %d); "+
+			"Ada needs it before — no forward references in a declarative part:\n%s", mi, ei, body)
+	}
+}

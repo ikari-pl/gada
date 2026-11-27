@@ -27,7 +27,13 @@ package Time_Suite is
       AUnit.Test_Cases.Test_Case'Class);
    procedure Test_After (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Timer_Stop (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Nonpositive (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Tick (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Tick_Slow_Receiver (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Timer_Queue (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Stop_All (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Time_Suite;

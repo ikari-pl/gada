@@ -267,7 +267,7 @@ reason = "Race.Image fall-through terminator — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-std-time).
 [[exclude]]
 file = "runtime/src/gada-std-time.adb"
-lines = [70, 224, 235, 445]
+lines = [68, 222, 233]
 reason = "end Append_Frac/Dig2/Image_Date_Time/New_Timer terminators — see runtime/COVERAGE.md"
 
 # Read_File's stream-read exception arm (62-68): the directory case is

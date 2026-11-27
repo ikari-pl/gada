@@ -2,10 +2,8 @@
 
 with Ada.Calendar.Formatting;
 with Ada.Calendar.Time_Zones;
-with Ada.Containers.Indefinite_Vectors;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 with Interfaces;
-with System;
 
 package body Gada.Std.Time is
 
@@ -256,231 +254,280 @@ package body Gada.Std.Time is
 
    ---------------------------------------------------------------
    --  Timers
+   --
+   --  Queue is a protected, deadline-ordered intrusive doubly linked
+   --  list of Timer_Nodes (O(1) Stop; insertion scans from the tail,
+   --  O(1) for the common "new deadline is the latest" case). Service
+   --  is the single timer task: it sleeps until the head deadline and
+   --  calls Fire_Due, which delivers every due entry *inside* the
+   --  protected action — so a Stop either removes a pending entry
+   --  (returns True, nothing is ever sent) or finds it gone (it fired;
+   --  returns False). Inserting a new head deadline kicks Service so
+   --  it re-reads the queue instead of oversleeping. With nothing
+   --  queued Service waits on an accept with a terminate alternative,
+   --  so it never keeps a program's environment task alive by itself.
    ---------------------------------------------------------------
 
-   protected body Timer_Core is
-
-      procedure Setup (Ch_Val : Time_Channels.Channel;
-                       Dly_Val : Duration) is
-      begin
-         Chan := Ch_Val;
-         Dly  := Dly_Val;
-      end Setup;
-
-      function Ch return Time_Channels.Channel is (Chan);
-      function D return Duration is (Dly);
-
-      procedure Stop is
-      begin
-         S := True;
-      end Stop;
-
-      function Stopped return Boolean is (S);
-
-      procedure Try_Fire is
-      begin
-         if not S then
-            Time_Channels.Send (Chan, True);
-            S := True;
-         end if;
-      end Try_Fire;
-
-      procedure Tick_Fire (Fired : out Boolean) is
-      begin
-         Fired := not S;
-         if not S then
-            Time_Channels.Send (Chan, True);
-         end if;
-      end Tick_Fire;
-
-   end Timer_Core;
-
-   function To_Span (D : Duration) return Standard.Duration is
-     (Standard.Duration (Long_Float (Long_Integer (D)) / 1.0e9));
-
-   --  Timer tasks sleep in slices of at most Slice_Limit so a Stop
-   --  is noticed within that bound and the task can terminate (a
-   --  never-stopped Repeater would block its master's completion).
-   Slice_Limit : constant Duration := 50 * Millisecond;
-
-   --  Registry of live timers: pins the heap task objects for the GC
-   --  and lets Stop_Channel find the timer feeding a bare channel.
-   type Timer_Entry is record
-      Core : Timer_Core_Access;
-      Ch   : Time_Channels.Channel;
-      Obj  : System.Address;
-   end record;
-
-   package Entry_Vectors is
-      new Ada.Containers.Indefinite_Vectors (Positive, Timer_Entry);
-
+   use type RT.Time;
+   use type RT.Time_Span;
    use type Time_Channels.Channel;
 
-   protected type Keeper is
-      procedure Register (Core : Timer_Core_Access;
-                         Ch   : Time_Channels.Channel;
-                         Obj  : System.Address);
-      procedure Unregister (Ch : Time_Channels.Channel);
-      procedure Stop_For (Ch : Time_Channels.Channel);
-      procedure Stop_All;
+   protected Queue is
+      --  Link N in deadline order (FIFO among equal deadlines).
+      --  New_Head is True when N became the earliest deadline.
+      procedure Insert (N : Timer_Node_Access; New_Head : out Boolean);
+      --  Unlink N if queued; Was_Queued reports whether it was.
+      procedure Remove (N : Timer_Node_Access; Was_Queued : out Boolean);
+      --  Unlink the first queued node feeding Ch, if any.
+      procedure Remove_Channel (Ch : Time_Channels.Channel);
+      procedure Clear;
+      --  Earliest deadline, if anything is queued.
+      procedure Earliest (At_Time : out RT.Time; Any : out Boolean);
+      --  Deliver every entry due at Now: one-shots send and leave the
+      --  queue; tickers send only into an empty channel (Go's cap-1
+      --  drop) and re-queue one period on.
+      procedure Fire_Due (Now : RT.Time);
+      function Count return Natural;
    private
-      Items : Entry_Vectors.Vector;
-   end Keeper;
+      Head, Tail : Timer_Node_Access;
+      N_Queued   : Natural := 0;
+   end Queue;
 
-   protected body Keeper is
-      procedure Register (Core : Timer_Core_Access;
-                          Ch   : Time_Channels.Channel;
-                          Obj  : System.Address) is
-         E : constant Timer_Entry := (Core => Core, Ch => Ch, Obj => Obj);
-      begin
-         Items.Append (E);
-      end Register;
+   protected body Queue is
 
-      procedure Unregister (Ch : Time_Channels.Channel) is
-         use Ada.Containers;
+      procedure Unlink (N : Timer_Node_Access) is
       begin
-         for I in Items.First_Index .. Items.Last_Index loop
-            if Items (I).Ch = Ch then
-               Items.Delete (I);
+         if N.Prev = null then
+            Head := N.Next;
+         else
+            N.Prev.Next := N.Next;
+         end if;
+         if N.Next = null then
+            Tail := N.Prev;
+         else
+            N.Next.Prev := N.Prev;
+         end if;
+         N.Prev   := null;
+         N.Next   := null;
+         N.Queued := False;
+         N_Queued := N_Queued - 1;
+      end Unlink;
+
+      procedure Link (N : Timer_Node_Access) is
+         After_Node : Timer_Node_Access := Tail;
+      begin
+         while After_Node /= null
+           and then After_Node.Deadline > N.Deadline
+         loop
+            After_Node := After_Node.Prev;
+         end loop;
+         N.Prev := After_Node;
+         if After_Node = null then
+            N.Next := Head;
+            Head   := N;
+         else
+            N.Next := After_Node.Next;
+            After_Node.Next := N;
+         end if;
+         if N.Next = null then
+            Tail := N;
+         else
+            N.Next.Prev := N;
+         end if;
+         N.Queued := True;
+         N_Queued := N_Queued + 1;
+      end Link;
+
+      procedure Insert (N : Timer_Node_Access; New_Head : out Boolean) is
+      begin
+         Link (N);
+         New_Head := Head = N;
+      end Insert;
+
+      procedure Remove (N : Timer_Node_Access; Was_Queued : out Boolean) is
+      begin
+         Was_Queued := N.Queued;
+         if Was_Queued then
+            Unlink (N);
+         end if;
+      end Remove;
+
+      procedure Remove_Channel (Ch : Time_Channels.Channel) is
+         N : Timer_Node_Access := Head;
+      begin
+         while N /= null loop
+            if N.Ch = Ch then
+               Unlink (N);
                return;
             end if;
+            N := N.Next;
          end loop;
-      end Unregister;
+      end Remove_Channel;
 
-      procedure Stop_For (Ch : Time_Channels.Channel) is
+      procedure Clear is
       begin
-         for E of Items loop
-            if E.Ch = Ch then
-               E.Core.Stop;
+         while Head /= null loop
+            Unlink (Head);
+         end loop;
+      end Clear;
+
+      procedure Earliest (At_Time : out RT.Time; Any : out Boolean) is
+      begin
+         Any := Head /= null;
+         At_Time := (if Any then Head.Deadline else RT.Time_Last);
+      end Earliest;
+
+      procedure Fire_Due (Now : RT.Time) is
+         N : Timer_Node_Access;
+      begin
+         while Head /= null and then Head.Deadline <= Now loop
+            N := Head;
+            Unlink (N);
+            if N.Period = RT.Time_Span_Zero then
+               Time_Channels.Send (N.Ch, True);
+            else
+               if Time_Channels.Length (N.Ch) = 0 then
+                  Time_Channels.Send (N.Ch, True);
+               end if;
+               --  Next tick one period on; if the service fell behind
+               --  by more than a period, realign on Now (dropping the
+               --  missed ticks, as Go's runtime timer does).
+               N.Deadline := N.Deadline + N.Period;
+               if N.Deadline <= Now then
+                  N.Deadline := Now + N.Period;
+               end if;
+               Link (N);
             end if;
          end loop;
-      end Stop_For;
+      end Fire_Due;
 
-      procedure Stop_All is
-      begin
-         for E of Items loop
-            E.Core.Stop;
-         end loop;
-      end Stop_All;
-   end Keeper;
+      function Count return Natural is (N_Queued);
 
-   Keep : Keeper;
+   end Queue;
 
-   --  Task discriminants must be access types; the protected core
-   --  rides inside a heap record.
-   type Timer_Rec is record
-      Core : Timer_Core_Access;
-   end record;
+   task Service is
+      entry Kick;
+   end Service;
 
-   type Timer_Rec_Access is access all Timer_Rec;
-
-   --  No discriminants (GNAT rejects discriminant aggregates on task
-   --  allocators here); the heap record is handed over via a Set entry.
-   task type One_Shot is
-      entry Set (Rec : Timer_Rec_Access);
-   end One_Shot;
-
-   type One_Shot_Access is access all One_Shot;
-
-   task body One_Shot is
-      R         : Timer_Rec_Access;
-      Remaining : Duration;
-      Slice     : Duration;
+   task body Service is
+      Next : RT.Time;
+      Any  : Boolean;
    begin
-      accept Set (Rec : Timer_Rec_Access) do
-         R := Rec;
-      end Set;
-      Remaining := R.Core.D;
-      while Remaining > 0 and then not R.Core.Stopped loop
-         Slice := (if Remaining < Slice_Limit then Remaining
-                   else Slice_Limit);
-         delay To_Span (Slice);
-         Remaining := Remaining - Slice;
-      end loop;
-      R.Core.Try_Fire;   --  atomic stop-vs-send claim
-      Keep.Unregister (R.Core.Ch);
-   end One_Shot;
-
-   task type Repeater is
-      entry Set (Rec : Timer_Rec_Access);
-   end Repeater;
-
-   type Repeater_Access is access all Repeater;
-
-   task body Repeater is
-      R         : Timer_Rec_Access;
-      Remaining : Duration;
-      Slice     : Duration;
-      Fired     : Boolean;
-   begin
-      accept Set (Rec : Timer_Rec_Access) do
-         R := Rec;
-      end Set;
       loop
-         Remaining := R.Core.D;
-         while Remaining > 0 and then not R.Core.Stopped loop
-            Slice := (if Remaining < Slice_Limit then Remaining
-                      else Slice_Limit);
-            delay To_Span (Slice);
-            Remaining := Remaining - Slice;
-         end loop;
-         --  Atomic check-and-send; a Stop that lands before this call
-         --  suppresses the tick, one that lands after lets it through
-         --  (same race semantics as Go's Ticker.Stop).
-         R.Core.Tick_Fire (Fired);
-         exit when not Fired;
+         Queue.Earliest (Next, Any);
+         if Any then
+            select
+               accept Kick;
+            or
+               delay until Next;
+               Queue.Fire_Due (RT.Clock);
+            end select;
+         else
+            select
+               accept Kick;
+            or
+               terminate;
+            end select;
+         end if;
       end loop;
-      Keep.Unregister (R.Core.Ch);
-   end Repeater;
+   end Service;
 
-   function New_Timer (D : Duration) return Timer is
-      Core : constant Timer_Core_Access := new Timer_Core;
-      Rec : constant Timer_Rec_Access := new Timer_Rec'(Core => Core);
-      T   : constant One_Shot_Access := new One_Shot;
-   begin
-      Core.Setup (Time_Channels.Make, D);
-      T.Set (Rec);
-      Keep.Register (Core, Core.Ch, T.all'Address);
-      return (C => Core.Ch, Core => Core);
-   end New_Timer;
+   --  Durations beyond this are "never" in practice (and would
+   --  overflow Integer seconds / Real_Time arithmetic): such timers
+   --  are queued at Time_Last and never come due.
+   Max_Seconds : constant Long_Integer := 10 * 366 * 86_400;
 
-   procedure Stop (T : in out Timer) is
+   function Is_Never (D : Duration) return Boolean is
+     (Long_Integer (D) / 1_000_000_000 > Max_Seconds);
+
+   --  D (0 < D, not Is_Never) as a Real_Time span, nanosecond-exact.
+   function Span_Of (D : Duration) return RT.Time_Span is
+     (RT.Seconds (Integer (Long_Integer (D) / 1_000_000_000))
+      + RT.Nanoseconds (Integer (Long_Integer (D) mod 1_000_000_000)));
+
+   --  Queue a fresh node for Ch due after D (D > 0). Periodic nodes
+   --  re-arm every D.
+   function Arm (Ch : Time_Channels.Channel; D : Duration;
+                 Periodic : Boolean) return Timer_Node_Access is
+      N        : constant Timer_Node_Access := new Timer_Node;
+      New_Head : Boolean;
    begin
-      T.Core.Stop;
+      N.Ch := Ch;
+      if Is_Never (D) then
+         N.Deadline := RT.Time_Last;
+      else
+         N.Deadline := RT.Clock + Span_Of (D);
+         if Periodic then
+            N.Period := Span_Of (D);
+         end if;
+      end if;
+      Queue.Insert (N, New_Head);
+      if New_Head then
+         --  Service may be sleeping on a later deadline (or waiting
+         --  with nothing queued): make it re-read the head.
+         Service.Kick;
+      end if;
+      return N;
+   end Arm;
+
+   --  One-shot on a fresh channel: d <= 0 delivers at once (Go fires
+   --  such timers immediately); otherwise a queued node.
+   function One_Shot (D : Duration) return Timer is
+      Ch : constant Time_Channels.Channel := Time_Channels.Make;
+   begin
+      if D <= 0 then
+         Time_Channels.Send (Ch, True);
+         return (C => Ch, Node => new Timer_Node'(Ch => Ch, others => <>));
+      end if;
+      return (C => Ch, Node => Arm (Ch, D, Periodic => False));
+   end One_Shot;
+
+   function New_Timer (D : Duration) return Timer is (One_Shot (D));
+
+   function Stop (T : Timer) return Boolean is
+      Was_Queued : Boolean := False;
+   begin
+      if T.Node /= null then
+         Queue.Remove (T.Node, Was_Queued);
+      end if;
+      return Was_Queued;
+   end Stop;
+
+   procedure Stop (T : Timer) is
+      Unused : constant Boolean := Stop (T);
+   begin
+      null;
    end Stop;
 
    function Chan (T : Timer) return Time_Channels.Channel is (T.C);
 
    procedure Stop_Channel (Ch : Time_Channels.Channel) is
    begin
-      Keep.Stop_For (Ch);
+      Queue.Remove_Channel (Ch);
    end Stop_Channel;
 
    procedure Stop_All is
    begin
-      Keep.Stop_All;
+      Queue.Clear;
    end Stop_All;
 
+   function Pending_Timers return Natural is (Queue.Count);
+
    function After (D : Duration) return Time_Channels.Channel is
-      Core : constant Timer_Core_Access := new Timer_Core;
-      Rec : constant Timer_Rec_Access := new Timer_Rec'(Core => Core);
-      T   : constant One_Shot_Access := new One_Shot;
-   begin
-      Core.Setup (Time_Channels.Make, D);
-      T.Set (Rec);
-      Keep.Register (Core, Core.Ch, T.all'Address);
-      return Core.Ch;
-   end After;
+     (One_Shot (D).C);
 
    function Tick (D : Duration) return Time_Channels.Channel is
-      Core : constant Timer_Core_Access := new Timer_Core;
-      Rec : constant Timer_Rec_Access := new Timer_Rec'(Core => Core);
-      T   : constant Repeater_Access := new Repeater;
    begin
-      Core.Setup (Time_Channels.Make, D);
-      T.Set (Rec);
-      Keep.Register (Core, Core.Ch, T.all'Address);
-      return Core.Ch;
+      if D <= 0 then
+         return Time_Channels.No_Channel;
+      end if;
+      declare
+         Ch     : constant Time_Channels.Channel := Time_Channels.Make;
+         Unused : constant Timer_Node_Access :=
+           Arm (Ch, D, Periodic => True);
+      begin
+         return Ch;
+      end;
    end Tick;
 
 end Gada.Std.Time;

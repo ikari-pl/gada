@@ -12,9 +12,8 @@
 --  Go's time.Duration is int64 nanoseconds — modelled as a derived
 --  Long_Integer with the Go unit constants and String() formatting.
 --
---  After/Tick/NewTimer are channels fed by dedicated Ada tasks that
---  block on Real_Time delays (one-shot and repeating), with a
---  protected Stop flag so Stop() prevents the pending send.
+--  After/Tick/NewTimer are channels fed by one timer-service task
+--  that owns a deadline-ordered queue (see the Timers section).
 
 with Ada.Calendar;
 with Ada.Real_Time;
@@ -100,7 +99,7 @@ package Gada.Std.Time is
    function RFC3339_Nano (T : Time) return String;
 
    ---------------------------------------------------------------
-   --  Timers — channels fed by Ada tasks on Real_Time delays
+   --  Timers — one timer-service task over a deadline-ordered queue
    ---------------------------------------------------------------
 
    --  v1: the channel element is a dummy Boolean (Go delivers the
@@ -109,61 +108,64 @@ package Gada.Std.Time is
    package Time_Channels is
       new Gada.Async.Channels.Unbounded (Boolean);
 
-   --  Timer_Core carries the channel + delay + stop flag; the timer
-   --  tasks hold it by access (task discriminants must be access
-   --  types, so the channel itself rides inside this protected).
-   protected type Timer_Core is
-      procedure Setup (Ch_Val : Time_Channels.Channel;
-                     Dly_Val : Duration);
-      function Ch return Time_Channels.Channel;
-      function D return Duration;
-      procedure Stop;
-      function Stopped return Boolean;
-      --  Atomic check-and-send: if not stopped, sends True on the
-      --  channel and marks the timer fired, all under the protected
-      --  lock — a Stop landing after this returns is a no-op (the
-      --  timer already fired, matching Go's Stop returning False).
-      procedure Try_Fire;
-      --  Repeater variant: atomic check-and-send that does NOT set the
-      --  stop flag — a Tick channel keeps firing until Stop. Fired is
-      --  False when a Stop won the race (no send), True when the tick
-      --  was delivered.
-      procedure Tick_Fire (Fired : out Boolean);
-   private
-      Chan : Time_Channels.Channel := Time_Channels.No_Channel;
-      Dly  : Duration := 0;
-      S    : Boolean := False;
-   end Timer_Core;
-
-   type Timer_Core_Access is access all Timer_Core;
+   --  One queue entry per live timer (heap, owned by the queue while
+   --  pending). No task per timer: a single library-level service
+   --  task sleeps until the earliest deadline and fires every entry
+   --  that is due, so a time.After in a hot select loop costs one
+   --  small heap node, not an OS thread.
+   type Timer_Node is limited private;
+   type Timer_Node_Access is access all Timer_Node;
 
    --  Go: type Timer struct { C <-chan Time; ... }
    type Timer is record
       C    : Time_Channels.Channel;
-      Core : Timer_Core_Access;
+      Node : Timer_Node_Access;
    end record;
 
-   --  Go: time.NewTimer(d) — fires once after d on C.
+   --  Go: time.NewTimer(d) — fires once after d on C; d <= 0 fires
+   --  immediately (the value is already in C on return).
    function New_Timer (D : Duration) return Timer;
-   --  Go: timer.Stop() bool — v1: procedure; check Stopped after.
-   procedure Stop (T : in out Timer);
+   --  Go: timer.Stop() bool — True if the call stopped a pending
+   --  timer, False if it had already fired or been stopped. As in Go
+   --  (pre-1.23), a value already delivered stays in C.
+   function Stop (T : Timer) return Boolean;
+   --  Statement form of Stop (Go code usually discards the result).
+   procedure Stop (T : Timer);
    function Chan (T : Timer) return Time_Channels.Channel;
 
-   --  Go: time.After(d) <-chan Time — one-shot channel.
+   --  Go: time.After(d) <-chan Time — one-shot channel (d <= 0 fires
+   --  immediately).
    function After (D : Duration) return Time_Channels.Channel;
 
-   --  Go: time.Tick(d) <-chan Time — repeating (leaky by design in Go).
+   --  Go: time.Tick(d) <-chan Time — repeating. Like Go's ticker the
+   --  channel holds at most one pending tick: a tick that comes due
+   --  while the previous one is still unconsumed is dropped, so a slow
+   --  receiver never builds a backlog. d <= 0 returns No_Channel (Go
+   --  returns a nil channel) and arms nothing.
    function Tick (D : Duration) return Time_Channels.Channel;
 
    --  v1 extension (Go's After/Tick expose no handle): stops the timer
-   --  feeding Ch so its task terminates promptly. No-op if Ch is
-   --  unknown or already stopped.
+   --  feeding Ch. No-op if Ch is unknown, fired or already stopped.
    procedure Stop_Channel (Ch : Time_Channels.Channel);
 
-   --  v1 extension: stops every live timer (used by generated main
-   --  before Scheduler.Shutdown so a pending After/Tick cannot hang
-   --  process exit — Ada waits for dependent tasks at elaboration
-   --  finalization, Go does not).
+   --  v1 extension: stops every pending timer (hand-written Ada that
+   --  wants its environment task to finish while a Tick is live).
    procedure Stop_All;
+
+   --  Number of timers currently queued (pending one-shots plus live
+   --  tickers) — introspection for tests and deadlock detection.
+   function Pending_Timers return Natural;
+
+private
+
+   type Timer_Node is limited record
+      Ch       : Time_Channels.Channel;
+      Deadline : Ada.Real_Time.Time := Ada.Real_Time.Time_First;
+      --  Zero for a one-shot; the tick interval for Tick.
+      Period   : Ada.Real_Time.Time_Span := Ada.Real_Time.Time_Span_Zero;
+      Queued   : Boolean := False;
+      Prev     : Timer_Node_Access;
+      Next     : Timer_Node_Access;
+   end record;
 
 end Gada.Std.Time;

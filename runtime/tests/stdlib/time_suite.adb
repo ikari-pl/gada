@@ -14,6 +14,7 @@ with Ada.Real_Time;
 with Ada.Strings.Unbounded;
 with Gada.Async.Scheduler;
 with Gada.Std.Time; use Gada.Std.Time;
+use type Gada.Std.Time.Time_Channels.Channel;
 
 package body Time_Suite is
 
@@ -81,7 +82,13 @@ package body Time_Suite is
         (T, Test_Zones_Non_UTC'Access, "Warsaw/Kolkata zone splits");
       Register_Routine (T, Test_After'Access, "After fires");
       Register_Routine (T, Test_Timer_Stop'Access, "NewTimer + Stop");
+      Register_Routine (T, Test_Nonpositive'Access,
+                        "NewTimer/After/Tick with d <= 0");
       Register_Routine (T, Test_Tick'Access, "Tick repeats");
+      Register_Routine (T, Test_Tick_Slow_Receiver'Access,
+                        "Tick drops ticks for a slow receiver");
+      Register_Routine (T, Test_Timer_Queue'Access,
+                        "timer queue: many timers, earlier head kicks");
       Register_Routine (T, Test_Stop_All'Access, "Stop_All silences timers");
    end Register_Tests;
 
@@ -297,25 +304,112 @@ package body Time_Suite is
       Assert (not Watchdog_Hit, "watchdog did not fire");
    end Test_After;
 
-   procedure Test_Timer_Stop (T : in out AUnit.Test_Cases.Test_Case'Class) is
-      Tm  : Timer := New_Timer (30 * Millisecond);
-      Ctl : Timer := New_Timer (30 * Millisecond);
+   --  Wait up to Ms milliseconds for Ch to hold a value.
+   function Wait_Value (Ch : Time_Channels.Channel; Ms : Positive)
+     return Boolean is
    begin
-      Stop (Tm);   --  stopped before its 30ms deadline
-      --  Positive control: an unstopped timer of the same duration
-      --  MUST fire, so "stopped sent nothing" can actually fail.
-      Scheduler.Shutdown;
-      Scheduler.Init (Workers => 1);
-      for I in 1 .. 500 loop
-         exit when Time_Channels.Length (Chan (Ctl)) > 0;
+      for I in 1 .. Ms loop
+         if Time_Channels.Length (Ch) > 0 then
+            return True;
+         end if;
          delay 0.001;
       end loop;
-      Scheduler.Shutdown;
-      Assert (Time_Channels.Length (Chan (Ctl)) > 0,
+      return Time_Channels.Length (Ch) > 0;
+   end Wait_Value;
+
+   procedure Test_Timer_Stop (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      Tm  : constant Timer := New_Timer (20 * Millisecond);
+      --  Control deadline strictly later than Tm's, so "Ctl fired"
+      --  proves Tm's deadline had already passed (regression #14:
+      --  with equal deadlines a no-op Stop could still pass).
+      Ctl : constant Timer := New_Timer (80 * Millisecond);
+   begin
+      Assert (Stop (Tm), "Stop of a pending timer returns True");
+      Assert (not Stop (Tm), "second Stop returns False");
+      Assert (Wait_Value (Chan (Ctl), 5_000),
               "control timer fired (test can fail)");
       Assert (Time_Channels.Length (Chan (Tm)) = 0,
               "stopped timer sent nothing despite elapsed deadline");
+      --  Stop after fire: Go's Stop returns False, the value stays.
+      declare
+         F : constant Timer := New_Timer (Millisecond);
+      begin
+         Assert (Wait_Value (Chan (F), 5_000), "1ms timer fired");
+         Assert (not Stop (F), "Stop after fire returns False");
+         Assert (Time_Channels.Length (Chan (F)) = 1,
+                 "fired value stays in C");
+      end;
+      Stop (Ctl);  --  statement form on a fired timer: no-op
    end Test_Timer_Stop;
+
+   --  Go: NewTimer/After with d <= 0 fire immediately; Tick(d <= 0)
+   --  returns a nil channel and arms nothing (regression #9: it used
+   --  to spin a task flooding the channel).
+   procedure Test_Nonpositive (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      P0 : constant Natural := Pending_Timers;
+      Z  : constant Timer := New_Timer (0);
+      A  : constant Time_Channels.Channel := After (-5 * Second);
+   begin
+      Assert (Time_Channels.Length (Chan (Z)) = 1, "NewTimer(0) fired");
+      Assert (not Stop (Z), "Stop on a fired d<=0 timer is False");
+      Assert (Time_Channels.Length (A) = 1, "After(-5s) fired");
+      Assert (Tick (0) = Time_Channels.No_Channel, "Tick(0) is nil");
+      Assert (Tick (-Second) = Time_Channels.No_Channel,
+              "Tick(-1s) is nil");
+      Assert (Pending_Timers = P0, "d <= 0 queues nothing");
+   end Test_Nonpositive;
+
+   --  Regression (#8): a slow Tick receiver must not accumulate a
+   --  backlog — Go's ticker channel holds one tick and drops the rest.
+   procedure Test_Tick_Slow_Receiver (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Ch : constant Time_Channels.Channel := Tick (2 * Millisecond);
+      V, OK : Boolean;
+   begin
+      delay 0.06;  --  ~30 periods without receiving
+      Assert (Time_Channels.Length (Ch) = 1,
+              "at most one pending tick, got"
+              & Natural'Image (Time_Channels.Length (Ch)));
+      --  Draining it lets the next tick through.
+      Time_Channels.Receive (Ch, V, OK);
+      Assert (OK, "pending tick received");
+      Assert (Wait_Value (Ch, 5_000), "ticker keeps ticking");
+      Stop_Channel (Ch);
+   end Test_Tick_Slow_Receiver;
+
+   --  Regressions (#12, #15): timers are queue entries, not tasks —
+   --  many of them are cheap, register synchronously, and an earlier
+   --  deadline inserted after a later one still fires on time (the
+   --  service is kicked instead of oversleeping).
+   procedure Test_Timer_Queue (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      P0   : constant Natural := Pending_Timers;
+      Late : constant Timer := New_Timer (10 * Second);
+      Huge : constant Timer := New_Timer (Gada.Std.Time.Duration'Last);
+      Soon : Time_Channels.Channel;
+      T0   : constant RT.Time := RT.Clock;
+   begin
+      Soon := After (5 * Millisecond);
+      Assert (Pending_Timers = P0 + 3, "three timers queued");
+      Assert (Wait_Value (Soon, 2_000), "earlier deadline fired");
+      Assert (RT.To_Duration (RT."-" (RT.Clock, T0)) < 2.0,
+              "fired well before the 10s head");
+      Assert (Pending_Timers = P0 + 2, "fired one-shot left the queue");
+      for I in 1 .. 10_000 loop
+         declare
+            Unused : constant Time_Channels.Channel := After (Hour);
+         begin
+            null;
+         end;
+      end loop;
+      Assert (Pending_Timers = P0 + 10_002, "10k After entries queued");
+      Assert (Stop (Late) and then Stop (Huge), "stop the long timers");
+      Stop_All;
+      Assert (Pending_Timers = 0, "Stop_All empties the queue");
+      Assert (not Stop (Timer'(C => Soon, Node => null)),
+              "Stop on a node-less Timer is False");
+   end Test_Timer_Queue;
 
    procedure Test_Tick (T : in out AUnit.Test_Cases.Test_Case'Class) is
       Unused_G : Scheduler.Goroutine_Id;
@@ -340,16 +434,22 @@ package body Time_Suite is
 
    procedure Test_Stop_All (T : in out AUnit.Test_Cases.Test_Case'Class) is
       Tm : constant Timer := New_Timer (30 * Millisecond);
+      Tk : constant Time_Channels.Channel := Tick (Millisecond);
    begin
-      --  Stop_All is what generated mains call before Scheduler.Shutdown;
-      --  a pending timer must not fire afterwards.
       Stop_All;
-      for I in 1 .. 150 loop
-         exit when Time_Channels.Length (Chan (Tm)) > 0;
-         delay 0.001;
-      end loop;
+      --  Positive control armed after Stop_All, due later than Tm: once
+      --  it fires, Tm's deadline has passed, so an empty Tm proves
+      --  Stop_All actually stopped it.
+      declare
+         Ctl : constant Timer := New_Timer (80 * Millisecond);
+      begin
+         Assert (Wait_Value (Chan (Ctl), 5_000),
+                 "control timer fired (test can fail)");
+      end;
       Assert (Time_Channels.Length (Chan (Tm)) = 0,
               "Stop_All silenced a pending timer");
+      Assert (Time_Channels.Length (Tk) <= 1, "stopped ticker is quiet");
+      Assert (Pending_Timers = 0, "nothing left queued");
    end Test_Stop_All;
 
 end Time_Suite;

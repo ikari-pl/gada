@@ -41,6 +41,9 @@ record `Fmt.Arg`, built with the `A` constructor overloads:
 
 - Flags: `-` (left-justify), `+` (always sign), ` ` (space for positive
   sign), `#` (alternate base prefix), `0` (zero-pad, after sign/prefix).
+  Integers and floats both honour `+`/` `/`0`; float `±Inf`/`NaN` are
+  only ever space-padded, `Inf` always carries its sign and `NaN` shows
+  one only under `+`/` ` (Go's `fmtFloat`).
 - Width: decimal digits, e.g. `%5d`. Precision: `%.2f`, `%.3s`
   (truncates strings).
 - `*` (width from argument) is **not** supported in v1.

@@ -86,6 +86,34 @@ package body Fmt_Suite is
       Assert (Sprintf ("%.2f", (1 => A (-3.5))) = "-3.50", "%.2f negative");
       Assert (Sprintf ("%e", (1 => A (-31415.9))) = "-3.141590e+04",
               "%e negative");
+      --  Sign flags and sign-aware zero padding (PR #45 review #6);
+      --  every expected string is Go's fmt output.
+      Assert (Sprintf ("%+.1f", (1 => A (3.0))) = "+3.0", "%+.1f");
+      Assert (Sprintf ("% .1f", (1 => A (3.0))) = " 3.0", "% .1f");
+      Assert (Sprintf ("%+.2e", (1 => A (3.0))) = "+3.00e+00", "%+.2e");
+      Assert (Sprintf ("%08.2f", (1 => A (3.5))) = "00003.50", "%08.2f");
+      Assert (Sprintf ("%08.2f", (1 => A (-3.5))) = "-0003.50",
+              "%08.2f negative pads after the sign");
+      Assert (Sprintf ("%-8.2f|", (1 => A (-3.5))) = "-3.50   |",
+              "%-8.2f");
+      Assert (Sprintf ("%+08.2f", (1 => A (3.5))) = "+0003.50", "%+08.2f");
+      Assert (Sprintf ("% 08.2f", (1 => A (3.5))) = " 0003.50", "% 08.2f");
+      declare
+         Zero : Long_Float := 0.0;
+         Inf  : constant Long_Float := 1.0 / Zero;
+         NaN  : constant Long_Float := Inf - Inf;
+      begin
+         Assert (Sprintf ("%08.2f", (1 => A (Inf))) = "    +Inf",
+                 "Inf is space-padded, keeps its sign");
+         Assert (Sprintf ("%08.2f", (1 => A (-Inf))) = "    -Inf",
+                 "-Inf is space-padded");
+         Assert (Sprintf ("%v", (1 => A (Inf))) = "+Inf", "%v of Inf");
+         Assert (Sprintf ("% f", (1 => A (Inf))) = " Inf", "% f of Inf");
+         Assert (Sprintf ("%+f", (1 => A (NaN))) = "+NaN", "%+f of NaN");
+         Assert (Sprintf ("% f", (1 => A (NaN))) = " NaN", "% f of NaN");
+         Assert (Sprintf ("%-8f|", (1 => A (NaN))) = "NaN     |",
+                 "NaN drops the sign unless asked");
+      end;
    end Test_Sprintf_Float;
 
    procedure Test_Sprintf_Misc (T : in out AUnit.Test_Cases.Test_Case'Class) is

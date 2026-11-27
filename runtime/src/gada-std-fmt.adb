@@ -143,6 +143,40 @@ package body Gada.Std.Fmt is
       end;
    end Pad;
 
+   --  Applies the sign flags and padding to a formatted float, the way
+   --  Go's fmt.fmtFloat does: '+' forces a sign, ' ' puts a space where
+   --  a '+' would go, zero padding goes after the sign, and Inf/NaN are
+   --  only ever space-padded (NaN drops its sign unless one was asked
+   --  for).
+   function Float_Text (Raw : String; Sp : Spec) return String is
+      Signed : constant String :=
+        (if Raw (Raw'First) in '-' | '+' then Raw else '+' & Raw);
+      Digits_Part : constant String :=
+        Signed (Signed'First + 1 .. Signed'Last);
+      Sign   : constant Character :=
+        (if Signed (Signed'First) = '+' and then Sp.Space
+           and then not Sp.Plus
+         then ' ' else Signed (Signed'First));
+   begin
+      if Digits_Part (Digits_Part'First) in 'I' | 'N' then
+         declare
+            No_Zero : Spec := Sp;
+         begin
+            No_Zero.Zero := False;
+            if Digits_Part (Digits_Part'First) = 'N'
+              and then not Sp.Space and then not Sp.Plus
+            then
+               return Pad (Digits_Part, No_Zero, False);
+            end if;
+            return Pad (Sign & Digits_Part, No_Zero, False);
+         end;
+      end if;
+      if Sp.Plus or else Sign /= '+' then
+         return Pad (Sign & Digits_Part, Sp, True, Sign_Pos => 1);
+      end if;
+      return Pad (Digits_Part, Sp, True);
+   end Float_Text;
+
    --  Formats one argument per the spec; Bad is set for a verb that
    --  does not apply to the argument kind.
    function Format_Arg (X : Arg; Sp : Spec; Bad : out Boolean) return String
@@ -223,8 +257,8 @@ package body Gada.Std.Fmt is
                      if Prec < 0 and then Verb in 'f' | 'F' | 'e' | 'E' then
                         Prec := 6;  --  Go's default for fixed/exponent
                      end if;
-                     return Pad
-                       (Strconv.Format_Float (X.F, Verb, Prec), Sp, True);
+                     return Float_Text
+                       (Strconv.Format_Float (X.F, Verb, Prec), Sp);
                   when others =>
                      Bad := True;
                      return "%!" & Sp.Verb & "(BADVERB)";

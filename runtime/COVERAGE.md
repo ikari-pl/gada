@@ -571,9 +571,10 @@ this entry.
 
 ### `runtime/src/gada-std-http.adb` (Phase 7 wave 3, items 3-4)
 
-122, 181, 446, 558-559 — `end To_Lower;` / block `end;` terminators;
-126 — the `Read_Request` subprogram-header line; 160, 510 — `declare`
-markers: lcov 2.4 no-return-block misattribution, same class as the
+122, 181, 229, 323, 446, 558-559 — `end To_Lower;` / block `end;` /
+`end Serve_One;` terminators; 126 — the `Read_Request` subprogram-header
+line; 160, 210, 510 — `declare` markers: lcov 2.4 no-return-block
+misattribution, same class as the
 gada-std-time.adb / gada-std-json.adb entries (every contained line of
 these blocks is hit by Http_Suite). 147-148 and 245-247 — the
 `N = 0`-without-error arms of the header and body read loops:

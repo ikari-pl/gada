@@ -343,6 +343,10 @@ package body Http_Suite is
             & CRLF & "abc"), N, Err);
          C.all.Close;
       end;
+      --  let the server goroutine serve the truncated request (its
+      --  body read hits EOF -> 400) before Stop_Server can win the
+      --  accept race and drop the pending connection unserved
+      delay 0.1;
       Stop_Server;
    end Test_Bad_Requests;
 

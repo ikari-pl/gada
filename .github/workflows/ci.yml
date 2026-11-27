@@ -379,6 +379,36 @@ jobs:
           export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
           make example HELLO=timer_pool
 
+      - name: Run make example HELLO=http_echo
+        # The Phase-7 wave-3 http_echo item. The example self-tests: it
+        # spawns the net/http server on 127.0.0.1:18099 in a goroutine,
+        # then drives it with http.Get/http.Post (net/http client) and a
+        # json.Marshal/Unmarshal round-trip in the handler; output is
+        # diffed against expected_output.txt.
+        run: |
+          set -euo pipefail
+          export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
+          make example HELLO=http_echo
+
+      - name: Run examples/http_echo/integration_test.sh
+        # curl-driven end-to-end check for http_echo: builds the
+        # serve-only variant on 127.0.0.1:8080, starts it, POSTs a JSON
+        # payload with curl, and verifies status 200 + echoed body.
+        run: |
+          set -euo pipefail
+          export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
+          bash examples/http_echo/integration_test.sh
+
+      - name: Run make example HELLO=json_roundtrip
+        # The Phase-7 wave-3 json_roundtrip item. A struct with int /
+        # bool / float64 fields round-trips through json.Marshal ->
+        # json.Unmarshal and is compared field-by-field; output is
+        # diffed against expected_output.txt.
+        run: |
+          set -euo pipefail
+          export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
+          make example HELLO=json_roundtrip
+
       - name: Upload example binary as artifact
         # Always upload — even on failure the partially-built binary (when
         # present) is useful for post-mortem. `if-no-files-found: warn`

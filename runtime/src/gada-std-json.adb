@@ -451,7 +451,7 @@ package body Gada.Std.Json is
       Skip_Ws;
       if I <= Text'Last and then Text (I) = '}' then
          I := I + 1;
-         OK := True;
+         OK := Only_Ws_From (Text, I);
          return;
       end if;
       while I <= Text'Last loop
@@ -520,7 +520,7 @@ package body Gada.Std.Json is
             Skip_Ws;
          elsif Text (I) = '}' then
             I := I + 1;
-            OK := True;
+            OK := Only_Ws_From (Text, I);
             return;
          else
             return;

@@ -371,3 +371,19 @@ reason = "lcov block-terminator artifacts — see runtime/COVERAGE.md"
 file = "runtime/src/gada-std-http.adb"
 lines = [122, 126, 147, 148, 160, 166, 167, 181, 210, 229, 245, 246, 247, 323, 391, 392, 396, 397, 446, 495, 496, 497, 510, 558, 559]
 reason = "lcov terminator artifacts + unreachable defensive arms + non-CI-triggerable socket error arms — see runtime/COVERAGE.md"
+
+# lcov 2.4 no-return-block misattribution: Make_Table returns via
+# `return Tab;` on its own line, so the `end Make_Table;` terminator
+# carries hit-count 0 even though every contained line is hit
+# (Std_Hash_Suite exercises both polynomial-bit arms). Same class as
+# gada-std-time.adb / gada-std-http.adb terminators.
+# Rationale: runtime/COVERAGE.md (gada-std-hash-*).
+[[exclude]]
+file = "runtime/src/gada-std-hash-crc32.adb"
+lines = [25]
+reason = "end Make_Table terminator — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-hash-crc64.adb"
+lines = [25]
+reason = "end Make_Table terminator — see runtime/COVERAGE.md"

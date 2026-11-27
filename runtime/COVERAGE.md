@@ -602,6 +602,20 @@ covered by Http_Suite, not excluded.
 
 ---
 
+### `runtime/src/gada-std-hash-crc32.adb` / `gada-std-hash-crc64.adb` (Phase 8 wave 4, item 1)
+
+25 in each — `end Make_Table;` terminators: lcov 2.4 leaves hit-count 0
+on the block terminator because `Make_Table` returns via `return Tab;`
+on its own line; every contained line (both polynomial-bit arms of the
+table build) is hit by Std_Hash_Suite. Same misattribution class as the
+gada-std-time.adb / gada-std-http.adb entries. Everything else in the
+four hash ports — Make_Table, Update, Checksum(_IEEE), the FNV
+constructors/Write (both FNV-1 and FNV-1a arms)/Sum/Sum32/Sum64/Reset/
+Size, and Adler32 incl. the NMAX batching loop — is covered by
+Std_Hash_Suite with Go-1.27-pinned vectors, not excluded.
+
+---
+
 ### Adding a new exception
 
 1. Confirm the line is **genuinely** untestable in CI (not just

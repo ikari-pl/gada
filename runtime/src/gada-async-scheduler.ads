@@ -225,6 +225,16 @@ package Gada.Async.Scheduler is
    function Live_Goroutines return Natural;
    function Live_Workers return Natural;
 
+   --  True between Init and Shutdown.
+   function Is_Running return Boolean;
+
+   --  Worker count a later Init (Workers => 0) uses instead of
+   --  Number_Of_CPUs (Go runtime.GOMAXPROCS recorded while the pool
+   --  cannot be resized). 0 restores the Number_Of_CPUs default.
+   procedure Set_Default_Workers (N : Natural);
+   --  The count Init (Workers => 0) would start right now.
+   function Default_Workers return Positive;
+
 private
 
    --  A Goroutine_Id is a thin wrapper around the heap-allocated

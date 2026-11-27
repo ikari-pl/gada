@@ -8,12 +8,15 @@ package Gada.Std.Runtime is
    --  task as one (Go counts the main goroutine too).
    function Num_Goroutine return Natural;
 
-   --  Go runtime.GOMAXPROCS(n): n = 0 queries the live worker count;
-   --  n > 0 requests a resize and returns the previous count. v1
-   --  applies the resize immediately only from a non-goroutine
-   --  context (Shutdown would join every in-flight goroutine, which
-   --  deadlocks when called from inside one); from inside a
-   --  goroutine the call is a query and the old value is returned.
+   --  Go runtime.GOMAXPROCS(n): returns the previous setting (the
+   --  live worker count, or the count the next Init would start when
+   --  the scheduler is not running); n = 0 only queries. n > 0 resizes
+   --  the pool immediately when no goroutine is live; otherwise (v1
+   --  limitation — resizing means Shutdown, which would join live
+   --  goroutines and deadlock if they wait on the caller) the value is
+   --  recorded and takes effect at the next Scheduler.Init. Before
+   --  Init it is likewise recorded, so a generated main's Init picks
+   --  it up. Never blocks.
    function GOMAXPROCS (Set_To : Natural := 0) return Natural;
 
    --  Go runtime.Gosched: cooperative yield (no-op outside a

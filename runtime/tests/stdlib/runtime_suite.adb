@@ -77,6 +77,7 @@ package body Runtime_Suite is
 
    procedure Test_GOMAXPROCS (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
+      Unused_G : Scheduler.Goroutine_Id;
    begin
       Scheduler.Shutdown;
       Scheduler.Init (Workers => 2);
@@ -85,7 +86,30 @@ package body Runtime_Suite is
       --  the old count and applies the new one.
       Assert (GOMAXPROCS (3) = 2, "set returns previous count");
       Assert (GOMAXPROCS (0) = 3, "resize applied, now 3");
+      --  Regression (#10): with a goroutine parked on a channel only
+      --  main will feed, a resize must not join it (that deadlocked).
+      --  It is recorded instead and returns the old count at once.
+      Release_Chan := Unit_Channels.Make;
+      Ready_Count  := 0;
+      Unused_G := Scheduler.Spawn (Blocker_Body'Access);
+      for I in 1 .. 5_000 loop
+         exit when Ready_Count = 1;
+         delay 0.001;
+      end loop;
+      Assert (GOMAXPROCS (4) = 3, "live resize returns old count");
+      Assert (Scheduler.Live_Workers = 3, "live pool not resized");
+      Unit_Channels.Send (Release_Chan, True);
       Scheduler.Shutdown;
+      --  Recorded request applies at the next default Init.
+      Assert (GOMAXPROCS (0) = 4, "not running: reports the recorded 4");
+      Scheduler.Init;
+      Assert (Scheduler.Live_Workers = 4, "next Init used recorded 4");
+      Scheduler.Shutdown;
+      --  Before Init: recorded too (no stray pool is started).
+      Assert (GOMAXPROCS (2) = 4, "pre-Init set returns old setting");
+      Assert (not Scheduler.Is_Running, "pre-Init set starts nothing");
+      Assert (Scheduler.Default_Workers = 2, "pre-Init set recorded");
+      Scheduler.Set_Default_Workers (0);
    end Test_GOMAXPROCS;
 
    procedure Test_Gosched_And_GC (T : in out

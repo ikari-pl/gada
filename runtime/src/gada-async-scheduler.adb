@@ -562,11 +562,26 @@ package body Gada.Async.Scheduler is
 
    --  ## Public-API implementations
 
+   --  Set_Default_Workers override for Init (Workers => 0); 0 means
+   --  Number_Of_CPUs. Written only from the main task (GOMAXPROCS).
+   Requested_Workers : Natural := 0;
+
+   procedure Set_Default_Workers (N : Natural) is
+   begin
+      Requested_Workers := N;
+   end Set_Default_Workers;
+
+   function Default_Workers return Positive is
+     (if Requested_Workers = 0
+      then Positive (System.Multiprocessors.Number_Of_CPUs)
+      else Requested_Workers);
+
+   function Is_Running return Boolean is (Run_Queue.Is_Initialised);
+
    procedure Init (Workers : Natural := 0) is
       Effective_Workers : constant Active_Worker_Index :=
         (if Workers = 0
-         then Active_Worker_Index
-                (System.Multiprocessors.Number_Of_CPUs)
+         then Active_Worker_Index (Default_Workers)
          else Active_Worker_Index (Workers));
    begin
       if Run_Queue.Is_Initialised then

@@ -504,7 +504,7 @@ OS_Suite, not excluded.
 
 ### `runtime/src/gada-std-runtime.adb` (Phase 6 wave 2)
 
-31 — `end GOMAXPROCS;` terminator: lcov 2.4 leaves hit-count 0 on the
+37 — `end GOMAXPROCS;` terminator: lcov 2.4 leaves hit-count 0 on the
 block terminator even though every contained line is hit by
 Runtime_Suite (NumGoroutine/GOMAXPROCS/Gosched+GC all green in the same
 run; the GOMAXPROCS resize arm is covered by the main-task resize

@@ -8,6 +8,7 @@ package body Gada.Std.Http is
 
    use Gada.Std.Bytes;
    use Gada.Std.Errors;
+   use type Gada.Std.Net.Conn;
    use type Gada.Std.Net.Listener;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
@@ -301,13 +302,18 @@ package body Gada.Std.Http is
       C.all.Close;
    end Serve_One;
 
-   --  The listener the accept loop is bound to, so Stop_Server can
-   --  close it from another task and wake the blocked Accept.
+   --  The listener the accept loop is bound to plus a stop flag, so
+   --  Stop_Server can wake the blocked Accept from another task.
+   --  POSIX close(2)/shutdown(2) on a *listening* socket do not wake a
+   --  thread blocked in accept(2); the portable wake is a self-connect
+   --  to the listener's own address, which makes Accept return once.
    protected type Listener_Cell is
       procedure Set (NL : Gada.Std.Net.Listener);
       procedure Stop;
+      function Stopping return Boolean;
    private
       Cur : Gada.Std.Net.Listener;
+      Stop_Flag : Boolean := False;
    end Listener_Cell;
 
    protected body Listener_Cell is
@@ -318,10 +324,26 @@ package body Gada.Std.Http is
 
       procedure Stop is
       begin
+         Stop_Flag := True;
          if Cur /= null then
+            declare
+               C : Gada.Std.Net.Conn;
+               E : Error_Access;
+            begin
+               --  self-connect wakes the blocked Accept
+               Gada.Std.Net.Dial ("tcp", Cur.all.Addr, C, E);
+               if C /= null then
+                  C.all.Close;
+               end if;
+            end;
             Cur.all.Close;
          end if;
       end Stop;
+
+      function Stopping return Boolean is
+      begin
+         return Stop_Flag;
+      end Stopping;
    end Listener_Cell;
 
    The_Listener : Listener_Cell;
@@ -342,10 +364,19 @@ package body Gada.Std.Http is
       end if;
       The_Listener.Set (L);
       loop
+         if The_Listener.Stopping then
+            L.all.Close;
+            return No_Error;
+         end if;
          L.all.Accept_K (C, Err);
          if Err /= No_Error then
             L.all.Close;
             return Err;
+         end if;
+         if The_Listener.Stopping then
+            C.all.Close;
+            L.all.Close;
+            return No_Error;
          end if;
          Serve_One (C);
       end loop;

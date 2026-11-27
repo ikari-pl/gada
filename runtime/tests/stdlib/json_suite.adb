@@ -295,9 +295,9 @@ package body Json_Suite is
       Parse_Object ("{}", M, OK);
       Assert (OK and then Member_Vectors.Is_Empty (M), "empty object");
 
-      Parse_Object ("  { \"x\" : 42, \"s\" : \"a\\nb\",
-                      \"b\" : true, \"f\" : -1.5, \"n\" : null }  ",
-                    M, OK);
+      Parse_Object
+        ("  { ""x"" : 42, ""s"" : ""a\nb"", ""b"" : true," &
+         " ""f"" : -1.5, ""n"" : null }  ", M, OK);
       Assert (OK, "object parse failed");
       Assert (Integer (Member_Vectors.Length (M)) = 5,
               "member count: " & Integer'Image
@@ -324,14 +324,14 @@ package body Json_Suite is
 
       Check_Bad ("{");
       Check_Bad ("{]");
-      Check_Bad ("{"k"}");
-      Check_Bad ("{"k": }");
-      Check_Bad ("{"k": 1");
-      Check_Bad ("{"k": [1]}");
-      Check_Bad ("{"k": {"a":1}}");
-      Check_Bad ("{"k": 1,}");
+      Check_Bad ("{""k""}");
+      Check_Bad ("{""k"": }");
+      Check_Bad ("{""k"": 1");
+      Check_Bad ("{""k"": [1]}");
+      Check_Bad ("{""k"": {""a"":1}}");
+      Check_Bad ("{""k"": 1,}");
       Check_Bad ("not an object");
-      Check_Bad ("{"k": 1} x");
+      Check_Bad ("{""k"": 1} x");
    end Test_Parse_Object;
 
    procedure Test_Float_Image (T : in out AUnit.Test_Cases.Test_Case'Class)

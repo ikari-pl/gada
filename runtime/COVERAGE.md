@@ -576,7 +576,11 @@ this entry.
 line; 160, 210, 510 — `declare` markers: lcov 2.4 no-return-block
 misattribution, same class as the
 gada-std-time.adb / gada-std-json.adb entries (every contained line of
-these blocks is hit by Http_Suite). 147-148 and 245-247 — the
+these blocks is hit by Http_Suite). 391-392 — the accept loop's
+top-of-loop `Stopping` arm: only fires when Stop lands while the loop is
+inside Serve_One; the suite always stops while the loop is blocked in
+Accept_K, which takes the post-accept stop arm (covered). Racy, not
+deterministically triggerable in CI. 147-148 and 245-247 — the
 `N = 0`-without-error arms of the header and body read loops:
 `Gada.Std.Net.Conn.Read` always sets `Err = EOF` on an orderly peer
 shutdown, so `N = 0` implies `E /= No_Error`; the arms are defensive

@@ -357,14 +357,17 @@ reason = "lcov block-terminator artifacts — see runtime/COVERAGE.md"
 # N = 0-without-error arms — Gada.Std.Net.Conn.Read always sets
 # Err = EOF on orderly shutdown, so N = 0 implies E /= No_Error;
 # defensive, unreachable. 166-167: First_Lf = 0 arm — unreachable
-# because Hd > 0 already guarantees a CRLF inside Head. 396-397:
-# Accept_K error arm of the accept loop — Stop_Server wakes a blocked
-# accept with a self-connect that succeeds, and genuine accept errors
-# (EMFILE/ENFILE) are not deterministically triggerable in CI.
+# because Hd > 0 already guarantees a CRLF inside Head.
+# 391-392: the accept loop's top-of-loop Stopping arm — only fires when
+# Stop lands while the loop is inside Serve_One (the suite always stops
+# while blocked in Accept_K, which takes the post-accept arm at 399-402);
+# racy, not deterministically triggerable. 396-397: the Accept_K error
+# arm — Stop wakes a blocked accept via a self-connect that succeeds, and
+# genuine accept errors (EMFILE/ENFILE) are not CI-triggerable.
 # 495-497: client write-error arm of Do_Request — needs EPIPE/RST;
 # tests only close after the server read the full request.
 # Rationale: runtime/COVERAGE.md (gada-std-http).
 [[exclude]]
 file = "runtime/src/gada-std-http.adb"
-lines = [122, 126, 147, 148, 160, 166, 167, 181, 210, 229, 245, 246, 247, 323, 396, 397, 446, 495, 496, 497, 510, 558, 559]
+lines = [122, 126, 147, 148, 160, 166, 167, 181, 210, 229, 245, 246, 247, 323, 391, 392, 396, 397, 446, 495, 496, 497, 510, 558, 559]
 reason = "lcov terminator artifacts + unreachable defensive arms + non-CI-triggerable socket error arms — see runtime/COVERAGE.md"

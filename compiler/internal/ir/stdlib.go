@@ -22,4 +22,8 @@ var StdlibPackages = map[string]string{
 	"net":           "Gada.Std.Net",
 	"encoding/json": "Gada.Std.Json",
 	"net/http":      "Gada.Std.Http",
+	"hash/crc32":    "Gada.Std.Hash.Crc32",
+	"hash/crc64":    "Gada.Std.Hash.Crc64",
+	"hash/fnv":      "Gada.Std.Hash.Fnv",
+	"hash/adler32":  "Gada.Std.Hash.Adler32",
 }

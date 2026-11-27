@@ -63,6 +63,7 @@ with OS_Suite;
 with Net_Suite;
 with Json_Suite;
 with Http_Suite;
+with Std_Hash_Suite;
 
 procedure Test_Runner is
 
@@ -111,6 +112,7 @@ procedure Test_Runner is
       or else Pkg = "stdlib.net"
       or else Pkg = "stdlib.encoding.json"
       or else Pkg = "stdlib.net.http"
+      or else Pkg = "stdlib.hash"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -231,6 +233,9 @@ procedure Test_Runner is
       end if;
       if Should_Register ("stdlib.net.http") then
          Add_Test (Result, new Http_Suite.Http_Test);
+      end if;
+      if Should_Register ("stdlib.hash") then
+         Add_Test (Result, new Std_Hash_Suite.Std_Hash_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

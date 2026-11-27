@@ -2,6 +2,7 @@
 
 with Ada.Containers.Vectors;
 with Ada.Text_IO;
+with Ada.Exceptions;
 with Ada.Strings;
 with Ada.Strings.Fixed;
 
@@ -217,6 +218,8 @@ package body Gada.Std.Http is
                   Pos := Pos + Lf + 1;
                end;
             end loop;
+            Ada.Text_IO.Put_Line ("[dbg] server headers parsed, len=" &
+              Content_Len'Image & " pos=" & Pos'Image & " hd=" & Hd'Image);
             --  Body_K: the bytes already read past the header block,
             --  plus more reads up to Content_Len.
             declare
@@ -242,8 +245,10 @@ package body Gada.Std.Http is
                   Have := Have + N;
                end loop;
             end;
+            Ada.Text_IO.Put_Line ("[dbg] server body done");
          end;
       end;
+      Ada.Text_IO.Put_Line ("[dbg] read_request returning");
    end Read_Request;
 
    ---------------------------------------------------------------
@@ -289,7 +294,14 @@ package body Gada.Std.Http is
       H   : Handler_Func;
    begin
       Ada.Text_IO.Put_Line ("[dbg] serve_one: accepted");
-      Read_Request (C, Req, Err);
+      begin
+         Read_Request (C, Req, Err);
+      exception
+         when X : others =>
+            Ada.Text_IO.Put_Line ("[dbg] serve_one EXC: " &
+              Ada.Exceptions.Exception_Information (X));
+            raise;
+      end;
       Ada.Text_IO.Put_Line ("[dbg] serve_one: read err=" &
         (if Err = No_Error then "<nil>" else Err.all.Message));
       if Err /= No_Error then

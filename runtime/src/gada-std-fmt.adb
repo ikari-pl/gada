@@ -354,24 +354,45 @@ package body Gada.Std.Fmt is
       return To_String (R);
    end Sprintf;
 
-   procedure Print (Args : Arg_Array) is
+   --  Operands in %v form. Go's doPrint (Print/Sprint) separates two
+   --  operands with a space only when neither is a string; doPrintln
+   --  (Println/Sprintln) always separates them.
+   function Join_Operands (Args : Arg_Array; Always_Space : Boolean)
+      return String is
+      R   : Unbounded_String;
+      Bad : Boolean;
    begin
       for I in Args'Range loop
-         if I > Args'First then
-            Gada.Core.IO.Print (" ");
+         if I > Args'First
+           and then (Always_Space
+                     or else (Args (I - 1).K /= Str_Arg
+                              and then Args (I).K /= Str_Arg))
+         then
+            Append (R, ' ');
          end if;
-         declare
-            Bad : Boolean;
-         begin
-            Gada.Core.IO.Print (Format_Arg (Args (I), (Verb => 'v',
-                                               others => <>), Bad));
-         end;
+         Append (R, Format_Arg (Args (I), (Verb => 'v', others => <>), Bad));
       end loop;
+      return To_String (R);
+   end Join_Operands;
+
+   function Sprint (Args : Arg_Array) return String is
+   begin
+      return Join_Operands (Args, Always_Space => False);
+   end Sprint;
+
+   function Sprintln (Args : Arg_Array) return String is
+   begin
+      return Join_Operands (Args, Always_Space => True) & Character'Val (10);
+   end Sprintln;
+
+   procedure Print (Args : Arg_Array) is
+   begin
+      Gada.Core.IO.Print (Sprint (Args));
    end Print;
 
    procedure Println (Args : Arg_Array) is
    begin
-      Print (Args);
+      Gada.Core.IO.Print (Join_Operands (Args, Always_Space => True));
       Gada.Core.IO.New_Line;
    end Println;
 

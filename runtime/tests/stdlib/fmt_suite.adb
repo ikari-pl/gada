@@ -209,6 +209,18 @@ package body Fmt_Suite is
       Gada.Core.IO.New_Line;
       Println ((1 => A ("b")));
       Printf ("%d-%s" & Character'Val (10), (1 => A (7), 2 => A ("z")));
+      --  Regression (PR #45 review #7): Print/Sprint add a space only
+      --  between two non-string operands; Println/Sprintln always do.
+      --  Go: Sprint("a", "b") = "ab", Sprint(1, 2) = "1 2",
+      --  Sprint("a", 1, "b") = "a1b", Sprint(1, "a", 2) = "1a2".
+      Assert (Sprint ((A ("a"), A ("b"))) = "ab", "Sprint strings");
+      Assert (Sprint ((A (1), A (2))) = "1 2", "Sprint ints");
+      Assert (Sprint ((A ("a"), A (1), A ("b"))) = "a1b", "Sprint mixed");
+      Assert (Sprint ((A (1), A ("a"), A (2))) = "1a2", "Sprint mixed 2");
+      Assert (Sprint ((A (3.5), A (True), A (False))) = "3.5 true false",
+              "Sprint non-strings");
+      Assert (Sprintln ((A ("a"), A ("b"))) = "a b" & Character'Val (10),
+              "Sprintln always spaces");
    end Test_Print_Family;
 
    procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class) is

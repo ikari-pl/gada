@@ -46,7 +46,16 @@ package Gada.Std.Fmt is
    --  Go: func Sprintf(format string, a ...any) string
    function Sprintf (Format : String; Args : Arg_Array) return String;
 
-   --  Go: Print / Println / Printf — to standard output.
+   --  Go: func Sprint(a ...any) string — operands in %v form, a space
+   --  between two operands only when neither is a string.
+   function Sprint (Args : Arg_Array) return String;
+
+   --  Go: func Sprintln(a ...any) string — always space-separated, with
+   --  a trailing newline.
+   function Sprintln (Args : Arg_Array) return String;
+
+   --  Go: Print / Println / Printf — to standard output, with the
+   --  Sprint / Sprintln spacing rules.
    procedure Print (Args : Arg_Array);
    procedure Println (Args : Arg_Array);
    procedure Printf (Format : String; Args : Arg_Array);

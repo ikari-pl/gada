@@ -48,6 +48,12 @@ record `Fmt.Arg`, built with the `A` constructor overloads:
   (truncates strings).
 - `*` (width from argument) is **not** supported in v1.
 
+## Print family
+
+`Print`/`Sprint` put a space between two operands only when neither is
+a string (`Sprint("a", "b") = "ab"`, `Sprint(1, 2) = "1 2"`);
+`Println`/`Sprintln` always separate operands and end with a newline.
+
 ## Errors
 
 - A verb that does not apply to the argument kind renders Go-style

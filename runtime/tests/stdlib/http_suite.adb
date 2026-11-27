@@ -129,9 +129,12 @@ package body Http_Suite is
    --  must be finished before it runs.
    procedure Stop_Server is
    begin
+      Trace ("Stop_Server: http stop");
       Gada.Std.Http.Stop_Server;
+      Trace ("Stop_Server: scheduler shutdown");
       Scheduler.Shutdown;
       Scheduler_Up := False;
+      Trace ("Stop_Server: done");
    end Stop_Server;
 
    --  Do_Request sends raw request text and reads until the server
@@ -311,7 +314,9 @@ package body Http_Suite is
    begin
       Trace ("Test_Client_404");
       Start_Server;
+      Trace ("Client_404: server up, first GET");
       Get (Base_URL & "/nope", Resp, Err);
+      Trace ("Client_404: first GET done");
       Assert (Err = Errors.No_Error, "GET 404: " & Err_Text (Err));
       Assert (Resp /= null, "GET 404 returned null response");
       Assert (Resp.StatusCode = 404,
@@ -320,7 +325,9 @@ package body Http_Suite is
                 (To_String (Resp.Body_K), "404 page not found") > 0,
               "expected 404 body");
       --  no path in the URL: Split_URL defaults Path to "/"
+      Trace ("Client_404: second GET (no path)");
       Get (Base_URL, Resp, Err);
+      Trace ("Client_404: second GET done");
       Assert (Err = Errors.No_Error, "GET no-path: " & Err_Text (Err));
       Assert (Resp /= null and then Resp.StatusCode = 404,
               "GET no-path expected 404");

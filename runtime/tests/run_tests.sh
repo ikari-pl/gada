@@ -43,7 +43,10 @@ if [[ "$(uname)" == "Darwin" ]]; then
    fi
 fi
 
-#  Run; bubble up the exit code. The optional first arg (e.g. "core.io")
+#  Run under a hard timeout: a hung harness (e.g. a deadlocked scheduler
+#  test) must fail in minutes, not burn the whole CI job timeout. 600s
+#  is well above the observed ~2min full-suite runtime. Bubble up the
+#  exit code (124 on timeout). The optional first arg (e.g. "core.io")
 #  is forwarded as a suite-name filter; the runner treats an empty or
 #  missing arg as "run every registered suite".
-exec "$BIN" "${1:-}"
+exec timeout 600 "$BIN" "${1:-}"

@@ -1856,6 +1856,54 @@ func (e *emitter) emitStdlibOutCallDecl(a *ir.Assign, c *ir.Call) {
 	}
 }
 
+// bitSizeArg locates Go's trailing `bitSize int` argument for the
+// stdlib members whose Ada ports drop it (Go float64 is the only float
+// type the compiler maps, so the ports have no bitSize parameter):
+// fully qualified Ada member → index of the argument in the Go call.
+var bitSizeArg = map[string]int{
+	"Gada.Std.Strconv.Parse_Float":  1, // ParseFloat(s, bitSize)
+	"Gada.Std.Strconv.Format_Float": 3, // FormatFloat(f, fmt, prec, bitSize)
+}
+
+// stdlibCallArgs renders a stdlib call's Go arguments as Ada actuals,
+// dropping the bitSize argument the ports do not take. Only the
+// constant 64 is accepted there: 32 would need float32, which the
+// compiler does not map yet, so it fails loudly rather than silently
+// formatting at double precision.
+func (e *emitter) stdlibCallArgs(c *ir.Call) []string {
+	drop := -1
+	if i, ok := bitSizeArg[e.emitExpr(c.Fun)]; ok && i < len(c.Args) {
+		lit, isLit := c.Args[i].(*ir.Lit)
+		switch {
+		case isLit && lit.Kind == ir.LitInt && lit.Value == "64":
+			drop = i
+		case isLit && lit.Kind == ir.LitInt && lit.Value == "32":
+			e.fail(fmt.Errorf("emit: bitSize 32 (float32) is not supported yet; only 64 is"))
+		default:
+			e.fail(fmt.Errorf("emit: bitSize must be the constant 64"))
+		}
+	}
+	args := make([]string, 0, len(c.Args))
+	for i, a := range c.Args {
+		if i != drop {
+			args = append(args, e.emitExpr(a))
+		}
+	}
+	return args
+}
+
+// emitCallExpr renders a stdlib package call `Pkg.Member (args…)` (no
+// parentheses for a nullary call), shared by statement and expression
+// position.
+func (e *emitter) emitCallExpr(c *ir.Call) string {
+	fun := e.emitExpr(c.Fun)
+	args := e.stdlibCallArgs(c)
+	if len(args) == 0 {
+		return fun
+	}
+	return fun + " (" + strings.Join(args, ", ") + ")"
+}
+
 // emitPendingHead drains the pendingHead queue in source order: each
 // 2-LHS out-call define becomes its `Pkg.Member (args…, L1, L2);`
 // statement, each deferred `v := rhs` becomes `V := Rhs;` at the top
@@ -1865,11 +1913,7 @@ func (e *emitter) emitPendingHead() {
 	for _, ph := range e.pendingHead {
 		if ph.outCall != nil {
 			po := ph.outCall
-			args := make([]string, 0, len(po.call.Args)+len(po.lhs))
-			for _, a := range po.call.Args {
-				args = append(args, e.emitExpr(a))
-			}
-			args = append(args, po.lhs...)
+			args := append(e.stdlibCallArgs(po.call), po.lhs...)
 			e.println(e.emitExpr(po.call.Fun) + " (" + strings.Join(args, ", ") + ");")
 		} else {
 			rhs := e.emitExpr(ph.rhs)
@@ -3598,16 +3642,7 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 	if sel, ok := c.Fun.(*ir.Selector); ok {
 		if id, ok := sel.X.(*ir.Ident); ok {
 			if _, isStdlib := e.stdlibImports[id.Name]; isStdlib {
-				fun := e.emitExpr(c.Fun)
-				args := make([]string, 0, len(c.Args))
-				for _, a := range c.Args {
-					args = append(args, e.emitExpr(a))
-				}
-				if len(args) == 0 {
-					e.println(fun + ";")
-				} else {
-					e.println(fun + " (" + strings.Join(args, ", ") + ");")
-				}
+				e.println(e.emitCallExpr(c) + ";")
 				return
 			}
 		}
@@ -3718,15 +3753,7 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		// Phase 5 wave 1: stdlib package call in expression position
 		// (`words := strings.Fields(s)`). emitSelector maps the
 		// pkg.Member prefix to the Gada.Std.* qualified name.
-		fun := e.emitExpr(x.Fun)
-		args := make([]string, 0, len(x.Args))
-		for _, a := range x.Args {
-			args = append(args, e.emitExpr(a))
-		}
-		if len(args) == 0 {
-			return fun
-		}
-		return fun + " (" + strings.Join(args, ", ") + ")"
+		return e.emitCallExpr(x)
 	case *ir.ChanRecv:
 		// Receive is a procedure with an `out` Value parameter, not a
 		// function — there is no expression form to splice in here.

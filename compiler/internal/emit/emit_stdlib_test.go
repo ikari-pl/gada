@@ -621,3 +621,59 @@ func TestBlankOutCallLHS(t *testing.T) {
 		t.Errorf("blank identifier leaked into Ada:\n%s", out)
 	}
 }
+
+// TestFloatBitSizeDropped is the regression test for PR #45 review #4:
+// `f, err := strconv.ParseFloat(s, 64)` emitted `Parse_Float ("1.5",
+// 64, F, Err)`, but the Ada port has no bitSize parameter ("too many
+// arguments"). bitSize 64 is dropped for ParseFloat and FormatFloat;
+// 32 (float32) and a non-constant bitSize are rejected loudly.
+func TestFloatBitSizeDropped(t *testing.T) {
+	t.Parallel()
+	parse := func(bits ir.Expr) *ir.Assign {
+		return &ir.Assign{
+			LHS:    []ir.Expr{idn("f"), idn("err")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("strconv"), Sel: "ParseFloat"},
+				Args:        []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"1.5"`}, bits},
+				ResultTypes: []ir.Type{&ir.Float64Type{}, &ir.ErrorType{}},
+			}},
+		}
+	}
+	out := emitMain(t, []string{"strconv"},
+		parse(litInt("64")),
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("s")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("strconv"), Sel: "FormatFloat"},
+				Args:        []ir.Expr{idn("f"), idn("verb"), litInt("-1"), litInt("64")},
+				ResultTypes: []ir.Type{&ir.StringType{}},
+			}},
+		},
+	)
+	for _, want := range []string{
+		`Gada.Std.Strconv.Parse_Float ("1.5", F, Err);`,
+		`Gada.Std.Strconv.Format_Float (F, Verb, -1)`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	for _, c := range []struct {
+		bits ir.Expr
+		want string
+	}{
+		{litInt("32"), "bitSize 32"},
+		{idn("n"), "bitSize must be the constant 64"},
+	} {
+		pkg := &ir.Package{Name: "p", Files: []*ir.File{{
+			Name: "x.go", Imports: []string{"strconv"},
+			Decls: []ir.Decl{funcMain(parse(c.bits))},
+		}}}
+		var buf bytes.Buffer
+		if err := Package(pkg, &buf); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("bitSize %v: err = %v, want %q", c.bits, err, c.want)
+		}
+	}
+}

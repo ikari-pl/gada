@@ -768,6 +768,11 @@ func (e *emitter) run() error {
 	for _, d := range e.file.Decls {
 		if fn, ok := d.(*ir.Function); ok {
 			e.populateLocals(fn)
+			// An `error` in a signature also names
+			// Gada.Std.Errors.Error_Access.
+			for _, p := range append(append([]*ir.Param{}, fn.Params...), fn.Results...) {
+				e.noteErrorType(p.Type)
+			}
 		}
 	}
 	withs := e.collectWiths()
@@ -1694,6 +1699,7 @@ func (e *emitter) populateLocals(fn *ir.Function) {
 			// each LHS binds the corresponding result type.
 			if c, ok := a.RHS[0].(*ir.Call); ok && len(c.ResultTypes) == 2 {
 				for i, lhs := range a.LHS {
+					e.noteErrorType(c.ResultTypes[i])
 					if id, ok := lhs.(*ir.Ident); ok && c.ResultTypes[i] != nil {
 						e.localTypes[id.Name] = c.ResultTypes[i]
 						if _, isStr := c.ResultTypes[i].(*ir.StringType); isStr {
@@ -1714,6 +1720,7 @@ func (e *emitter) populateLocals(fn *ir.Function) {
 		}
 		if t, ok := inferRHSType(a.RHS[0]); ok {
 			e.localTypes[id.Name] = t
+			e.noteErrorType(t)
 		} else if ix, ok := a.RHS[0].(*ir.IndexExpr); ok {
 			// `v := s[i]` binds the element type.
 			if elem, ok := e.sliceElemForExpr(ix.X); ok {
@@ -1730,6 +1737,17 @@ func (e *emitter) populateLocals(fn *ir.Function) {
 				e.needsUnbounded = true
 			}
 		}
+	}
+}
+
+// noteErrorType records that the emitted Ada names
+// Gada.Std.Errors.Error_Access (an error-typed local, out-call result
+// or signature), so collectWiths adds `with Gada.Std.Errors;`. Any
+// package whose API returns error — strconv, io, bufio, not just
+// os/errors — can introduce one.
+func (e *emitter) noteErrorType(t ir.Type) {
+	if _, ok := t.(*ir.ErrorType); ok {
+		e.needsStdErrors = true
 	}
 }
 

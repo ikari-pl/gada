@@ -525,3 +525,51 @@ func TestUnsupportedImportForms(t *testing.T) {
 		}
 	}
 }
+
+// TestErrorWithClauseFromBoundErrors is the regression test for PR #45
+// review #3: a strconv-only program binding `n, err := strconv.Atoi(s)`
+// names Gada.Std.Errors.Error_Access, so it needs the with/use type
+// clause even though neither os nor errors is imported. The same holds
+// for an `error` in a function signature.
+func TestErrorWithClauseFromBoundErrors(t *testing.T) {
+	t.Parallel()
+	const with = "with Gada.Std.Errors; use type Gada.Std.Errors.Error_Access;"
+	out := emitMain(t, []string{"strconv"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("n"), idn("err")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("strconv"), Sel: "Atoi"},
+				Args:        []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"12"`}},
+				ResultTypes: []ir.Type{&ir.IntType{}, &ir.ErrorType{}},
+			}},
+		},
+		&ir.If{
+			Cond: &ir.BinOp{Op: "!=", X: idn("err"), Y: &ir.Lit{Kind: ir.LitNil}},
+			Then: []ir.Stmt{&ir.Return{}},
+		},
+	)
+	if !strings.Contains(out, with) {
+		t.Errorf("strconv-only Atoi: missing %q in:\n%s", with, out)
+	}
+	if !strings.Contains(out, `Gada.Std.Strconv.Atoi ("12", N, Err);`) {
+		t.Errorf("missing the out-call in:\n%s", out)
+	}
+
+	// No imports at all: `func check() error` alone needs the clause.
+	pkg := &ir.Package{Name: "p", Files: []*ir.File{{
+		Name: "x.go",
+		Decls: []ir.Decl{&ir.Function{
+			Name:    "check",
+			Results: []*ir.Param{{Type: &ir.ErrorType{}}},
+			Body:    []ir.Stmt{&ir.Return{Results: []ir.Expr{&ir.Lit{Kind: ir.LitNil}}}},
+		}},
+	}}}
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if !strings.Contains(flattenSpaces(buf.String()), with) {
+		t.Errorf("error result: missing %q in:\n%s", with, buf.String())
+	}
+}

@@ -493,4 +493,15 @@ package body Gada.Std.Time is
       return Core.Ch;
    end Tick;
 
+   --  Appended at the end so existing line numbers (and the coverage
+   --  exclusions pinned to them) do not shift.
+   procedure Sleep (D : Duration) is
+   begin
+      --  Go: Sleep(d <= 0) returns immediately; Ada's delay rejects
+      --  negative durations, so guard.
+      if D > 0 then
+         delay To_Span (D);
+      end if;
+   end Sleep;
+
 end Gada.Std.Time;

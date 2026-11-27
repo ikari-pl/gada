@@ -146,6 +146,11 @@ package Gada.Std.Time is
    procedure Stop (T : in out Timer);
    function Chan (T : Timer) return Time_Channels.Channel;
 
+   --  Go: time.Sleep(d) — blocks the calling task for d (a plain
+   --  relative delay; on a scheduler worker it parks the worker's OS
+   --  thread, which is what Go's runtime does too).
+   procedure Sleep (D : Duration);
+
    --  Go: time.After(d) <-chan Time — one-shot channel.
    function After (D : Duration) return Time_Channels.Channel;
 

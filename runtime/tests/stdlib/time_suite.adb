@@ -76,6 +76,7 @@ package body Time_Suite is
       Register_Routine
         (T, Test_UTC_Local_Format'Access, "UTC/Local RFC3339");
       Register_Routine (T, Test_After'Access, "After fires");
+      Register_Routine (T, Test_Sleep'Access, "Sleep duration");
       Register_Routine (T, Test_Timer_Stop'Access, "NewTimer + Stop");
       Register_Routine (T, Test_Tick'Access, "Tick repeats");
       Register_Routine (T, Test_Stop_All'Access, "Stop_All silences timers");
@@ -172,6 +173,19 @@ package body Time_Suite is
                  "zone conversion keeps the instant");
       end;
    end Test_UTC_Local_Format;
+
+   --  Sleep(d) must block at least d; d <= 0 returns immediately
+   --  (the guard arm).
+   procedure Test_Sleep (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      Start : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
+   begin
+      Sleep (20 * Millisecond);
+      Assert (Ada.Real_Time.Clock - Start >= Ada.Real_Time.Milliseconds (20),
+              "Sleep returned before the requested duration");
+      Sleep (0);
+      Sleep (-Second);
+   end Test_Sleep;
 
    procedure Test_After (T : in out AUnit.Test_Cases.Test_Case'Class) is
       Unused_G : Scheduler.Goroutine_Id;

@@ -506,8 +506,11 @@ package body Gada.Std.Http is
               (if SP1 > 0 then Index (Line (SP1 + 1 .. Line'Last), " ")
                else 0);
          begin
-            --  "HTTP/1.1 200 OK": code is the token after the first SP
-            if SP1 = 0 or else SP2 = 0 or else
+            --  "HTTP/1.1 200 OK": code is the token after the first SP.
+            --  Code_S is a slice with 'First = SP1 + 1, so index it
+            --  relative to Code_S'First (CI: CONSTRAINT_ERROR at the
+            --  absolute (1) index).
+            if SP1 = 0 or else SP2 = 0 or else SP1 + 3 > Line'Last or else
               Line (1 .. SP1 - 1)'Length < 5 or else
               Line (1 .. 5) /= "HTTP/"
             then
@@ -518,9 +521,9 @@ package body Gada.Std.Http is
                Code_S : constant String :=
                  Line (SP1 + 1 .. SP1 + 3);
             begin
-               if Code_S (1) not in '0' .. '9' or else
-                 Code_S (2) not in '0' .. '9' or else
-                 Code_S (3) not in '0' .. '9'
+               if Code_S (Code_S'First) not in '0' .. '9' or else
+                 Code_S (Code_S'First + 1) not in '0' .. '9' or else
+                 Code_S (Code_S'First + 2) not in '0' .. '9'
                then
                   Err := New_K ("http: malformed status code");
                   return;

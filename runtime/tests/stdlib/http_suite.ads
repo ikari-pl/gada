@@ -19,7 +19,10 @@ package Http_Suite is
    procedure Test_Listen_Error (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Not_Found (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Bad_Requests (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Client_404 (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Client_Errors (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Echo_And_Catchall (T : in out
       AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Client_Echo (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Http_Suite;

@@ -44,6 +44,9 @@ package Gada.Std.Http is
                        Err  : out Gada.Std.Errors.Error_Access);
       procedure Write_Header (Status : Natural);
       function Status return Natural;
+      --  Public accessor so the package body can read the buffered
+      --  body without touching the private component through `.all`.
+      function Get_Body return Gada.Std.Bytes.Byte_Slice;
    private
       Status_Code : Natural := 200;
       Body_K        : Gada.Std.Bytes.Byte_Slice :=
@@ -69,5 +72,42 @@ package Gada.Std.Http is
    --  (Go's ListenAndServe always returns a non-nil error).
    function Listen_And_Serve (Addr : String)
                               return Gada.Std.Errors.Error_Access;
+
+   ---------------------------------------------------------------
+   --  Response + Client (client side, item 4)
+   ---------------------------------------------------------------
+
+   --  Response — Go *http.Response (v1: status code + pre-read body;
+   --  no header map, no streaming). Component names follow the
+   --  emitter's adaIdent rule, so Go `resp.StatusCode` lowers to
+   --  `Resp.StatusCode` and `resp.Body` to `Resp.Body_K`.
+   type Response is record
+      StatusCode : Natural;
+      Body_K     : Gada.Std.Bytes.Byte_Slice;
+   end record;
+
+   type Response_Access is access all Response;
+
+   --  Client — Go http.Client (v1: plain protected object like
+   --  sync.Mutex, so `var c http.Client; c.Get(u)` lowers to
+   --  `C.Get (U, Resp, Err);`). No timeouts, no redirect following,
+   --  no cookie jar.
+   protected type Client is
+      procedure Get (URL : String; Resp : out Response_Access;
+                     Err  : out Gada.Std.Errors.Error_Access);
+      procedure Post (URL, Content_Type : String;
+                      Body : Gada.Std.Bytes.Byte_Slice;
+                      Resp : out Response_Access;
+                      Err  : out Gada.Std.Errors.Error_Access);
+   end Client;
+
+   --  Package-level Get/Post (Go http.Get / http.Post) — v1: they
+   --  behave exactly like a zero-value Client's methods.
+   procedure Get (URL : String; Resp : out Response_Access;
+                  Err : out Gada.Std.Errors.Error_Access);
+   procedure Post (URL, Content_Type : String;
+                   Body : Gada.Std.Bytes.Byte_Slice;
+                   Resp : out Response_Access;
+                   Err : out Gada.Std.Errors.Error_Access);
 
 end Gada.Std.Http;

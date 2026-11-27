@@ -23,11 +23,47 @@ package body Http_Suite is
    package Errors renames Gada.Std.Errors;
 
    use type Errors.Error_Access;
+   use type Response_Access;
+
+   CRLF : constant String := Character'Val (13) & Character'Val (10);
 
    --  The port the test server listens on, found by probing an
    --  ephemeral port and releasing it (same trick Net_Suite uses for
    --  the refused-dial case).
    The_Port : Natural := 0;
+
+   --  Base_URL is "http://127.0.0.1:<The_Port>".
+   function Base_URL return String is
+     ("http://127.0.0.1:"
+      & Ada.Strings.Fixed.Trim (The_Port'Image, Ada.Strings.Left));
+
+   --  Raw acceptor for the client error-paths test: serves three
+   --  malformed responses on one listener, one per connection.
+   Raw_L : Listener;
+
+   procedure Raw_Acceptor_Body is
+      C   : Conn;
+      Err : Errors.Error_Access;
+      N   : Natural;
+   begin
+      for I in 1 .. 3 loop
+         Raw_L.all.Accept_K (C, Err);
+         exit when Err /= Errors.No_Error;
+         case I is
+            when 1 =>
+               --  headers never terminated: no CRLFCRLF
+               C.all.Write (To_Bytes ("HTTP/1.1 200 OK" & CRLF), N, Err);
+            when 2 =>
+               --  no spaces in the status line at all
+               C.all.Write (To_Bytes ("GARBAGE" & CRLF & CRLF), N, Err);
+            when 3 =>
+               --  well-formed shape, non-digit status code
+               C.all.Write
+                 (To_Bytes ("HTTP/1.1 A1B OK" & CRLF & CRLF), N, Err);
+         end case;
+         C.all.Close;
+      end loop;
+   end Raw_Acceptor_Body;
 
    function Err_Text (Err : Errors.Error_Access) return String is
      (if Err = Errors.No_Error then "<nil>" else Err.all.Message);
@@ -141,8 +177,11 @@ package body Http_Suite is
       Register_Routine (T, Test_Listen_Error'Access, "listen on busy port");
       Register_Routine (T, Test_Not_Found'Access, "404 before handlers");
       Register_Routine (T, Test_Bad_Requests'Access, "400 bad requests");
+      Register_Routine (T, Test_Client_404'Access, "client GET 404");
+      Register_Routine (T, Test_Client_Errors'Access, "client error paths");
       Register_Routine (T, Test_Echo_And_Catchall'Access,
                         "POST echo + catch-all");
+      Register_Routine (T, Test_Client_Echo'Access, "client GET/POST echo");
    end Register_Tests;
 
    overriding function Name (T : Http_Test) return AUnit.Message_String is
@@ -188,7 +227,6 @@ package body Http_Suite is
    --  sending anything (EOF arm).
    procedure Test_Bad_Requests (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      CRLF : constant String := Character'Val (13) & Character'Val (10);
    begin
       Start_Server;
       declare
@@ -221,11 +259,72 @@ package body Http_Suite is
       Scheduler.Shutdown;
    end Test_Bad_Requests;
 
+   --  Client against the real server with an empty mux: a 404 status
+   --  parses into Resp.StatusCode (must run before any "/" handler is
+   --  registered).
+   procedure Test_Client_404 (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      Resp : Response_Access;
+      Err  : Errors.Error_Access;
+   begin
+      Start_Server;
+      Get (Base_URL & "/nope", Resp, Err);
+      Assert (Err = Errors.No_Error, "GET 404: " & Err_Text (Err));
+      Assert (Resp /= null, "GET 404 returned null response");
+      Assert (Resp.StatusCode = 404,
+              "expected 404, got" & Resp.StatusCode'Image);
+      Assert (Ada.Strings.Fixed.Index
+                (To_String (Resp.Body_K), "404 page not found") > 0,
+              "expected 404 body");
+      Scheduler.Shutdown;
+   end Test_Client_404;
+
+   --  Client error paths: bad scheme, empty host, refused dial, and
+   --  three malformed server responses (no header end / no status
+   --  spaces / non-digit status code).
+   procedure Test_Client_Errors (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      Resp : Response_Access;
+      Err  : Errors.Error_Access;
+   begin
+      Get ("ftp://example.com/", Resp, Err);
+      Assert (Err /= Errors.No_Error and then Resp = null,
+              "expected scheme error");
+      Get ("http:///x", Resp, Err);
+      Assert (Err /= Errors.No_Error and then Resp = null,
+              "expected empty-host error");
+      declare
+         P : constant Natural := Free_Port;
+      begin
+         Get ("http://127.0.0.1:"
+                & Ada.Strings.Fixed.Trim (P'Image, Ada.Strings.Left) & "/",
+              Resp, Err);
+         Assert (Err /= Errors.No_Error and then Resp = null,
+                 "expected refused-dial error");
+      end;
+      Listen ("tcp", "127.0.0.1:0", Raw_L, Err);
+      Assert (Err = Errors.No_Error, "raw listen: " & Err_Text (Err));
+      Scheduler.Shutdown;
+      Scheduler.Init (Workers => 1);
+      declare
+         Unused_G : Scheduler.Goroutine_Id;
+      begin
+         Unused_G := Scheduler.Spawn (Raw_Acceptor_Body'Access);
+      end;
+      for I in 1 .. 3 loop
+         Get ("http://" & Raw_L.all.Addr & "/", Resp, Err);
+         Assert (Err /= Errors.No_Error and then Resp = null,
+                 "expected parse error for garbage response"
+                 & I'Image & ", got <nil>");
+      end loop;
+      Raw_L.all.Close;
+      Scheduler.Shutdown;
+   end Test_Client_Errors;
+
    procedure Test_Echo_And_Catchall
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      CRLF : constant String := Character'Val (13) & Character'Val (10);
    begin
       Start_Server;
       Handle_Func ("/echo", Echo_Body'Access);
@@ -253,5 +352,31 @@ package body Http_Suite is
       end;
       Scheduler.Shutdown;
    end Test_Echo_And_Catchall;
+
+   --  Client happy path against the echo server: package-level Post
+   --  with a body, then a zero-value Client's Get. Runs after
+   --  Test_Echo_And_Catchall so the mux already has "/echo".
+   procedure Test_Client_Echo (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      Resp : Response_Access;
+      Err  : Errors.Error_Access;
+      C    : Client;
+   begin
+      Start_Server;
+      Post (Base_URL & "/echo", "text/plain", To_Bytes ("hello"),
+            Resp, Err);
+      Assert (Err = Errors.No_Error, "POST: " & Err_Text (Err));
+      Assert (Resp /= null and then Resp.StatusCode = 200,
+              "POST expected 200");
+      Assert (To_String (Resp.Body_K) = "echo:hello",
+              "POST body mismatch: '" & To_String (Resp.Body_K) & "'");
+      C.Get (Base_URL & "/echo", Resp, Err);
+      Assert (Err = Errors.No_Error, "client GET: " & Err_Text (Err));
+      Assert (Resp /= null and then Resp.StatusCode = 200,
+              "client GET expected 200");
+      Assert (To_String (Resp.Body_K) = "echo:",
+              "client GET body mismatch: '" & To_String (Resp.Body_K) & "'");
+      Scheduler.Shutdown;
+   end Test_Client_Echo;
 
 end Http_Suite;

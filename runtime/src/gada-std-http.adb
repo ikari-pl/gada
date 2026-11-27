@@ -32,9 +32,10 @@ package body Gada.Std.Http is
 
    protected body Mux_Type is
       procedure Register (Pattern : String; H : Handler_Func) is
+         E : constant Mux_Entry :=
+           (Pattern => To_Unbounded_String (Pattern), H => H);
       begin
-         Mux_Vectors.Append
-           (Entries, (To_Unbounded_String (Pattern), H));
+         Mux_Vectors.Append (Entries, E);
       end Register;
 
       function Lookup (Path : String) return Handler_Func is
@@ -87,6 +88,11 @@ package body Gada.Std.Http is
       begin
          return Status_Code;
       end Status;
+
+      function Get_Body return Byte_Slice is
+      begin
+         return Body_K;
+      end Get_Body;
    end Response_Writer_Impl;
 
    ---------------------------------------------------------------
@@ -107,7 +113,7 @@ package body Gada.Std.Http is
    --  Read_Request reads one HTTP/1.1 request from C: request line,
    --  headers up to the blank line, then Content-Length body bytes.
    procedure Read_Request (C   : Gada.Std.Net.Conn;
-                           Req : out Request;
+                           Req : out Request_Access;
                            Err : out Error_Access) is
       use Ada.Strings.Fixed;
       Buf : Byte_Slice := New_Bytes (65536);
@@ -116,9 +122,9 @@ package body Gada.Std.Http is
       E   : Error_Access;
       Hd  : Natural;  --  index of the header terminator in Acc
    begin
-      Req := (Method => Null_Unbounded_String,
-              Path   => Null_Unbounded_String,
-              Body_K   => Byte_Vectors.Empty_Vector);
+      Req := new Request'(Method => Null_Unbounded_String,
+                          Path   => Null_Unbounded_String,
+                          Body_K => Byte_Vectors.Empty_Vector);
       Err := No_Error;
       loop
          C.all.Read (Buf, N, E);
@@ -159,8 +165,8 @@ package body Gada.Std.Http is
                Err := New_K ("http: malformed request line");
                return;
             end if;
-            Req.Method := To_Unbounded_String (Line (1 .. S1 - 1));
-            Req.Path   := To_Unbounded_String (Line (S1 + 1 .. S2 - 1));
+            Req.all.Method := To_Unbounded_String (Line (1 .. S1 - 1));
+            Req.all.Path   := To_Unbounded_String (Line (S1 + 1 .. S2 - 1));
          end;
          --  Content-Length (case-insensitive) from the header lines.
          declare
@@ -211,7 +217,7 @@ package body Gada.Std.Http is
                Have : Natural := Rest'Length;
             begin
                for I in Rest'Range loop
-                  Byte_Vectors.Append (Req.Body_K, Rest (I));
+                  Byte_Vectors.Append (Req.all.Body_K, Rest (I));
                end loop;
                while Have < Content_Len loop
                   C.all.Read (Buf, N, E);
@@ -225,7 +231,7 @@ package body Gada.Std.Http is
                   end if;
                   for I in 1 .. N loop
                      Byte_Vectors.Append
-                       (Req.Body_K, Byte_Vectors.Element (Buf, I));
+                       (Req.all.Body_K, Byte_Vectors.Element (Buf, I));
                   end loop;
                   Have := Have + N;
                end loop;
@@ -271,7 +277,7 @@ package body Gada.Std.Http is
    --  Serve_One handles a single accepted connection: read the
    --  request, dispatch, write the buffered response, close.
    procedure Serve_One (C : Gada.Std.Net.Conn) is
-      Req : aliased Request;
+      Req : Request_Access;
       Err : Error_Access;
       W   : Response_Writer;
       H   : Handler_Func;
@@ -283,13 +289,13 @@ package body Gada.Std.Http is
          C.all.Close;
          return;
       end if;
-      H := The_Mux.Lookup (To_String (Req.Path));
+      H := The_Mux.Lookup (To_String (Req.all.Path));
       if H = null then
          Write_Response (C, 404, To_Bytes ("404 page not found"), Err);
       else
          W := new Response_Writer_Impl;
-         H (W, Req'Access);
-         Write_Response (C, W.all.Status, W.all.Body_K, Err);
+         H (W, Req);
+         Write_Response (C, W.all.Status, W.all.Get_Body, Err);
       end if;
       C.all.Close;
    end Serve_One;
@@ -313,5 +319,186 @@ package body Gada.Std.Http is
       end loop;
       return No_Error;  --  unreachable: the accept loop never exits
    end Listen_And_Serve;
+
+   ---------------------------------------------------------------
+   --  Client (item 4)
+   ---------------------------------------------------------------
+
+   --  Split_URL parses "http://host[:port]/path" (v1: http only).
+   --  Path defaults to "/".
+   procedure Split_URL (URL  : String;
+                        Host : out Unbounded_String;
+                        Path : out Unbounded_String;
+                        Err  : out Error_Access) is
+      use Ada.Strings.Fixed;
+      Prefix : constant String := "http://";
+   begin
+      Host := Null_Unbounded_String;
+      Path := Null_Unbounded_String;
+      Err  := No_Error;
+      if URL'Length < Prefix'Length or else
+        URL (URL'First .. URL'First + Prefix'Length - 1) /= Prefix
+      then
+         Err := New_K ("http: unsupported URL scheme (v1: http only)");
+         return;
+      end if;
+      declare
+         Rest  : constant String := URL (URL'First + Prefix'Length ..
+                                           URL'Last);
+         Slash : constant Natural := Index (Rest, "/");
+      begin
+         if Slash = 0 then
+            Host := To_Unbounded_String (Rest);
+            Path := To_Unbounded_String ("/");
+         else
+            Host := To_Unbounded_String (Rest (Rest'First .. Slash - 1));
+            Path := To_Unbounded_String (Rest (Slash .. Rest'Last));
+         end if;
+         if Length (Host) = 0 then
+            Err := New_K ("http: empty host in URL");
+         end if;
+      end;
+   end Split_URL;
+
+   --  Do_Request performs one HTTP/1.1 exchange: dial host, send the
+   --  request, read until the server closes (v1 servers send
+   --  Connection: close), parse status line + body.
+   procedure Do_Request (Method       : String;
+                         URL          : String;
+                         Content_Type : String;
+                         Body_K       : Byte_Slice;
+                         Resp         : out Response_Access;
+                         Err          : out Error_Access) is
+      use Ada.Strings.Fixed;
+      Host : Unbounded_String;
+      Path : Unbounded_String;
+      C    : Gada.Std.Net.Conn;
+      Buf  : Byte_Slice := New_Bytes (65536);
+      N    : Natural;
+      E    : Error_Access;
+      Acc  : Unbounded_String;
+   begin
+      Resp := null;
+      Err  := No_Error;
+      Split_URL (URL, Host, Path, Err);
+      if Err /= No_Error then
+         return;
+      end if;
+      Gada.Std.Net.Dial ("tcp", To_String (Host), C, Err);
+      if Err /= No_Error then
+         return;
+      end if;
+      declare
+         Req : constant String :=
+           Method & " " & To_String (Path) & " HTTP/1.1" & CRLF
+           & "Host: " & To_String (Host) & CRLF
+           & (if Content_Type'Length > 0 then
+                 "Content-Type: " & Content_Type & CRLF else "")
+           & "Content-Length: "
+           & Trim (Integer'Image
+                     (Integer (Byte_Vectors.Length (Body_K))),
+                   Ada.Strings.Left)
+           & CRLF & CRLF;
+      begin
+         C.all.Write (To_Bytes (Req), N, E);
+         if E = No_Error and then Byte_Vectors.Length (Body_K) > 0 then
+            C.all.Write (Body_K, N, E);
+         end if;
+         if E /= No_Error then
+            Err := E;
+            C.all.Close;
+            return;
+         end if;
+      end;
+      --  read the whole response until EOF
+      loop
+         C.all.Read (Buf, N, E);
+         exit when E /= No_Error or else N = 0;
+         for I in 1 .. N loop
+            Append (Acc, Byte_Vectors.Element (Buf, I));
+         end loop;
+      end loop;
+      C.all.Close;
+      --  split head / body at the blank line
+      declare
+         Raw : constant String := To_String (Acc);
+         Hd  : constant Natural := Index (Raw, CRLF & CRLF);
+      begin
+         if Hd = 0 then
+            Err := New_K ("http: malformed response (no header end)");
+            return;
+         end if;
+         declare
+            Head  : constant String := Raw (Raw'First .. Hd + 3);
+            Rest  : constant String :=
+              Raw (Hd + 4 .. Raw'Last);
+            --  Hd > 0 guarantees a CRLF, so First_Lf >= 1.
+            First_Lf : constant Natural := Index (Head, CRLF);
+            Line     : constant String := Head (1 .. First_Lf - 1);
+            SP1      : constant Natural := Index (Line, " ");
+            SP2      : constant Natural :=
+              (if SP1 > 0 then Index (Line (SP1 + 1 .. Line'Last), " ")
+               else 0);
+         begin
+            --  "HTTP/1.1 200 OK": code is the token after the first SP
+            if SP1 = 0 or else SP2 = 0 or else
+              Line (1 .. SP1 - 1)'Length < 5 or else
+              Line (1 .. 5) /= "HTTP/"
+            then
+               Err := New_K ("http: malformed status line");
+               return;
+            end if;
+            declare
+               Code_S : constant String :=
+                 Line (SP1 + 1 .. SP1 + 3);
+            begin
+               if Code_S (1) not in '0' .. '9' or else
+                 Code_S (2) not in '0' .. '9' or else
+                 Code_S (3) not in '0' .. '9'
+               then
+                  Err := New_K ("http: malformed status code");
+                  return;
+               end if;
+               Resp := new Response'
+                 (StatusCode => Natural'Value (Code_S),
+                  Body_K     => Byte_Vectors.Empty_Vector);
+               for I in Rest'Range loop
+                  Byte_Vectors.Append (Resp.all.Body_K, Rest (I));
+               end loop;
+            end;
+         end;
+      end;
+   end Do_Request;
+
+   protected body Client is
+      procedure Get (URL : String; Resp : out Response_Access;
+                     Err  : out Error_Access) is
+      begin
+         Do_Request ("GET", URL, "", Byte_Vectors.Empty_Vector,
+                     Resp, Err);
+      end Get;
+
+      procedure Post (URL, Content_Type : String;
+                      Body : Byte_Slice;
+                      Resp : out Response_Access;
+                      Err  : out Error_Access) is
+      begin
+         Do_Request ("POST", URL, Content_Type, Body, Resp, Err);
+      end Post;
+   end Client;
+
+   procedure Get (URL : String; Resp : out Response_Access;
+                  Err : out Error_Access) is
+   begin
+      Do_Request ("GET", URL, "", Byte_Vectors.Empty_Vector, Resp, Err);
+   end Get;
+
+   procedure Post (URL, Content_Type : String;
+                   Body : Byte_Slice;
+                   Resp : out Response_Access;
+                   Err : out Error_Access) is
+   begin
+      Do_Request ("POST", URL, Content_Type, Body, Resp, Err);
+   end Post;
 
 end Gada.Std.Http;

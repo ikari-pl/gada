@@ -273,7 +273,7 @@ package body Json_Suite is
       Assert (Err /= Errors.No_Error, "string into float must error");
       Unmarshal (To_Bytes ("""abc"), S, Err);
       Assert (Err /= Errors.No_Error, "unterminated string must error");
-      Unmarshal (To_Bytes (""""a\xb""""), S, Err);
+      Unmarshal (To_Bytes ("""a\xb"""), S, Err);
       Assert (Err /= Errors.No_Error, "bad escape in string must error");
       Unmarshal (To_Bytes ("["), S, Err);
       Assert (Err /= Errors.No_Error, "array token into string must error");

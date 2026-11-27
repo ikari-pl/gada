@@ -24,5 +24,9 @@ package Http_Suite is
    procedure Test_Echo_And_Catchall (T : in out
       AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Client_Echo (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Split_Body (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Handler_Raises (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_500_Status (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Http_Suite;

@@ -8,6 +8,7 @@ package body Gada.Std.Http is
 
    use Gada.Std.Bytes;
    use Gada.Std.Errors;
+   use type Gada.Std.Net.Listener;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
 

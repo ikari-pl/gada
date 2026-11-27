@@ -288,6 +288,14 @@ package body Strconv_Suite is
          Assert (Quote ("caf" & E_Acute) = '"' & "caf" & E_Acute & '"',
                  "valid 2-byte UTF-8 raw");
          Assert (Quote (Euro) = '"' & Euro & '"', "valid 3-byte raw");
+         Assert (Quote ((Character'Val (16#E0#), Character'Val (16#A0#),
+                         Character'Val (16#80#)))
+                   = '"' & (Character'Val (16#E0#), Character'Val (16#A0#),
+                            Character'Val (16#80#)) & '"',
+                 "U+0800 (E0 lead, smallest 3-byte) raw");
+         Assert (Quote ((Character'Val (16#E0#), Character'Val (16#9F#),
+                         Character'Val (16#BF#)))
+                   = '"' & "\xe0\x9f\xbf" & '"', "E0 overlong rejected");
          Assert (Quote (Smiley) = '"' & Smiley & '"', "valid 4-byte raw");
          Assert (Quote ((Character'Val (16#FF#), Character'Val (16#FE#)))
                    = '"' & "\xff\xfe" & '"', "invalid lead bytes");

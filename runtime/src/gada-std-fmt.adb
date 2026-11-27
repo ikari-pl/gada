@@ -171,19 +171,16 @@ package body Gada.Std.Fmt is
         (if Signed (Signed'First) = '+' and then Sp.Space
            and then not Sp.Plus
          then ' ' else Signed (Signed'First));
+      No_Zero : Spec := Sp;
    begin
       if Digits_Part (Digits_Part'First) in 'I' | 'N' then
-         declare
-            No_Zero : Spec := Sp;
-         begin
-            No_Zero.Zero := False;
-            if Digits_Part (Digits_Part'First) = 'N'
-              and then not Sp.Space and then not Sp.Plus
-            then
-               return Pad (Digits_Part, No_Zero, False);
-            end if;
-            return Pad (Sign & Digits_Part, No_Zero, False);
-         end;
+         No_Zero.Zero := False;
+         if Digits_Part (Digits_Part'First) = 'N'
+           and then not Sp.Space and then not Sp.Plus
+         then
+            return Pad (Digits_Part, No_Zero, False);
+         end if;
+         return Pad (Sign & Digits_Part, No_Zero, False);
       end if;
       if Sp.Plus or else Sign /= '+' then
          return Pad (Sign & Digits_Part, Sp, True, Sign_Pos => 1);
@@ -209,8 +206,7 @@ package body Gada.Std.Fmt is
                --  (X.I is a 32-bit Integer, so 0 - V cannot overflow),
                --  then convert the non-negative result — converting a
                --  negative through U64 trips GNAT's overflow check.
-               Mag  : constant U64 :=
-                 (if Neg then U64 (0 - V) else U64 (V));
+               Mag  : constant U64 := (if Neg then U64 (0 - V) else U64 (V));
                Sign : constant String :=
                  (if Neg then "-"
                   elsif Sp.Plus then "+"

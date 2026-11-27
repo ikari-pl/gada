@@ -26,4 +26,8 @@ var StdlibPackages = map[string]string{
 	"hash/crc64":    "Gada.Std.Hash.Crc64",
 	"hash/fnv":      "Gada.Std.Hash.Fnv",
 	"hash/adler32":  "Gada.Std.Hash.Adler32",
+	"crypto/sha256": "Gada.Std.Crypto.Sha256",
+	"crypto/sha512": "Gada.Std.Crypto.Sha512",
+	"crypto/sha1":   "Gada.Std.Crypto.Sha1",
+	"crypto/md5":    "Gada.Std.Crypto.Md5",
 }

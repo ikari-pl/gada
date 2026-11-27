@@ -3654,11 +3654,11 @@ func TestStdlibImportEmit(t *testing.T) {
 
 	// Unknown import: loud error naming the supported set.
 	pkg3 := wrapPkg(&ir.Function{Name: "f"})
-	pkg3.Files[0].Imports = []string{"crypto/md5"}
+	pkg3.Files[0].Imports = []string{"crypto/aes"}
 	buf.Reset()
 	if err := Package(pkg3, &buf); err == nil {
 		t.Fatalf("expected error for unsupported import, got:\n%s", buf.String())
-	} else if !strings.Contains(err.Error(), "crypto/md5") {
+	} else if !strings.Contains(err.Error(), "crypto/aes") {
 		t.Fatalf("error should name the bad import, got: %v", err)
 	}
 

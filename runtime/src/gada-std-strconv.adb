@@ -216,13 +216,61 @@ package body Gada.Std.Strconv is
       end loop;
    end Mul_Small;
 
-   --  Exact decimal digits of |F|: B (1..Len) LSB-first, and DP with
-   --  |F| = (digits) × 10^(DP - Len).  F must be finite and nonzero.
+   --  Drops trailing (least significant) zero digits; the value
+   --  digits x 10^(DP - Len) is unchanged because DP is absolute.
+   procedure Trim (B : in out Big_Num; Len : in out Natural) is
+      Z : Natural := 0;
+   begin
+      while Z < Len - 1 and then B (Z + 1) = 0 loop
+         Z := Z + 1;
+      end loop;
+      if Z > 0 then
+         B (1 .. Len - Z) := B (Z + 1 .. Len);
+         Len := Len - Z;
+      end if;
+   end Trim;
+
+   --  Exact decimal digits of M x 2^E (M > 0): B (1..Len) LSB-first,
+   --  trailing zeros trimmed, with value = (digits) x 10^(DP - Len).
+   --  Powers of 2 and 5 are applied in chunks (2^26 / 5^10) to keep the
+   --  subnormal range (E down to -1076) cheap.
+   procedure Exact_Mul (M : Long_Long_Integer; E : Integer;
+                        B : out Big_Num; Len : out Natural;
+                        DP : out Integer) is
+      V : Long_Long_Integer := M;
+      K : Natural := abs E;
+   begin
+      Len := 0;
+      while V > 0 loop
+         Len := Len + 1;
+         B (Len) := Natural (V mod 10);
+         V := V / 10;
+      end loop;
+      DP := Len;
+      if E >= 0 then
+         while K >= 26 loop
+            Mul_Small (B, Len, 2**26);
+            K := K - 26;
+         end loop;
+         Mul_Small (B, Len, 2**K);
+         DP := Len;
+      else
+         --  M x 2^-K = M x 5^K x 10^-K.
+         while K >= 10 loop
+            Mul_Small (B, Len, 5**10);
+            K := K - 10;
+         end loop;
+         Mul_Small (B, Len, 5**K);
+         DP := Len + E;
+      end if;
+      Trim (B, Len);
+   end Exact_Mul;
+
+   --  Exact decimal digits of F (finite, >= 0): see Exact_Mul.
    procedure Exact_Digits (F : Long_Float; B : out Big_Num;
                            Len : out Natural; DP : out Integer) is
-      M : Long_Long_Integer :=
+      M : constant Long_Long_Integer :=
         Long_Long_Integer (Long_Float'Fraction (F) * 2.0**53);
-      E : constant Integer := Long_Float'Exponent (F) - 53;
    begin
       if M = 0 then
          B (1) := 0;
@@ -230,23 +278,7 @@ package body Gada.Std.Strconv is
          DP := 1;
          return;
       end if;
-      Len := 0;
-      while M > 0 loop
-         Len := Len + 1;
-         B (Len) := Natural (M mod 10);
-         M := M / 10;
-      end loop;
-      if E >= 0 then
-         for I in 1 .. E loop
-            Mul_Small (B, Len, 2);
-         end loop;
-         DP := Len;
-      else
-         for I in 1 .. (-E) loop
-            Mul_Small (B, Len, 5);
-         end loop;
-         DP := Len + E;
-      end if;
+      Exact_Mul (M, Long_Float'Exponent (F) - 53, B, Len, DP);
    end Exact_Digits;
 
    --  Rounds the exact digits to N significant digits (round half to
@@ -437,22 +469,150 @@ package body Gada.Std.Strconv is
       return To_String (S);
    end Fmt_F;
 
-   --  Smallest number of significant digits (1..17) whose decimal
-   --  representation round-trips to F — Go's shortest for prec < 0.
-   function Shortest_K (Neg : Boolean; F : Long_Float; B : Big_Num;
-                        Len : Natural; DP : Integer) return Natural is
-      R   : Big_Num;
-      RN  : Natural;
-      RDP : Integer;
-   begin
-      for K in 1 .. 17 loop
-         Round_To (B, Len, DP, K, R, RN, RDP);
-         if Long_Float'Value (Fmt_E (Neg, R, RN, RDP, K - 1, True)) = F then
-            return K;
+   --  IEEE-754 binary64 bit pattern of a Long_Float.
+   function To_U64 is new Ada.Unchecked_Conversion (Long_Float, U64);
+
+   --  Go's ftoa roundShortest: the shortest digit string that lies
+   --  strictly inside (or, for an even mantissa, on the edge of) the
+   --  rounding interval of F, computed exactly from the half-ulp
+   --  neighbours' decimal expansions — no round trip through a parser.
+   --  F >= 0 is finite; B/Len/DP are its exact (trimmed) digits. The
+   --  result R/RN/RDP is trimmed, so RN is the shortest digit count.
+   procedure Shortest (F : Long_Float; B : Big_Num; Len : Natural;
+                       DP : Integer; R : out Big_Num; RN : out Natural;
+                       RDP : out Integer) is
+      Mant_Bits : constant := 52;
+      Min_Exp   : constant := -1022;
+      Bits      : constant U64 := To_U64 (F);
+      Biased    : constant Integer :=
+        Integer (Shift_Right (Bits, Mant_Bits) and 16#7FF#);
+      Mant      : Long_Long_Integer :=
+        Long_Long_Integer (Bits and (2**Mant_Bits - 1));
+      Exp       : Integer := Biased - 1023;
+      Up, Lo    : Big_Num;
+      U_Len, L_Len : Natural;
+      U_DP, L_DP   : Integer;
+      Mant_Lo   : Long_Long_Integer;
+      Exp_Lo    : Integer;
+      Inclusive : Boolean;
+      Upper_Delta : Natural := 0;
+      UI        : Natural := 0;
+
+      --  Go's d[i]: the I-th digit counted from the most significant.
+      function Dig (X : Big_Num; N : Natural; I : Integer) return Natural is
+        (X (N - I));
+
+      procedure Keep_All is
+      begin
+         R (1 .. Len) := B (1 .. Len);
+         RN := Len;
+         RDP := DP;
+      end Keep_All;
+
+      --  Truncates to the N most significant digits, then adds one unit
+      --  in the last kept place (Go's decimal RoundUp).
+      procedure Round_Up (N : Natural) is
+         Carry : Natural := 1;
+      begin
+         R (1 .. N) := B (Len - N + 1 .. Len);
+         RN := N;
+         RDP := DP;
+         for I in 1 .. RN loop
+            R (I) := R (I) + Carry;
+            Carry := 0;
+            if R (I) = 10 then
+               R (I) := 0;
+               Carry := 1;
+            end if;
+            exit when Carry = 0;
+         end loop;
+         if Carry > 0 then
+            RN := RN + 1;
+            R (RN) := 1;
+            RDP := RDP + 1;
          end if;
+      end Round_Up;
+   begin
+      if Bits = 0 then
+         Keep_All;
+         return;
+      end if;
+      if Biased = 0 then
+         Exp := Min_Exp;  --  subnormal
+      else
+         Mant := Mant + 2**Mant_Bits;
+      end if;
+      --  Go: the exact digits are already shortest when the decimal
+      --  trailing zeros cover the ulp.
+      if Exp > Min_Exp and then 332 * (DP - Len) >= 100 * (Exp - Mant_Bits)
+      then
+         Keep_All;
+         return;
+      end if;
+      --  Upper and lower half-ulp neighbours. The lower gap halves when
+      --  the mantissa is a power of two (except at the minimum exponent).
+      Exact_Mul (2 * Mant + 1, Exp - Mant_Bits - 1, Up, U_Len, U_DP);
+      if Mant > 2**Mant_Bits or else Exp = Min_Exp then
+         Mant_Lo := Mant - 1;
+         Exp_Lo := Exp;
+      else
+         Mant_Lo := 2 * Mant - 1;
+         Exp_Lo := Exp - 1;
+      end if;
+      Exact_Mul (2 * Mant_Lo + 1, Exp_Lo - Mant_Bits - 1, Lo, L_Len, L_DP);
+      --  Round half to even on parse: an even mantissa owns the edges.
+      Inclusive := Mant mod 2 = 0;
+      loop
+         declare
+            MI : constant Integer := UI - U_DP + DP;
+            LI : constant Integer := UI - U_DP + L_DP;
+            L, M, U : Natural := 0;
+            Ok_Down, Ok_Up : Boolean;
+         begin
+            exit when MI >= Len;
+            if LI >= 0 and then LI < L_Len then
+               L := Dig (Lo, L_Len, LI);
+            end if;
+            if MI >= 0 then
+               M := Dig (B, Len, MI);
+            end if;
+            if UI < U_Len then
+               U := Dig (Up, U_Len, UI);
+            end if;
+            --  Rounding down is fine if lower differs from d here, or
+            --  this is lower's last digit and the interval is closed.
+            Ok_Down := L /= M or else (Inclusive and then LI + 1 = L_Len);
+            --  Rounding up needs upper > d + 1 unit at this position.
+            if Upper_Delta = 0 and then M + 1 < U then
+               Upper_Delta := 2;
+            elsif Upper_Delta = 0 and then M /= U then
+               Upper_Delta := 1;
+            elsif Upper_Delta = 1 and then (M /= 9 or else U /= 0) then
+               Upper_Delta := 2;
+            end if;
+            Ok_Up := Upper_Delta > 0
+              and then (Inclusive or else Upper_Delta > 1
+                        or else UI + 1 < U_Len);
+            if Ok_Down and then Ok_Up then
+               Round_To (B, Len, DP, MI + 1, R, RN, RDP);  --  nearest
+               Trim (R, RN);
+               return;
+            elsif Ok_Down then
+               R (1 .. MI + 1) := B (Len - MI .. Len);  --  truncate
+               RN := MI + 1;
+               RDP := DP;
+               Trim (R, RN);
+               return;
+            elsif Ok_Up then
+               Round_Up (MI + 1);
+               Trim (R, RN);
+               return;
+            end if;
+         end;
+         UI := UI + 1;
       end loop;
-      return 17;
-   end Shortest_K;
+      Keep_All;
+   end Shortest;
 
    --  Go's syntax check for a decimal float (v1: no underscores, no
    --  hex floats): [sign] digits [. digits] [(e|E) [sign] digits],
@@ -547,7 +707,6 @@ package body Gada.Std.Strconv is
 
    --  True for negative zero (sign bit set, value zero).
    function Is_Neg_Zero (F : Long_Float) return Boolean is
-      function To_U64 is new Ada.Unchecked_Conversion (Long_Float, U64);
    begin
       return F = 0.0
         and then (To_U64 (F) and 16#8000_0000_0000_0000#) /= 0;
@@ -636,38 +795,33 @@ package body Gada.Std.Strconv is
       case Fmt is
          when 'f' | 'F' =>
             if Prec < 0 then
-               declare
-                  K : constant Natural :=
-                    Shortest_K (Neg, F, B, Len, DP);
-               begin
-                  Round_To (B, Len, DP, K, R, RN, RDP);
-                  return Fmt_F (Neg, R, RN, RDP,
-                                Natural'Max (0, K - RDP));
-               end;
+               Shortest (abs F, B, Len, DP, R, RN, RDP);
+               return Fmt_F (Neg, R, RN, RDP, Natural'Max (0, RN - RDP));
             end if;
             Round_At (B, Len, DP, Prec, R, RN, RDP);
             return Fmt_F (Neg, R, RN, RDP, Prec);
          when 'e' | 'E' =>
-            declare
-               K : constant Natural :=
-                 (if Prec < 0 then Shortest_K (Neg, F, B, Len, DP)
-                  else Natural'Max (1, Prec + 1));
-            begin
-               Round_To (B, Len, DP, K, R, RN, RDP);
-               return Fmt_E (Neg, R, RN, RDP, K - 1, Fmt = 'E');
-            end;
+            if Prec < 0 then
+               Shortest (abs F, B, Len, DP, R, RN, RDP);
+               return Fmt_E (Neg, R, RN, RDP, RN - 1, Fmt = 'E');
+            end if;
+            Round_To (B, Len, DP, Natural'Max (1, Prec + 1), R, RN, RDP);
+            return Fmt_E (Neg, R, RN, RDP, Natural'Max (1, Prec + 1) - 1,
+                          Fmt = 'E');
          when others =>  --  'g'/'G' (and anything else, like Go's default)
             declare
-               Shortest : constant Boolean := Prec < 0;
-               K        : constant Natural :=
-                 (if Shortest then Shortest_K (Neg, F, B, Len, DP)
-                  elsif Prec = 0 then 1
-                  else Prec);
-               Exp10    : Integer;
-               Eprec    : Natural;
-               Nd       : Natural;
+               Short_Mode : constant Boolean := Prec < 0;
+               K          : Natural := (if Prec <= 0 then 1 else Prec);
+               Exp10      : Integer;
+               Eprec      : Natural;
+               Nd         : Natural;
             begin
-               Round_To (B, Len, DP, K, R, RN, RDP);
+               if Short_Mode then
+                  Shortest (abs F, B, Len, DP, R, RN, RDP);
+                  K := RN;
+               else
+                  Round_To (B, Len, DP, K, R, RN, RDP);
+               end if;
                Exp10 := RDP - 1;
                --  Significant digits, trailing zeros stripped (R is
                --  LSB-first, so trailing zeros sit at low indices).
@@ -676,7 +830,7 @@ package body Gada.Std.Strconv is
                   Nd := Nd - 1;
                end loop;
                Eprec := K;
-               if Shortest then
+               if Short_Mode then
                   Eprec := 6;
                elsif Eprec > Nd and then Nd >= Exp10 + 1 then
                   Eprec := Nd;

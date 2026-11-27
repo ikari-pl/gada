@@ -142,6 +142,12 @@ section at the bottom with the resolution commit / PR reference.
 *What "fixed" looks like:* `strings.ToUpper/ToLower/EqualFold` case-map non-ASCII letters (`ToUpper("café") = "CAFÉ"`); `Contains_Rune`/`Index_Rune` take a rune and decode UTF-8; `strconv.Quote` escapes non-printable runes as `\uXXXX` using the `unicode.IsPrint` tables.
 *Tracker:* `roadmap/05-stdlib-wave1.md` (strings / strconv items); revisit when a `unicode` port lands.
 
+### `strconv.ParseFloat` misrounds some subnormal decimals
+*Where:* `runtime/src/gada-std-strconv.adb` `Parse_Float` — the decimal-to-binary step is GNAT's `Long_Float'Value`, which is not correctly rounded below 2.2250738585072014e-308 (a review differential run found ~1% of random subnormal decimals off by one ulp, e.g. `2.2250738585072011e-308` parses to the smallest normal where Go gives `2.225073858507201e-308`). `FormatFloat` no longer depends on it (its shortest mode is exact since PR #45 review #9).
+*Why not fixed yet:* a correctly rounded parser (Go's Eisel-Lemire plus big-decimal fallback) is a self-contained port of its own; wave 1 scoped the fix to the formatter, where the reviewer measured the larger error rate (~17%).
+*What "fixed" looks like:* `Parse_Float` corrects `'Value`'s result by comparing the input's exact decimal against the exact half-ulp midpoints (the `Exact_Mul` machinery already exists) and a differential test over subnormal decimals against Go passes with zero mismatches.
+*Tracker:* `roadmap/05-stdlib-wave1.md` strconv item.
+
 ## Resolved
 
 ### In-tree bench harness scaffolding pending

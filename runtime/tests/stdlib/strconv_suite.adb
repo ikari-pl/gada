@@ -4,6 +4,8 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 with AUnit.Assertions; use AUnit.Assertions;
 
 with Ada.Strings.Unbounded;
+with Ada.Unchecked_Conversion;
+with Interfaces;
 with Gada.Std.Errors;
 with Gada.Std.Strconv; use Gada.Std.Strconv;
 
@@ -40,6 +42,8 @@ package body Strconv_Suite is
       Register_Routine (T, Test_Edges'Access, "escapes/UTF-8/rounding edges");
       Register_Routine (T, Test_Format_Float_Negative'Access,
                         "FormatFloat negative values");
+      Register_Routine (T, Test_Format_Float_Shortest_Exact'Access,
+                        "FormatFloat shortest exact (subnormals)");
    end Register_Tests;
 
    procedure Test_Itoa (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -444,5 +448,87 @@ package body Strconv_Suite is
       Assert (Format_Float (-1.0e21) = "-1e+21", "-1e21 g/-1");
       Assert (Format_Float (-0.000012) = "-1.2e-05", "-1.2e-05 g/-1");
    end Test_Format_Float_Negative;
+
+   --  Regression (PR #45 review #9): shortest formatting chose its digit
+   --  count by round-tripping through GNAT's Long_Float'Value, which
+   --  misrounds subnormals — ~17% of random subnormals came out wrong.
+   --  Shortest now runs Go's exact roundShortest on the half-ulp
+   --  neighbours. Cases: 24 subnormals the old code got wrong (drawn
+   --  from a 47k-value differential run against Go, seed 45: 3404
+   --  mismatches before, 0 after) plus boundary values. Expected
+   --  strings are Go's FormatFloat(f, 'g'/'e', -1, 64).
+   procedure Test_Format_Float_Shortest_Exact (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      function To_F is new Ada.Unchecked_Conversion
+        (Interfaces.Unsigned_64, Long_Float);
+      procedure Check (Bits : Interfaces.Unsigned_64; G : String;
+                       E : String := "") is
+         X : constant Long_Float := To_F (Bits);
+      begin
+         Assert (Format_Float (X) = G,
+                 "g: want " & G & ", got " & Format_Float (X));
+         Assert (Format_Float (X, 'e', -1) = (if E = "" then G else E),
+                 "e: want " & G & ", got " & Format_Float (X, 'e', -1));
+      end Check;
+   begin
+      Check (16#000f_aba2_97e5_fde1#,
+             "2.17924425250681e-308");
+      Check (16#000c_bd92_5c6b_7f6a#,
+             "1.7717866156888607e-308");
+      Check (16#000c_72e3_fd94_d146#,
+             "1.7312175140357073e-308");
+      Check (16#0006_3461_91ab_70c9#,
+             "8.62857745964021e-309");
+      Check (16#000d_ffde_908e_91ae#,
+             "1.9468686765757967e-308");
+      Check (16#000a_0c37_091d_a790#,
+             "1.3973067179669507e-308");
+      Check (16#000f_0ea7_b345_035b#,
+             "2.093967834536238e-308");
+      Check (16#000f_3c47_c456_631a#,
+             "2.1187528868510497e-308");
+      Check (16#000e_dc63_c598_8d03#,
+             "2.066662144605801e-308");
+      Check (16#0009_a8bd_1055_fdc7#,
+             "1.343268033001685e-308");
+      Check (16#0005_28e1_2c24_cdff#,
+             "7.1754263264568e-309");
+      Check (16#000c_f375_6196_b416#,
+             "1.8010595904694196e-308");
+      Check (16#0001_b8bc_9bb5_c9da#,
+             "2.394218317913137e-309");
+      Check (16#000b_9e2e_116d_7b8f#,
+             "1.61566651974178e-308");
+      Check (16#0007_6889_db70_8496#,
+             "1.0302583614032363e-308");
+      Check (16#000b_224e_06bf_283e#,
+             "1.5483737006837296e-308");
+      Check (16#0003_3df6_6d2f_d64d#,
+             "4.50861350761334e-309");
+      Check (16#000f_a1c2_cc3c_95d8#,
+             "2.1738802809814667e-308");
+      Check (16#000e_1dfa_603a_af18#,
+             "1.9632246195422233e-308");
+      Check (16#000a_1ee7_c690_29fe#,
+             "1.4074599161683463e-308");
+      Check (16#000c_7b57_ba0b_f744#,
+             "1.7358089531301407e-308");
+      Check (16#000d_2c38_206f_1a2c#,
+             "1.8318937712376907e-308");
+      Check (16#000d_1bdb_b37a_3614#,
+             "1.8230059497188073e-308");
+      Check (16#0006_74f2_d4b8_acb0#,
+             "8.979327701874767e-309");
+      Check (16#0010_0000_0000_0000#,
+             "2.2250738585072014e-308");
+      Check (16#7fef_ffff_ffff_ffff#,
+             "1.7976931348623157e+308");
+      Check (16#0000_0000_0000_0001#,
+             "5e-324");
+      Check (16#4340_0000_0000_0000#,
+             "9.007199254740992e+15");
+      Check (16#3fb9_9999_9999_999a#,
+             "0.1", "1e-01");
+   end Test_Format_Float_Shortest_Exact;
 
 end Strconv_Suite;

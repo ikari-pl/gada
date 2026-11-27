@@ -507,6 +507,16 @@ there (single-suite `make stdlib-test PKG=...` runs do pass one).
 Open/Create/Stat/Mkdir happy and error paths are all covered by
 OS_Suite, not excluded.
 
+### `runtime/src/gada-core-process.adb` (Phase 6 review fixes)
+
+22 — `GNAT.OS_Lib.OS_Exit (Code);`, the default arm of Finish. It ends
+the process, so it cannot run inside the AUnit runner; Process_Suite
+installs exit handlers (one that raises, one that returns) and covers
+Exit_Main, Finish and Unhandled (with and without a message) through
+them. The real exit is exercised end to end by every example that
+uses goroutines or time (`make example HELLO=timer_pool`,
+`HELLO=ping_pong`).
+
 ### `runtime/src/gada-std-runtime.adb` (Phase 6 wave 2)
 
 37 — `end GOMAXPROCS;` terminator: lcov 2.4 leaves hit-count 0 on the

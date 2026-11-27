@@ -291,3 +291,12 @@ reason = "untriggerable read-error arm + lcov terminators + argv loop — see ru
 file = "runtime/src/gada-std-runtime.adb"
 lines = [37]
 reason = "end GOMAXPROCS terminator — see runtime/COVERAGE.md"
+
+# Gada.Core.Process.Finish's default arm calls GNAT.OS_Lib.OS_Exit,
+# which ends the test runner; Process_Suite drives every other line
+# through an installed exit handler. Rationale: runtime/COVERAGE.md
+# (gada-core-process).
+[[exclude]]
+file = "runtime/src/gada-core-process.adb"
+lines = [22]
+reason = "default OS_Exit arm ends the process — see runtime/COVERAGE.md"

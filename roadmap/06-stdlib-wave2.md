@@ -96,3 +96,21 @@ mutexes, `time.After`, `os.Args`, and `runtime.NumGoroutine`.
       String_Vectors.Length (Gada.Std.OS.Args), with an auto
       `with Gada.Std.Strings;`. OS.Args now returns String_Slice.
       CI: new `make example HELLO=timer_pool` step in the examples job.
+
+## Post-review fixes (PR #46)
+
+Independent review of the phase PR found 17 issues; each fix carries a
+regression test and is listed here so the item notes above stay the
+historical record.
+
+- **Program exit = Go main-return** (findings #1, #4; behaviour change,
+  [ADR-0011](../docs/adr/0011-go-main-return-exit.md)). A generated main
+  that owns runtime tasks (goroutine pool or the time service) ends via
+  `Gada.Core.Process.Exit_Main` (flush + `OS_Exit (0)`) right after its
+  body and defers; goroutines are **no longer joined** at exit and
+  `Scheduler.Shutdown` / `Time.Stop_All` are no longer emitted. An
+  escaping panic or runtime error prints GNAT's `raised NAME : msg` line
+  and exits 2 (Go's status) instead of hanging on live tasks.
+  *Verify:* `cd compiler && go test ./internal/emit -run 'TimeOnlyMain|ProcessExit|PlainMain'`
+  and `make -C runtime test PKG=core.process`.
+

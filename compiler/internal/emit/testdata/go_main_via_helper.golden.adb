@@ -1,3 +1,4 @@
+with Gada.Core.Process;
 with Gada.Async.Scheduler;
 
 procedure Main is
@@ -20,5 +21,8 @@ procedure Main is
 begin
    Gada.Async.Scheduler.Init;
    Helper;
-   Gada.Async.Scheduler.Shutdown;
+   Gada.Core.Process.Exit_Main;
+exception
+   when E : others =>
+      Gada.Core.Process.Unhandled (E);
 end Main;

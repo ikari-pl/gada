@@ -34,6 +34,7 @@ with Memory_Suite;
 with Slices_Suite;
 with Defer_Suite;
 with Panic_Suite;
+with Process_Suite;
 with Maps_Suite;
 with Hash_Suite;
 with Stress_Gc_Suite;
@@ -82,6 +83,7 @@ procedure Test_Runner is
       or else Pkg = "core.slices"
       or else Pkg = "core.defer"
       or else Pkg = "core.panic"
+      or else Pkg = "core.process"
       or else Pkg = "core.maps"
       or else Pkg = "core.hash"
       or else Pkg = "async.context"
@@ -143,6 +145,9 @@ procedure Test_Runner is
       end if;
       if Should_Register ("core.panic") then
          Add_Test (Result, new Panic_Suite.Panic_Test);
+      end if;
+      if Should_Register ("core.process") then
+         Add_Test (Result, new Process_Suite.Process_Test);
       end if;
       if Should_Register ("core.maps") then
          Add_Test (Result, new Maps_Suite.Maps_Test);

@@ -791,6 +791,9 @@ func (e *emitter) collectWiths() []string {
 	if e.needsCorePanic {
 		add("with Gada.Core.Panic;")
 	}
+	if e.pkgName == "main" && e.needsMainHandler() {
+		add("with Gada.Core.Process;")
+	}
 	if e.needsAsyncScheduler {
 		add("with Gada.Async.Scheduler;")
 	}
@@ -1333,8 +1336,31 @@ func (e *emitter) gatherMain() mainLayout {
 	// live inside the begin..end the exception handler wraps so they
 	// finalise (and `recover()` pops the panic) before the handler
 	// matches.
-	l.defersInsideWrapper = len(l.defers) > 0 && l.usesPanic
+	// Go main-return exit (Gada.Core.Process.Exit_Main) terminates
+	// the process at once, skipping Main's own finalization — so main's
+	// Defer_Blocks must live in the inner block too, where they run
+	// before the exit call.
+	l.defersInsideWrapper = len(l.defers) > 0 &&
+		(l.usesPanic || e.needsProcessExit())
 	return l
+}
+
+// needsProcessExit reports whether the generated main must end the
+// process explicitly when main returns (Go semantics, ADR-0011): the
+// program owns runtime tasks — the goroutine worker pool or the
+// time-service task — that an Ada environment task would otherwise
+// wait for, so a parked goroutine or a live ticker would hang exit.
+func (e *emitter) needsProcessExit() bool {
+	_, usesTime := e.stdlibImports["time"]
+	return e.needsAsyncScheduler || usesTime
+}
+
+// needsMainHandler reports whether Main gets the outer exception
+// handler that routes an escaping panic through
+// Gada.Core.Process.Unhandled (Go's exit status 2, without waiting
+// for runtime tasks).
+func (e *emitter) needsMainHandler() bool {
+	return e.needsProcessExit() || e.needsCorePanic
 }
 
 // emitMainProcedure handles every Go `package main` file without
@@ -1649,38 +1675,41 @@ func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
 		e.println("end;")
 	}
 
-	// Tear the scheduler down on the normal exit path. Init / Shutdown
-	// are a matched pair, both keyed on the file-wide
-	// `e.needsAsyncScheduler` so a `func main() { helper() }` whose
-	// helper internally `go`-spawns still gets the same wrap. An
-	// unrecovered panic that escapes the user's defers reaches the
-	// function-level handler below and the program terminates —
-	// Shutdown is skipped in that case, which is fine because the OS
-	// reaps the process.
-	if e.needsAsyncScheduler {
-		// Stop any live time.After/Tick timers first: Ada waits for
-		// dependent tasks at finalization, so a pending timer task
-		// would otherwise hang process exit (Go exits immediately).
-		if _, ok := e.stdlibImports["time"]; ok {
-			e.println("Gada.Std.Time.Stop_All;")
-		}
-		e.println("Gada.Async.Scheduler.Shutdown;")
+	// Go main-return semantics (ADR-0011): once main's body and its
+	// defers complete, the process ends — goroutines still parked or
+	// running and pending timers are abandoned, not joined. The
+	// scheduler is therefore not Shutdown here (that would join them).
+	if e.needsProcessExit() {
+		e.println("Gada.Core.Process.Exit_Main;")
 	}
 
-	if mainUsesPanic {
+	if e.needsMainHandler() {
 		// Mirror emitSubprogram's indent dance: body is at N+1; emit
 		// `exception` at N and the when-arm contents inside it; the
 		// trailing `e.indent--` below brings us to N=0 for `end Main;`.
 		e.indent--
 		e.println("exception")
 		e.indent++
-		e.println("when Panic_Of_Integer.Panicking =>")
+		if mainUsesPanic {
+			// A panic recovered by main's own defers leaves
+			// Is_Panicking False: main then returns normally.
+			e.println("when E : Panic_Of_Integer.Panicking =>")
+			e.indent++
+			e.println("if Panic_Of_Integer.Is_Panicking then")
+			e.indent++
+			e.println("Gada.Core.Process.Unhandled (E);")
+			e.indent--
+			e.println("end if;")
+			if e.needsProcessExit() {
+				e.println("Gada.Core.Process.Exit_Main;")
+			}
+			e.indent--
+		}
+		// Anything else escaping main (an unrecovered panic from a
+		// callee, a runtime check) is Go's exit-status-2 crash.
+		e.println("when E : others =>")
 		e.indent++
-		e.println("if Panic_Of_Integer.Is_Panicking then")
-		e.indent++
-		e.println("raise;")
-		e.indent--
-		e.println("end if;")
+		e.println("Gada.Core.Process.Unhandled (E);")
 		e.indent--
 	}
 

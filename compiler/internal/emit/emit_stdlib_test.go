@@ -845,3 +845,95 @@ func TestBareRecvUnknownChan(t *testing.T) {
 		t.Fatalf("want unresolvable-chan error, got %v", err)
 	}
 }
+
+// emitMainPkg is emitMain for a `package main` file: main becomes the
+// Ada main procedure, so the program-exit lowering applies.
+func emitMainPkg(t *testing.T, imports []string, body ...ir.Stmt) string {
+	t.Helper()
+	pkg := &ir.Package{Name: "main", Files: []*ir.File{
+		{Name: "x.go", Imports: imports, Decls: []ir.Decl{funcMain(body...)}},
+	}}
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	return flattenSpaces(buf.String())
+}
+
+// TestTimeOnlyMainExitsEmit pins Go main-return semantics for a main
+// with no `go` statement that uses time (regression: Stop_All was only
+// emitted under needsAsyncScheduler, so `<-time.Tick(d)` programs never
+// exited; ADR-0011). Main ends through Gada.Core.Process.Exit_Main and
+// an escaping exception through Unhandled — nothing joins or stops
+// timers.
+func TestTimeOnlyMainExitsEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMainPkg(t, []string{"time"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("tick")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun: &ir.Selector{X: idn("time"), Sel: "Tick"},
+				Args: []ir.Expr{&ir.BinOp{
+					Op: "*",
+					X:  litInt("100"),
+					Y:  &ir.Selector{X: idn("time"), Sel: "Millisecond"},
+				}},
+				ResultTypes: []ir.Type{
+					&ir.ChanType{Elem: &ir.NamedType{Name: "Time"}},
+				},
+			}},
+		},
+	)
+	for _, want := range []string{
+		"with Gada.Core.Process;",
+		"Gada.Core.Process.Exit_Main; exception when E : others => Gada.Core.Process.Unhandled (E); end Main;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"Stop_All", "Scheduler.Shutdown", "Scheduler.Init"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("unexpected %q in:\n%s", bad, out)
+		}
+	}
+}
+
+// TestProcessExitRunsMainDefersFirst pins that a main which exits via
+// Exit_Main declares its Defer_Blocks in the inner block (so they run
+// before the process ends) rather than in Main's declarative part,
+// whose finalization Exit_Main would skip.
+func TestProcessExitRunsMainDefersFirst(t *testing.T) {
+	t.Parallel()
+	out := emitMainPkg(t, []string{"time"},
+		&ir.DeferStmt{Call: &ir.Call{Fun: idn("cleanup")}},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("time"), Sel: "Sleep"},
+			Args: []ir.Expr{litInt("1")},
+		},
+	)
+	begin := strings.Index(out, "begin")
+	decl := strings.Index(out, "Defer_Block")
+	exit := strings.Index(out, "Gada.Core.Process.Exit_Main;")
+	inner := strings.LastIndex(out, "end; Gada.Core.Process.Exit_Main;")
+	if begin < 0 || decl < begin || exit < decl || inner < 0 {
+		t.Errorf("defers must be declared after Main's begin and close before Exit_Main:\n%s", out)
+	}
+}
+
+// TestPlainMainHasNoProcessExit pins that a task-free program keeps
+// the plain return (nothing to abandon), so hello-world shapes are
+// unchanged.
+func TestPlainMainHasNoProcessExit(t *testing.T) {
+	t.Parallel()
+	out := emitMainPkg(t, []string{"strings"},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("strings"), Sel: "ToUpper"},
+			Args: []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"x"`}},
+		},
+	)
+	if strings.Contains(out, "Gada.Core.Process") {
+		t.Errorf("unexpected process exit in a task-free main:\n%s", out)
+	}
+}

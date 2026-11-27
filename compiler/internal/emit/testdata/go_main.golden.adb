@@ -1,3 +1,4 @@
+with Gada.Core.Process;
 with Gada.Async.Scheduler;
 
 procedure Main is
@@ -15,5 +16,8 @@ procedure Main is
 begin
    Gada.Async.Scheduler.Init;
    Unused_G := Gada.Async.Scheduler.Spawn (Go_Closure_1'Unrestricted_Access);
-   Gada.Async.Scheduler.Shutdown;
+   Gada.Core.Process.Exit_Main;
+exception
+   when E : others =>
+      Gada.Core.Process.Unhandled (E);
 end Main;

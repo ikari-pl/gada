@@ -34,6 +34,14 @@ package OS_Suite is
    procedure Test_Stat_Dir_And_Missing (T : in out
       AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Mkdir (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Read_File_FIFO (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Read_File_Large (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Mkdir_Invalid (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Write_After_Close (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Read_File_Dir (T : in out
       AUnit.Test_Cases.Test_Case'Class);
 

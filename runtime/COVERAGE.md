@@ -489,14 +489,16 @@ Test_Timer_Stop — none excluded.
 
 ### `runtime/src/gada-std-os.adb` (Phase 6 wave 2)
 
-62-68 — Read_File's `when Device_Error | End_Error | Data_Error` arm.
+66, 70, 72 — Read_File's `when Device_Error | End_Error | Data_Error |
+Use_Error` arm around the chunked read loop.
 The directory case is rejected up front by the `Ada.Directories.Kind`
 guard (covered by OS_Suite's Test_Read_File_Dir, which asserts the
 "is a directory" error); a read failure on a regular file needs a
-failing device, which no portable AUnit test can arrange. 70-71, 149,
-168 — `end;`/`end Read_File;`/`end Open;`/`end Create;` block terminators
+failing device, which no portable AUnit test can arrange (the FIFO and
+>64 KiB tests cover the loop itself). 73, 75, 153, 172 —
+`end;`/`end Read_File;`/`end Open;`/`end Create;` block terminators
 where lcov 2.4 leaves hit-count 0 despite every contained line being hit
-(same misattribution class as gada-std-time.adb). 83-84 — the `Args` argv
+(same misattribution class as gada-std-time.adb). 87-88 — the `Args` argv
 loop body; the CI full-suite coverage run invokes test_runner with no
 filter argument (Argument_Count = 0), so the loop body never executes
 there (single-suite `make stdlib-test PKG=...` runs do pass one).

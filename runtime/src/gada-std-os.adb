@@ -41,33 +41,37 @@ package body Gada.Std.OS is
                & Ada.Exceptions.Exception_Message (E));
             return;
       end;
+      --  Read in fixed chunks until a short read (EOF) instead of
+      --  pre-sizing from SIO.Size: procfs/sysfs files report size 0,
+      --  and Size raises Use_Error on FIFOs and character devices
+      --  (Go's ReadFile reads until EOF either way).
       declare
-         N    : constant Stream_Element_Offset :=
-           Stream_Element_Offset (SIO.Size (F));
-         --  Heap buffer: goroutine stacks are 256 KB, a stack array
-         --  would overflow on large files.
+         Chunk : constant Stream_Element_Offset := 65_536;
+         --  Heap buffer: goroutine stacks are 256 KB.
          type SEA is access Stream_Element_Array;
-         Buf  : constant SEA := new Stream_Element_Array (1 .. N);
+         Buf  : constant SEA := new Stream_Element_Array (1 .. Chunk);
          Last : Stream_Element_Offset;
       begin
-         begin
+         loop
             SIO.Read (F, Buf.all, Last);
             for I in Buf'First .. Last loop
                Bytes.Byte_Vectors.Append
                  (Data, Character'Val (Buf (I)));
             end loop;
-         exception
-            --  Go returns an error value; a raw Ada exception from
-            --  the stream read must not escape (and must not leak F).
-            when E : Ada.IO_Exceptions.Device_Error
-               | Ada.IO_Exceptions.End_Error
-               | Ada.IO_Exceptions.Data_Error =>
-               Err := Errors.New_K
-                 ("read " & Path & ": "
-                  & Ada.Exceptions.Exception_Message (E));
-         end;
-         SIO.Close (F);
+            exit when Last < Buf'Last;
+         end loop;
+      exception
+         --  Go returns an error value; a raw Ada exception from the
+         --  stream read must not escape (and must not leak F).
+         when E : Ada.IO_Exceptions.Device_Error
+            | Ada.IO_Exceptions.End_Error
+            | Ada.IO_Exceptions.Data_Error
+            | Ada.IO_Exceptions.Use_Error =>
+            Err := Errors.New_K
+              ("read " & Path & ": "
+               & Ada.Exceptions.Exception_Message (E));
       end;
+      SIO.Close (F);
    end Read_File;
 
    ---------------------------------------------------------------

@@ -9,6 +9,7 @@ with Ada.Directories;
 with Ada.IO_Exceptions;
 with Ada.Streams.Stream_IO;
 with Ada.Strings.Unbounded;
+with Interfaces.C.Strings;
 with Gada.Std.Bytes; use Gada.Std.Bytes;
 with Gada.Std.Errors;
 with Gada.Std.Strings;
@@ -68,6 +69,13 @@ package body OS_Suite is
       Register_Routine (T, Test_Stat_Dir_And_Missing'Access,
                         "Stat dir + missing");
       Register_Routine (T, Test_Mkdir'Access, "Mkdir + exists error");
+      Register_Routine (T, Test_Read_File_FIFO'Access, "ReadFile FIFO");
+      Register_Routine (T, Test_Read_File_Large'Access,
+                        "ReadFile > one 64 KiB chunk");
+      Register_Routine (T, Test_Mkdir_Invalid'Access,
+                        "Mkdir empty/invalid path errors");
+      Register_Routine (T, Test_Write_After_Close'Access,
+                        "Write after Close raises");
       Register_Routine (T, Test_Read_File_Dir'Access,
                         "ReadFile on a directory errors");
    end Register_Tests;
@@ -246,5 +254,107 @@ package body OS_Suite is
       Assert (Err /= Errors.No_Error, "dir read: error set");
       Assert (Byte_Vectors.Is_Empty (Data), "dir read: empty slice");
    end Test_Read_File_Dir;
+
+   --  Regression (#13): Read_File sized its buffer from Stream_IO.Size.
+   --  A FIFO has no size (Size raised Use_Error, which escaped and
+   --  leaked the handle; procfs files report 0 and read empty). The
+   --  chunked loop reads to EOF: a writer task feeds a FIFO here.
+   procedure Test_Read_File_FIFO (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      use Interfaces.C;
+      function C_Mkfifo (Path : Interfaces.C.Strings.chars_ptr;
+                         Mode : unsigned_short) return int
+        with Import, Convention => C, External_Name => "mkfifo";
+      --  Ada.Directories.Delete_File only removes ordinary files.
+      function C_Unlink (Path : Interfaces.C.Strings.chars_ptr) return int
+        with Import, Convention => C, External_Name => "unlink";
+      Fifo    : constant String := "os_suite_tmp.fifo";
+      Payload : constant String := "fifo payload";
+      Data    : Byte_Slice;
+      Err     : Errors.Error_Access;
+      C_Path  : Interfaces.C.Strings.chars_ptr :=
+        Interfaces.C.Strings.New_String (Fifo);
+   begin
+      if C_Unlink (C_Path) /= 0 then
+         null;  --  absent from a previous run: fine
+      end if;
+      Assert (C_Mkfifo (C_Path, 8#600#) = 0, "mkfifo");
+      declare
+         task Writer;
+         task body Writer is
+            use Ada.Streams;
+            F   : Stream_IO.File_Type;
+            Buf : Stream_Element_Array
+              (1 .. Stream_Element_Offset (Payload'Length));
+         begin
+            for I in Payload'Range loop
+               Buf (Stream_Element_Offset (I)) :=
+                 Stream_Element (Character'Pos (Payload (I)));
+            end loop;
+            Stream_IO.Open (F, Stream_IO.Out_File, Fifo);
+            Stream_IO.Write (F, Buf);
+            Stream_IO.Close (F);
+         end Writer;
+      begin
+         Read_File (Fifo, Data, Err);
+      end;  --  waits for Writer
+      Assert (C_Unlink (C_Path) = 0, "unlink fifo");
+      Interfaces.C.Strings.Free (C_Path);
+      Assert (Err = Errors.No_Error, "FIFO read: no error");
+      Assert (To_String (Data) = Payload,
+              "FIFO read to EOF, got """ & To_String (Data) & """");
+   end Test_Read_File_FIFO;
+
+   --  A file larger than one 64 KiB chunk crosses the chunk loop.
+   procedure Test_Read_File_Large (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Content : constant String (1 .. 150_000) :=
+        [for I in 1 .. 150_000 => Character'Val (Character'Pos ('a')
+                                                 + I mod 26)];
+      Data    : Byte_Slice;
+      Err     : Errors.Error_Access;
+   begin
+      Write_Tmp (Content);
+      Read_File (Tmp_Name, Data, Err);
+      Remove_Tmp;
+      Assert (Err = Errors.No_Error, "large read: no error");
+      Assert (Byte_Vectors.Length (Data) = 150_000
+                and then To_String (Data) = Content,
+              "large read round-trips all 150000 bytes");
+   end Test_Read_File_Large;
+
+   --  Mkdir on an empty or invalid path returns an error, no raise.
+   procedure Test_Mkdir_Invalid (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Err : Errors.Error_Access;
+   begin
+      Mkdir ("", Err);
+      Assert (Err /= Errors.No_Error, "Mkdir """" errors");
+      Mkdir ("os_suite_missing_parent_xyz/child", Err);
+      Assert (Err /= Errors.No_Error, "Mkdir under a missing parent errors");
+   end Test_Mkdir_Invalid;
+
+   --  Write through a stale copy of a handle after Close (F itself is
+   --  nulled, the copy still points at the closed File) raises.
+   procedure Test_Write_After_Close (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      F, G   : File_Access;
+      Err    : Errors.Error_Access;
+      Raised : Boolean := False;
+   begin
+      Remove_Tmp;
+      Create (Tmp_Name, F, Err);
+      Assert (Err = Errors.No_Error, "Create ok");
+      G := F;
+      Close (F);
+      begin
+         Write (G, To_Bytes ("x"));
+      exception
+         when Ada.IO_Exceptions.Use_Error =>
+            Raised := True;
+      end;
+      Remove_Tmp;
+      Assert (Raised, "Write after Close (stale copy) raises Use_Error");
+   end Test_Write_After_Close;
 
 end OS_Suite;

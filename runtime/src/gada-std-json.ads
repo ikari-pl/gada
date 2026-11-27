@@ -79,16 +79,16 @@ package Gada.Std.Json is
    --  whitespace allowed) into V. null leaves V unchanged with no
    --  error, matching Go; a kind mismatch is an error, as in Go.
    procedure Unmarshal (Data : Gada.Std.Bytes.Byte_Slice;
-                        V    : out Integer;
+                        V    : in out Integer;
                         Err  : out Gada.Std.Errors.Error_Access);
    procedure Unmarshal (Data : Gada.Std.Bytes.Byte_Slice;
-                        V    : out Long_Float;
+                        V    : in out Long_Float;
                         Err  : out Gada.Std.Errors.Error_Access);
    procedure Unmarshal (Data : Gada.Std.Bytes.Byte_Slice;
-                        V    : out Boolean;
+                        V    : in out Boolean;
                         Err  : out Gada.Std.Errors.Error_Access);
    procedure Unmarshal (Data : Gada.Std.Bytes.Byte_Slice;
-                        V    : out Ada.Strings.Unbounded.Unbounded_String;
+                        V    : in out Ada.Strings.Unbounded.Unbounded_String;
                         Err  : out Gada.Std.Errors.Error_Access);
 
 end Gada.Std.Json;

@@ -93,7 +93,7 @@ package body Json_Suite is
       Check ("plain", "plain");
       Check ("say \""hi\""", "say ""hi""");
       Check ("back\\slash", "back\slash");
-      Check ("nl\ncr\rbt\btbf\ff", "nl" & Character'Val (10)
+      Check ("nl\ncr\rbt\ttbf\ff", "nl" & Character'Val (10)
               & "cr" & Character'Val (13) & "bt" & Character'Val (9)
               & "tbf" & Character'Val (12) & "f");
       Check ("\u0041", "A");       --  A

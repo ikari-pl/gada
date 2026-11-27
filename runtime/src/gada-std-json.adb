@@ -182,7 +182,7 @@ package body Gada.Std.Json is
         (if Dot = 0 then Dig
          else Dig (Dig'First .. Dot - 1) & Dig (Dot + 1 .. Dig'Last));
       Point : constant Natural :=
-        (if Dot = 0 then Dig_S'Length else Dot - Dig_S'First + 1);
+        (if Dot = 0 then Dig_S'Length else Dot - Dig'First);
       --  Apply the exponent: new point position.
       New_Point : constant Integer :=
         Integer (Point) + Exp;
@@ -519,7 +519,7 @@ package body Gada.Std.Json is
    end Marshal;
 
    procedure Unmarshal (Data : Byte_Slice;
-                        V    : out Integer;
+                        V    : in out Integer;
                         Err  : out Error_Access) is
       P  : Scalar;
       OK : Boolean;
@@ -546,7 +546,7 @@ package body Gada.Std.Json is
    end Unmarshal;
 
    procedure Unmarshal (Data : Byte_Slice;
-                        V    : out Long_Float;
+                        V    : in out Long_Float;
                         Err  : out Error_Access) is
       P  : Scalar;
       OK : Boolean;
@@ -570,7 +570,7 @@ package body Gada.Std.Json is
    end Unmarshal;
 
    procedure Unmarshal (Data : Byte_Slice;
-                        V    : out Boolean;
+                        V    : in out Boolean;
                         Err  : out Error_Access) is
       P  : Scalar;
       OK : Boolean;
@@ -592,7 +592,7 @@ package body Gada.Std.Json is
    end Unmarshal;
 
    procedure Unmarshal (Data : Byte_Slice;
-                        V    : out Unbounded_String;
+                        V    : in out Unbounded_String;
                         Err  : out Error_Access) is
       P  : Scalar;
       OK : Boolean;

@@ -56,12 +56,12 @@ package body Std_Hash_Suite is
          declare
             B : constant Byte_Slice := To_Bytes (To_String (V.S));
          begin
-            Assert (Crc32.Checksum_IEEE (B) = V.IEEE,
+            Assert (Gada.Std.Hash.Crc32.Checksum_IEEE (B) = V.IEEE,
                     "IEEE(" & To_String (V.S) & ")");
-            Assert (Crc32.Checksum (B, Crc32.Make_Table (Crc32.Castagnoli))
+            Assert (Gada.Std.Hash.Crc32.Checksum (B, Gada.Std.Hash.Crc32.Make_Table (Gada.Std.Hash.Crc32.Castagnoli))
                       = V.Cast,
                     "Castagnoli(" & To_String (V.S) & ")");
-            Assert (Crc32.Checksum (B, Crc32.Make_Table (Crc32.Koopman))
+            Assert (Gada.Std.Hash.Crc32.Checksum (B, Gada.Std.Hash.Crc32.Make_Table (Gada.Std.Hash.Crc32.Koopman))
                       = V.Koop,
                     "Koopman(" & To_String (V.S) & ")");
          end;
@@ -72,21 +72,21 @@ package body Std_Hash_Suite is
       AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
-      Tab : constant Crc32.Table := Crc32.Make_Table (Crc32.IEEE);
+      Tab : constant Gada.Std.Hash.Crc32.Table := Gada.Std.Hash.Crc32.Make_Table (Gada.Std.Hash.Crc32.IEEE);
    begin
       --  classic table entries: tab(0) = 0, tab(1) = 16#77073096#
       Assert (Tab (0) = 0, "tab(0)");
       Assert (Tab (1) = 16#77073096#, "tab(1)");
       --  incremental Update equals the one-shot checksum
-      Assert (Crc32.Update
-                (Crc32.Update (0, Tab, To_Bytes ("1234")), Tab,
+      Assert (Gada.Std.Hash.Crc32.Update
+                (Gada.Std.Hash.Crc32.Update (0, Tab, To_Bytes ("1234")), Tab,
                  To_Bytes ("56789")) = 16#CBF43926#,
               "split Update");
       --  long input crosses many table lookups (pinned from Go)
       declare
          Long : constant String (1 .. 6000) := (others => 'a');
       begin
-         Assert (Crc32.Checksum_IEEE (To_Bytes (Long)) = 16#29A9DF9B#,
+         Assert (Gada.Std.Hash.Crc32.Checksum_IEEE (To_Bytes (Long)) = 16#29A9DF9B#,
                  "6000xa IEEE");
       end;
    end Test_Crc32_Update_Split;
@@ -113,10 +113,10 @@ package body Std_Hash_Suite is
          declare
             B : constant Byte_Slice := To_Bytes (To_String (V.S));
          begin
-            Assert (Crc64.Checksum (B, Crc64.Make_Table (Crc64.ECMA))
+            Assert (Gada.Std.Hash.Crc64.Checksum (B, Gada.Std.Hash.Crc64.Make_Table (Gada.Std.Hash.Crc64.ECMA))
                       = V.ECMA,
                     "ECMA(" & To_String (V.S) & ")");
-            Assert (Crc64.Checksum (B, Crc64.Make_Table (Crc64.ISO))
+            Assert (Gada.Std.Hash.Crc64.Checksum (B, Gada.Std.Hash.Crc64.Make_Table (Gada.Std.Hash.Crc64.ISO))
                       = V.ISO,
                     "ISO(" & To_String (V.S) & ")");
          end;
@@ -128,19 +128,19 @@ package body Std_Hash_Suite is
    is
       pragma Unreferenced (T);
    begin
-      Assert (Adler32.Checksum (To_Bytes ("")) = 16#00000001#, "empty");
-      Assert (Adler32.Checksum (To_Bytes ("123456789")) = 16#091E01DE#,
+      Assert (Gada.Std.Hash.Adler32.Checksum (To_Bytes ("")) = 16#00000001#, "empty");
+      Assert (Gada.Std.Hash.Adler32.Checksum (To_Bytes ("123456789")) = 16#091E01DE#,
               "123456789");
-      Assert (Adler32.Checksum
+      Assert (Gada.Std.Hash.Adler32.Checksum
                 (To_Bytes ("The quick brown fox jumps over the lazy dog"))
                 = 16#5BDC0FDA#,
               "fox");
-      Assert (Adler32.Checksum (To_Bytes ("a")) = 16#00620062#, "a");
+      Assert (Gada.Std.Hash.Adler32.Checksum (To_Bytes ("a")) = 16#00620062#, "a");
       --  6000 bytes crosses the NMAX = 5552 batching boundary
       declare
          Long : constant String (1 .. 6000) := (others => 'a');
       begin
-         Assert (Adler32.Checksum (To_Bytes (Long)) = 16#7A4CE1E9#,
+         Assert (Gada.Std.Hash.Adler32.Checksum (To_Bytes (Long)) = 16#7A4CE1E9#,
                  "6000xa batching");
       end;
    end Test_Adler32_Vectors;
@@ -162,36 +162,36 @@ package body Std_Hash_Suite is
       for V of Vecs loop
          declare
             B : constant Byte_Slice := To_Bytes (To_String (V.S));
-            H1 : Fnv.Hash32 := Fnv.New32a;
-            H2 : Fnv.Hash32 := Fnv.New32;
+            H1 : Gada.Std.Hash.Fnv.Hash32 := Gada.Std.Hash.Fnv.New32a;
+            H2 : Gada.Std.Hash.Fnv.Hash32 := Gada.Std.Hash.Fnv.New32;
          begin
-            Fnv.Write (H1, B);
-            Fnv.Write (H2, B);
-            Assert (Fnv.Sum32 (H1) = V.A, "fnv32a(" & To_String (V.S) & ")");
-            Assert (Fnv.Sum32 (H2) = V.One, "fnv32(" & To_String (V.S) & ")");
+            Gada.Std.Hash.Fnv.Write (H1, B);
+            Gada.Std.Hash.Fnv.Write (H2, B);
+            Assert (Gada.Std.Hash.Fnv.Sum32 (H1) = V.A, "fnv32a(" & To_String (V.S) & ")");
+            Assert (Gada.Std.Hash.Fnv.Sum32 (H2) = V.One, "fnv32(" & To_String (V.S) & ")");
          end;
       end loop;
       --  multi-chunk Write equals one-shot; Reset returns to the basis;
       --  Sum appends big-endian; Size is 4
       declare
-         H : Fnv.Hash32 := Fnv.New32a;
+         H : Gada.Std.Hash.Fnv.Hash32 := Gada.Std.Hash.Fnv.New32a;
       begin
-         Fnv.Write (H, To_Bytes ("1234"));
-         Fnv.Write (H, To_Bytes ("56789"));
-         Assert (Fnv.Sum32 (H) = 16#BB86B11C#, "split write");
+         Gada.Std.Hash.Fnv.Write (H, To_Bytes ("1234"));
+         Gada.Std.Hash.Fnv.Write (H, To_Bytes ("56789"));
+         Assert (Gada.Std.Hash.Fnv.Sum32 (H) = 16#BB86B11C#, "split write");
          declare
-            S : constant Byte_Slice := Fnv.Sum (H, Byte_Vectors.Empty_Vector);
+            S : constant Byte_Slice := Gada.Std.Hash.Fnv.Sum (H, Byte_Vectors.Empty_Vector);
          begin
-            Assert (Byte_Vectors.Length (S) = 4, "Sum length");
+            Assert (Integer (Byte_Vectors.Length (S)) = 4, "Sum length");
             Assert (Byte_Vectors.Element (S, 1) = Character'Val (16#BB#)
                       and then Byte_Vectors.Element (S, 2) = Character'Val (16#86#)
                       and then Byte_Vectors.Element (S, 3) = Character'Val (16#B1#)
                       and then Byte_Vectors.Element (S, 4) = Character'Val (16#1C#),
                     "Sum big-endian bytes");
          end;
-         Assert (Fnv.Size (H) = 4, "Size32");
-         Fnv.Reset (H);
-         Assert (Fnv.Sum32 (H) = 16#811C9DC5#, "Reset");
+         Assert (Gada.Std.Hash.Fnv.Size (H) = 4, "Size32");
+         Gada.Std.Hash.Fnv.Reset (H);
+         Assert (Gada.Std.Hash.Fnv.Sum32 (H) = 16#811C9DC5#, "Reset");
       end;
    end Test_Fnv32;
 
@@ -214,32 +214,32 @@ package body Std_Hash_Suite is
       for V of Vecs loop
          declare
             B : constant Byte_Slice := To_Bytes (To_String (V.S));
-            H1 : Fnv.Hash64 := Fnv.New64a;
-            H2 : Fnv.Hash64 := Fnv.New64;
+            H1 : Gada.Std.Hash.Fnv.Hash64 := Gada.Std.Hash.Fnv.New64a;
+            H2 : Gada.Std.Hash.Fnv.Hash64 := Gada.Std.Hash.Fnv.New64;
          begin
-            Fnv.Write (H1, B);
-            Fnv.Write (H2, B);
-            Assert (Fnv.Sum64 (H1) = V.A, "fnv64a(" & To_String (V.S) & ")");
-            Assert (Fnv.Sum64 (H2) = V.One, "fnv64(" & To_String (V.S) & ")");
+            Gada.Std.Hash.Fnv.Write (H1, B);
+            Gada.Std.Hash.Fnv.Write (H2, B);
+            Assert (Gada.Std.Hash.Fnv.Sum64 (H1) = V.A, "fnv64a(" & To_String (V.S) & ")");
+            Assert (Gada.Std.Hash.Fnv.Sum64 (H2) = V.One, "fnv64(" & To_String (V.S) & ")");
          end;
       end loop;
       declare
-         H : Fnv.Hash64 := Fnv.New64a;
+         H : Gada.Std.Hash.Fnv.Hash64 := Gada.Std.Hash.Fnv.New64a;
       begin
-         Fnv.Write (H, To_Bytes ("1234"));
-         Fnv.Write (H, To_Bytes ("56789"));
-         Assert (Fnv.Sum64 (H) = 16#06D5573923C6CDFC#, "split write");
+         Gada.Std.Hash.Fnv.Write (H, To_Bytes ("1234"));
+         Gada.Std.Hash.Fnv.Write (H, To_Bytes ("56789"));
+         Assert (Gada.Std.Hash.Fnv.Sum64 (H) = 16#06D5573923C6CDFC#, "split write");
          declare
-            S : constant Byte_Slice := Fnv.Sum (H, Byte_Vectors.Empty_Vector);
+            S : constant Byte_Slice := Gada.Std.Hash.Fnv.Sum (H, Byte_Vectors.Empty_Vector);
          begin
-            Assert (Byte_Vectors.Length (S) = 8, "Sum length");
+            Assert (Integer (Byte_Vectors.Length (S)) = 8, "Sum length");
             Assert (Byte_Vectors.Element (S, 1) = Character'Val (16#06#)
                       and then Byte_Vectors.Element (S, 8) = Character'Val (16#FC#),
                     "Sum big-endian first/last");
          end;
-         Assert (Fnv.Size (H) = 8, "Size64");
-         Fnv.Reset (H);
-         Assert (Fnv.Sum64 (H) = 16#CBF29CE484222325#, "Reset");
+         Assert (Gada.Std.Hash.Fnv.Size (H) = 8, "Size64");
+         Gada.Std.Hash.Fnv.Reset (H);
+         Assert (Gada.Std.Hash.Fnv.Sum64 (H) = 16#CBF29CE484222325#, "Reset");
       end;
    end Test_Fnv64;
 

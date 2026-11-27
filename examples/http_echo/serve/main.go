@@ -40,5 +40,7 @@ func main() {
 	var err error
 	http.HandleFunc("/echo", echo)
 	err = http.ListenAndServe("127.0.0.1:8080", nil)
-	fmt.Println(err)
+	if err != nil {
+		fmt.Println("serve returned")
+	}
 }

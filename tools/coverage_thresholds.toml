@@ -349,3 +349,22 @@ reason = "unreachable-by-construction / non-portable arms — see runtime/COVERA
 file = "runtime/src/gada-std-json.adb"
 lines = [153, 220, 228, 264, 310, 411, 477, 638, 665, 689, 711]
 reason = "lcov block-terminator artifacts — see runtime/COVERAGE.md"
+
+# Phase 7 wave 3 (net/http). 122/181/446/558-559: `end X;`/block
+# terminators; 126: Read_Request subprogram-header line; 160/510:
+# `declare` markers — all lcov 2.4 misattribution (same class as
+# gada-std-time.adb / gada-std-json.adb). 147-148 and 245-247: the
+# N = 0-without-error arms — Gada.Std.Net.Conn.Read always sets
+# Err = EOF on orderly shutdown, so N = 0 implies E /= No_Error;
+# defensive, unreachable. 166-167: First_Lf = 0 arm — unreachable
+# because Hd > 0 already guarantees a CRLF inside Head. 396-397:
+# Accept_K error arm of the accept loop — Stop_Server wakes a blocked
+# accept with a self-connect that succeeds, and genuine accept errors
+# (EMFILE/ENFILE) are not deterministically triggerable in CI.
+# 495-497: client write-error arm of Do_Request — needs EPIPE/RST;
+# tests only close after the server read the full request.
+# Rationale: runtime/COVERAGE.md (gada-std-http).
+[[exclude]]
+file = "runtime/src/gada-std-http.adb"
+lines = [122, 126, 147, 148, 160, 166, 167, 181, 245, 246, 247, 396, 397, 446, 495, 496, 497, 510, 558, 559]
+reason = "lcov terminator artifacts + unreachable defensive arms + non-CI-triggerable socket error arms — see runtime/COVERAGE.md"

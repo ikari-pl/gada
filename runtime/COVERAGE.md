@@ -569,6 +569,32 @@ Net_Suite. The Phase 5 exclusions for this file (28, 122, 166) were
 superseded when the file was rewritten for Phase 7 and are replaced by
 this entry.
 
+### `runtime/src/gada-std-http.adb` (Phase 7 wave 3, items 3-4)
+
+122, 181, 446, 558-559 — `end To_Lower;` / block `end;` terminators;
+126 — the `Read_Request` subprogram-header line; 160, 510 — `declare`
+markers: lcov 2.4 no-return-block misattribution, same class as the
+gada-std-time.adb / gada-std-json.adb entries (every contained line of
+these blocks is hit by Http_Suite). 147-148 and 245-247 — the
+`N = 0`-without-error arms of the header and body read loops:
+`Gada.Std.Net.Conn.Read` always sets `Err = EOF` on an orderly peer
+shutdown, so `N = 0` implies `E /= No_Error`; the arms are defensive
+and unreachable through the net layer. 166-167 — the `First_Lf = 0`
+arm: unreachable because `Hd > 0` (a CRLFCRLF was found) already
+guarantees a CRLF inside `Head`. 396-397 — the accept-error arm of
+`Listen_And_Serve`: `Stop_Server` wakes a blocked accept with a
+self-connect that succeeds, and genuine accept errors (EMFILE/ENFILE)
+are not deterministically triggerable in CI. 495-497 — the client
+write-error arm of `Do_Request`: it needs EPIPE/RST, and the tests only
+close connections after the server has read the full request.
+Everything else — mux register/lookup, Read_Request request line,
+header loop incl. Content-Length (last-header-line arm), the body read
+loop incl. its EOF arm (Http_Suite Test_Bad_Requests truncated-body
+case and Test_Split_Body), Write_Response, Serve_One incl. its
+exception handler (Test_Handler_Raises), the accept loop's stop paths,
+Split_URL, Do_Request happy + parse-error paths, Client Get/Post — is
+covered by Http_Suite, not excluded.
+
 ---
 
 ### Adding a new exception

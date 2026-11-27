@@ -199,9 +199,9 @@ package body Gada.Std.Http is
                      else Head (Pos .. Lf - 1));
                   Colon : constant Natural := Index (Hline, ":");
                begin
-                  if Lf = 0 then
-                     exit;
-                  end if;
+                  --  The last header line's CRLF is the first half of
+                  --  the CRLFCRLF terminator, so for it Lf = 0: parse
+                  --  the line before exiting on Lf = 0.
                   if Colon > 0
                     and then To_Lower (Trim (Hline (Hline'First .. Colon - 1),
                                              Ada.Strings.Both))
@@ -221,6 +221,9 @@ package body Gada.Std.Http is
                            return;
                         end if;
                      end;
+                  end if;
+                  if Lf = 0 then
+                     exit;
                   end if;
                   Pos := Lf + 2;
                end;

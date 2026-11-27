@@ -237,6 +237,11 @@ package body Http_Suite is
       Register_Routine (T, Test_Echo_And_Catchall'Access,
                         "POST echo + catch-all");
       Register_Routine (T, Test_Client_Echo'Access, "client GET/POST echo");
+      Register_Routine (T, Test_Split_Body'Access,
+                        "body arriving after the header block");
+      Register_Routine (T, Test_Handler_Raises'Access,
+                        "panicking handler closes the conn");
+      Register_Routine (T, Test_500_Status'Access, "Write_Header(500)");
    end Register_Tests;
 
    overriding function Name (T : Http_Test) return AUnit.Message_String is
@@ -292,6 +297,13 @@ package body Http_Suite is
       begin
          Assert (Ada.Strings.Fixed.Index (R, "HTTP/1.1 400") = 1,
                  "expected 400 for garbage request line, got: " & R);
+      end;
+      declare
+         R : constant String := Do_Request
+           ("GET / HTTP/1.1" & CRLF & "Content-Length: abc" & CRLF & CRLF);
+      begin
+         Assert (Ada.Strings.Fixed.Index (R, "HTTP/1.1 400") = 1,
+                 "expected 400 for non-numeric Content-Length, got: " & R);
       end;
       declare
          Pad : String (1 .. 1_100_000) := (others => 'A');
@@ -516,5 +528,112 @@ package body Http_Suite is
       Trace ("Client_Echo: stopping server");
       Stop_Server;
    end Test_Client_Echo;
+
+   --  A handler that raises must not wedge the connection: Serve_One's
+   --  exception handler closes it, so the client sees EOF (an error),
+   --  never a hang.
+   procedure Boom_Body (W : Response_Writer; R : Request_Access) is
+      pragma Unreferenced (W, R);
+   begin
+      raise Program_Error with "handler boom";
+   end Boom_Body;
+
+   procedure Err500_Body (W : Response_Writer; R : Request_Access) is
+      pragma Unreferenced (R);
+      N   : Natural;
+      Err : Errors.Error_Access;
+   begin
+      W.all.Write_Header (500);
+      W.all.Write (To_Bytes ("boom"), N, Err);
+      pragma Unreferenced (Err);
+   end Err500_Body;
+
+   --  Body arriving after the header block (deterministic split via a
+   --  pause between the two writes): the server's header read finishes
+   --  first, so Read_Request's Content-Length read loop runs.
+   procedure Test_Split_Body (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      C   : Conn;
+      Err : Errors.Error_Access;
+      N   : Natural;
+      Buf : Byte_Slice := New_Bytes (65536);
+      Acc : Unbounded_String;
+   begin
+      Trace ("Test_Split_Body");
+      Start_Server;
+      for I in 1 .. 500 loop
+         Dial ("tcp", "127.0.0.1:"
+                 & Ada.Strings.Fixed.Trim (The_Port'Image,
+                                            Ada.Strings.Left),
+               C, Err);
+         exit when Err = Errors.No_Error;
+         delay 0.001;
+      end loop;
+      Assert (Err = Errors.No_Error, "dial: " & Err_Text (Err));
+      C.all.Write (To_Bytes
+        ("POST /echo HTTP/1.1" & CRLF & "Host: x" & CRLF
+         & "Content-Length: 5" & CRLF & CRLF), N, Err);
+      Assert (Err = Errors.No_Error, "write headers: " & Err_Text (Err));
+      delay 0.05;
+      C.all.Write (To_Bytes ("hello"), N, Err);
+      Assert (Err = Errors.No_Error, "write body: " & Err_Text (Err));
+      loop
+         C.all.Read (Buf, N, Err);
+         exit when Err /= Errors.No_Error or else N = 0;
+         for I in 1 .. N loop
+            Append (Acc, Byte_Vectors.Element (Buf, I));
+         end loop;
+      end loop;
+      C.all.Close;
+      Assert (Ada.Strings.Fixed.Index (To_String (Acc), "echo:hello") > 0,
+              "split-body echo mismatch: '" & To_String (Acc) & "'");
+      Stop_Server;
+   end Test_Split_Body;
+
+   --  GET /boom: the handler raises, Serve_One closes the connection
+   --  without a response, the client must get an error (not a hang).
+   procedure Test_Handler_Raises
+     (T : in out AUnit.Test_Cases.Test_Case'Class)
+   is
+      pragma Unreferenced (T);
+      Resp : Response_Access;
+      Err  : Errors.Error_Access;
+   begin
+      Trace ("Test_Handler_Raises");
+      Start_Server;
+      Handle_Func ("/boom", Boom_Body'Access);
+      declare
+         R : constant String := Do_Request
+           ("GET / HTTP/1.1" & CRLF & "Host: x" & CRLF & CRLF);
+      begin
+         Assert (Ada.Strings.Fixed.Index (R, "HTTP/1.1 200") = 1,
+                 "warmup GET failed: " & R);
+      end;
+      --  no retry: the error is deterministic (server closes at once)
+      Get (Base_URL & "/boom", Resp, Err);
+      Assert (Err /= Errors.No_Error,
+              "expected error from panicking handler, got <nil>");
+      Assert (Resp = null, "expected null response from panicking handler");
+      Stop_Server;
+   end Test_Handler_Raises;
+
+   --  Write_Header (500) + body must produce a 500 status line.
+   procedure Test_500_Status (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+   begin
+      Trace ("Test_500_Status");
+      Start_Server;
+      Handle_Func ("/err", Err500_Body'Access);
+      declare
+         R : constant String := Do_Request
+           ("GET /err HTTP/1.1" & CRLF & "Host: x" & CRLF & CRLF);
+      begin
+         Assert (Ada.Strings.Fixed.Index (R, "HTTP/1.1 500") = 1,
+                 "expected 500 status line, got: " & R);
+         Assert (Ada.Strings.Fixed.Index (R, "boom") > 0,
+                 "expected boom body, got: " & R);
+      end;
+      Stop_Server;
+   end Test_500_Status;
 
 end Http_Suite;

@@ -192,6 +192,7 @@ type emitter struct {
 	deferredDecls        map[string]bool     // names whose decl initialiser was deferred to the body (out-call targets and anything referencing them).
 	unboundedStrings     map[string]bool     // local string vars, declared as Unbounded_String (Ada String objects are bound-constrained; Go strings are variable-length).
 	discardSeq           int                 // numbering for the Discard_N locals that stand in for `_` in stdlib out-call positions (unique per file)
+	inMainExitLoop       bool                // emitting main\'s body inside the Go_Main_Body loop: a bare `return` lowers to `exit Go_Main_Body;` so Exit_Main still runs (ADR-0011)
 	pendingRecvs         []pendingChanRecv   // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
 	pendingAsserts       []pendingTypeAssert // per-subprogram queue of `v, ok := x.(T)` (comma-ok, item 6b) defines whose body-side membership-test + guarded-conversion block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order (same "RHS evaluates at the := point" rule). Reset at every emitSubprogram call.
 	err                  error
@@ -1671,6 +1672,18 @@ func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
 	for _, pa := range e.pendingAsserts {
 		e.emitTypeAssertBlock(pa)
 	}
+	// A `return` in a main that must end via Exit_Main cannot lower to
+	// Ada `return;` — that would leave Main without reaching Exit_Main,
+	// and the environment task would then wait on the worker pool /
+	// time service forever. Wrap the body in a named loop and lower the
+	// return to `exit Go_Main_Body;`, which leaves the defer block
+	// normally (defers run) and falls through to Exit_Main.
+	mainExitLoop := e.needsProcessExit() && bodyHasReturn(mainBody)
+	if mainExitLoop {
+		e.println(mainExitLabel + " : loop")
+		e.indent++
+		e.inMainExitLoop = true
+	}
 	if len(mainBody) > 0 {
 		for _, s := range mainBody {
 			if _, isDefer := s.(*ir.DeferStmt); !isDefer {
@@ -1678,6 +1691,12 @@ func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
 			}
 			e.emitStmt(s)
 		}
+	}
+	if mainExitLoop {
+		e.println("exit " + mainExitLabel + ";")
+		e.inMainExitLoop = false
+		e.indent--
+		e.println("end loop " + mainExitLabel + ";")
 	}
 	if !emittedAny {
 		e.println("null;")
@@ -2425,6 +2444,47 @@ func collectGoStmts(body []ir.Stmt) []*ir.GoStmt {
 	}
 	walk(body)
 	return out
+}
+
+// mainExitLabel names the loop that wraps main's body when a `return`
+// in main must still reach Gada.Core.Process.Exit_Main (ADR-0011).
+const mainExitLabel = "Go_Main_Body"
+
+// bodyHasReturn reports whether body contains a return statement at
+// any nesting depth of main's own control flow (if/for/range/select/
+// type-switch arms). Closures are separate subprograms and not walked.
+func bodyHasReturn(body []ir.Stmt) bool {
+	for _, s := range body {
+		switch s := s.(type) {
+		case *ir.Return:
+			return true
+		case *ir.If:
+			if bodyHasReturn(s.Then) || bodyHasReturn(s.Else) {
+				return true
+			}
+		case *ir.For:
+			if bodyHasReturn(s.Body) {
+				return true
+			}
+		case *ir.RangeStmt:
+			if bodyHasReturn(s.Body) {
+				return true
+			}
+		case *ir.SelectStmt:
+			for _, c := range s.Cases {
+				if bodyHasReturn(c.Body) {
+					return true
+				}
+			}
+		case *ir.TypeSwitch:
+			for _, c := range s.Cases {
+				if bodyHasReturn(c.Body) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // bodyUsesPanicOrRecover walks body for any panic/recover BuiltinCall.
@@ -3624,6 +3684,10 @@ func (e *emitter) emitElseChain(els []ir.Stmt) {
 
 func (e *emitter) emitReturn(r *ir.Return) {
 	if len(r.Results) == 0 {
+		if e.inMainExitLoop {
+			e.println("exit " + mainExitLabel + ";")
+			return
+		}
 		e.println("return;")
 		return
 	}

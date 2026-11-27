@@ -46,6 +46,11 @@ with a live ticker hung instead of crashing.
    panic status **2**. This handler is emitted for every main that
    owns runtime tasks or uses panic/recover; a panic recovered by
    main's defers still returns normally.
+   **An early `return` in main** must reach Exit_Main too: when main
+   contains one, its body is wrapped in a `Go_Main_Body : loop` and
+   the return lowers to `exit Go_Main_Body;`, which leaves the defer
+   block normally (defers run) and falls through to Exit_Main. A plain
+   Ada `return;` would skip Exit_Main and hang on the worker tasks.
 4. **Task-free programs are unchanged**: with nothing to abandon, the
    plain return already matches Go.
 5. `Gada.Std.Time.Stop_All` and `Scheduler.Shutdown` stay available for

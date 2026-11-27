@@ -1269,3 +1269,80 @@ func TestFloatBitSizeDropped(t *testing.T) {
 		}
 	}
 }
+
+// TestMainEarlyReturnReachesExitMain is the regression test for the
+// review-fix verification finding on ADR-0011: a `return` inside main
+// lowered to Ada `return;`, skipping Gada.Core.Process.Exit_Main, so a
+// main with a parked goroutine or live timer hung instead of exiting.
+// The body is wrapped in the Go_Main_Body loop and the return lowers to
+// `exit Go_Main_Body;`; defers (inner block) still run before the exit.
+func TestMainEarlyReturnReachesExitMain(t *testing.T) {
+	t.Parallel()
+	cond := &ir.BinOp{Op: "==", X: litInt("1"), Y: litInt("1")}
+	out := emitMainPkg(t, []string{"time"},
+		&ir.DeferStmt{Call: &ir.Call{Fun: idn("cleanup")}},
+		&ir.If{Cond: cond, Then: []ir.Stmt{&ir.Return{}}},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("time"), Sel: "Sleep"},
+			Args: []ir.Expr{litInt("1")},
+		},
+	)
+	for _, want := range []string{
+		"Go_Main_Body : loop",
+		"then exit Go_Main_Body; end if;",
+		"exit Go_Main_Body; end loop Go_Main_Body; end; Gada.Core.Process.Exit_Main;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "return;") {
+		t.Errorf("main's return must not lower to Ada return:\n%s", out)
+	}
+}
+
+// TestMainReturnWithoutProcessExitStaysReturn pins that a main which
+// owns no runtime tasks keeps the plain Ada `return;` (no wrapper loop).
+func TestMainReturnWithoutProcessExitStaysReturn(t *testing.T) {
+	t.Parallel()
+	cond := &ir.BinOp{Op: "==", X: litInt("1"), Y: litInt("1")}
+	out := emitMainPkg(t, []string{"strings"},
+		&ir.If{Cond: cond, Then: []ir.Stmt{&ir.Return{}}},
+	)
+	if !strings.Contains(out, "then return; end if;") {
+		t.Errorf("want plain return in:\n%s", out)
+	}
+	if strings.Contains(out, "Go_Main_Body") {
+		t.Errorf("unexpected exit loop in:\n%s", out)
+	}
+}
+
+// TestBodyHasReturn covers every control-flow arm bodyHasReturn walks.
+func TestBodyHasReturn(t *testing.T) {
+	t.Parallel()
+	ret := []ir.Stmt{&ir.Return{}}
+	cases := []struct {
+		name string
+		body []ir.Stmt
+		want bool
+	}{
+		{"empty", nil, false},
+		{"plain", ret, true},
+		{"if-then", []ir.Stmt{&ir.If{Then: ret}}, true},
+		{"if-else", []ir.Stmt{&ir.If{Else: ret}}, true},
+		{"if-none", []ir.Stmt{&ir.If{Then: []ir.Stmt{&ir.ExprStmt{X: litInt("1")}}}}, false},
+		{"for", []ir.Stmt{&ir.For{Body: ret}}, true},
+		{"for-none", []ir.Stmt{&ir.For{}}, false},
+		{"range", []ir.Stmt{&ir.RangeStmt{Body: ret}}, true},
+		{"range-none", []ir.Stmt{&ir.RangeStmt{}}, false},
+		{"select", []ir.Stmt{&ir.SelectStmt{Cases: []*ir.SelectCase{{}, {Body: ret}}}}, true},
+		{"select-none", []ir.Stmt{&ir.SelectStmt{Cases: []*ir.SelectCase{{}}}}, false},
+		{"typeswitch", []ir.Stmt{&ir.TypeSwitch{Cases: []*ir.TypeSwitchCase{{Body: ret}}}}, true},
+		{"typeswitch-none", []ir.Stmt{&ir.TypeSwitch{Cases: []*ir.TypeSwitchCase{{}}}}, false},
+	}
+	for _, c := range cases {
+		if got := bodyHasReturn(c.body); got != c.want {
+			t.Errorf("%s: bodyHasReturn = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

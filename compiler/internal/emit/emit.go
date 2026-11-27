@@ -181,7 +181,7 @@ type emitter struct {
 	interfaceNames      map[string]bool           // file-wide set of interface type names, so typeName renders a NamedType referring to an interface as the class-wide `Name'Class` view (which dispatches) rather than a plain type name. Populated alongside structByName.
 	dispatchMethodNames map[string]bool           // file-wide set of interface method names — the only methods with an emitted subprogram (5b-i abstract op + 5c overriding body) and hence the only callable ones. A method-call selector whose name is absent would emit a dangling `X.M`, so emitCallStmt rejects it. Populated alongside interfaceNames.
 	emptyInterfaceNames map[string]bool           // file-wide set of method-less interface names (Go's `any`, or a named `interface{}`). No concrete type derives an empty interface (5b), so a type assertion `x.(T)` whose operand is one has no legal Ada view conversion; emitTypeAssert rejects it. Populated alongside interfaceNames.
-	stdlibImports       map[string]string         // Go local import name → Ada package (e.g. "strings" → "Gada.Std.Strings"), from StdlibPackages. Drives the `with Gada.Std.*;` clauses and the qualified-call lowering of `strings.ToUpper(x)` → `Gada.Std.Strings.To_Upper (X)`.
+	stdlibImports       map[string]string         // Go local import name → Ada package (e.g. "strings" → "Gada.Std.Strings"), from ir.StdlibPackages. Drives the `with Gada.Std.*;` clauses and the qualified-call lowering of `strings.ToUpper(x)` → `Gada.Std.Strings.To_Upper (X)`.
 	needsUnbounded      bool                      // a []string ([]string → String_Vectors of Unbounded_String) is used → `with Ada.Strings.Unbounded;`
 	needsStdErrors      bool                      // an error-typed value (e.g. os.ReadFile's err) is used → `with Gada.Std.Errors;`
 	needsStdBytes       bool                      // a []byte value (os.ReadFile result, string([]byte)) is used → `with Gada.Std.Bytes;`
@@ -269,9 +269,9 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 			e.needsCoreIO = true
 			continue
 		}
-		ada, ok := StdlibPackages[imp]
+		ada, ok := ir.StdlibPackages[imp]
 		if !ok {
-			e.err = fmt.Errorf("emit: unsupported import %q (Phase 5 stdlib wave 1: %s)", imp, strings.Join(StdlibWave1, ", "))
+			e.err = fmt.Errorf("emit: unsupported import %q (Phase 5 stdlib wave 1: %s)", imp, strings.Join(ir.StdlibWave1, ", "))
 			return e
 		}
 		// The local name of an unaliased import is the last path
@@ -300,25 +300,6 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 	e.collectSliceElems()
 	return e
 }
-
-// StdlibPackages maps a Go standard-library import path to the Ada
-// package that ports it (Phase 5, stdlib wave 1). "fmt" is deliberately
-// absent: it keeps the Phase 1 Gada.Core.IO special case until
-// Gada.Std.Fmt lands. The map itself lives in ir (shared with the
-// translator); StdlibWave1 is the sorted path list, used for the
-// unknown-import error message.
-var StdlibPackages = ir.StdlibPackages
-
-// StdlibWave1 is StdlibPackages' keys, sorted — used in the
-// unknown-import error message.
-var StdlibWave1 = func() []string {
-	out := make([]string, 0, len(StdlibPackages))
-	for k := range StdlibPackages {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}()
 
 // goNameToAdaMember converts an exported Go identifier to the Ada
 // member name the Gada.Std ports use: CamelCase splits at each

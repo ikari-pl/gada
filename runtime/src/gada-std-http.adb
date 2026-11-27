@@ -1,6 +1,7 @@
 --  Gada.Std.Http body — see the spec for the v1 scope.
 
 with Ada.Containers.Vectors;
+with Ada.Text_IO;
 with Ada.Strings;
 with Ada.Strings.Fixed;
 
@@ -283,7 +284,10 @@ package body Gada.Std.Http is
       W   : Response_Writer;
       H   : Handler_Func;
    begin
+      Ada.Text_IO.Put_Line ("[dbg] serve_one: accepted");
       Read_Request (C, Req, Err);
+      Ada.Text_IO.Put_Line ("[dbg] serve_one: read err=" &
+        (if Err = No_Error then "<nil>" else Err.all.Message));
       if Err /= No_Error then
          Write_Response (C, 400, To_Bytes ("bad request"),
                          Err);
@@ -449,7 +453,10 @@ package body Gada.Std.Http is
       if Err /= No_Error then
          return;
       end if;
+      Ada.Text_IO.Put_Line ("[dbg] client dial " & To_String (Host));
       Gada.Std.Net.Dial ("tcp", To_String (Host), C, Err);
+      Ada.Text_IO.Put_Line ("[dbg] client dial err=" &
+        (if Err = No_Error then "<nil>" else Err.all.Message));
       if Err /= No_Error then
          return;
       end if;
@@ -476,9 +483,12 @@ package body Gada.Std.Http is
             return;
          end if;
       end;
+      Ada.Text_IO.Put_Line ("[dbg] client wrote request");
       --  read the whole response until EOF
       loop
          C.all.Read (Buf, N, E);
+         Ada.Text_IO.Put_Line ("[dbg] client read N=" & N'Image & " err=" &
+           (if E = No_Error then "<nil>" else E.all.Message));
          exit when E /= No_Error or else N = 0;
          for I in 1 .. N loop
             Append (Acc, Byte_Vectors.Element (Buf, I));

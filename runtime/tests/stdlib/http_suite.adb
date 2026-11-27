@@ -72,7 +72,9 @@ package body Http_Suite is
    --  Progress marker so a CI hang is localisable from the job log.
    procedure Trace (S : String) is
    begin
-      Ada.Text_IO.Put_Line ("[http_suite] " & S);
+      --  stderr, not stdout: stdout is block-buffered on pipes and the
+      --  markers would only appear in chunks, hiding the hang point
+      Ada.Text_IO.Put_Line (Ada.Text_IO.Standard_Error, "[http_suite] " & S);
    end Trace;
 
    --  Probe a free loopback port: bind :0, read back the ephemeral

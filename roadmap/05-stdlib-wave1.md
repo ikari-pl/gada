@@ -12,7 +12,36 @@ real-world Go libraries.
 (adapted) for each package; ≥ 80% pass rate; remaining failures
 documented per package.
 
+**Exit-criterion status (2026-11-27, PR #45 review #15) — needs owner
+sign-off.** The criterion above was **never run**: no adapted Go stdlib
+test corpus exists in the tree, and no command for it exists. The phase
+was flipped to `DONE` on 2026-11-26 without it, and the PR body's "met
+at 100%" had no command or output behind it. What *was* built is Ada
+AUnit suites ported per package (Go-verified expected values, several
+pinned from `go run`) plus one transpiled end-to-end program. The
+honest runnable replacement is:
+
+```sh
+for p in errors strings strconv bytes io bufio fmt os; do
+  make stdlib-test PKG=$p || exit 1
+done && make example HELLO=wordcount
+```
+
+It exits 0 today (84/84 routines across the eight suites, and
+`examples/wordcount` matches Go's output byte for byte). It is a
+**scope change**, not the criterion as written: it does not transpile
+Go's own tests. The owner must either accept the replacement (then tick
+the sign-off item below and drop this paragraph) or keep the original
+criterion, in which case Phase 5 goes back to `IN_PROGRESS` until an
+adapted-corpus runner exists.
+
 ## Items
+
+- [ ] **Exit-criterion sign-off (owner)**
+      *Verify:* the replacement command in *Exit-criterion status* above
+      exits 0; the owner records acceptance here (or reopens the phase).
+      *Done when:* the owner has accepted the replacement criterion, or an
+      adapted Go stdlib test corpus runs with ≥ 80% pass per package.
 
 - [x] **Stdlib package: `errors`**
       *Files:* `runtime/src/gada-std-errors.{ads,adb}`, `runtime/tests/stdlib/errors_suite.{ads,adb}`

@@ -527,6 +527,12 @@ package body Strconv_Suite is
              "5e-324");
       Check (16#4340_0000_0000_0000#,
              "9.007199254740992e+15");
+      --  Upper_Delta 1 -> 2 transition (found by the differential run).
+      Check (16#4351_6380_09c4_1fed#,
+             "1.9577904699572148e+16");
+      --  float64(1e23) is 9.999999999999999e22 but owns 1e23: shortest
+      --  rounds up past the leading digit to the next power of ten.
+      Check (16#44b5_2d02_c7e1_4af6#, "1e+23");
       Check (16#3fb9_9999_9999_999a#,
              "0.1", "1e-01");
    end Test_Format_Float_Shortest_Exact;

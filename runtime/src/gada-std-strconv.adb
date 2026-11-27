@@ -269,9 +269,9 @@ package body Gada.Std.Strconv is
    --  Exact decimal digits of F (finite, >= 0): see Exact_Mul.
    procedure Exact_Digits (F : Long_Float; B : out Big_Num;
                            Len : out Natural; DP : out Integer) is
-      M : constant Long_Long_Integer :=
-        Long_Long_Integer (Long_Float'Fraction (F) * 2.0**53);
+      M : Long_Long_Integer;
    begin
+      M := Long_Long_Integer (Long_Float'Fraction (F) * 2.0**53);
       if M = 0 then
          B (1) := 0;
          Len := 1;
@@ -510,27 +510,25 @@ package body Gada.Std.Strconv is
       end Keep_All;
 
       --  Truncates to the N most significant digits, then adds one unit
-      --  in the last kept place (Go's decimal RoundUp).
+      --  in the last kept place (Go's decimal RoundUp). In roundShortest
+      --  that digit is never 9 — rounding up requires upper's digit to
+      --  exceed d's there — so no carry chain can start; R (1) + 1 would
+      --  raise if that ever failed. N = 0 means d sits just below a
+      --  power of ten whose neighbourhood it owns (float64(1e23) =
+      --  9.999999999999999e22 prints as "1e+23"): the result is that
+      --  power.
       procedure Round_Up (N : Natural) is
-         Carry : Natural := 1;
       begin
+         if N = 0 then
+            R (1) := 1;
+            RN := 1;
+            RDP := DP + 1;
+            return;
+         end if;
          R (1 .. N) := B (Len - N + 1 .. Len);
+         R (1) := R (1) + 1;
          RN := N;
          RDP := DP;
-         for I in 1 .. RN loop
-            R (I) := R (I) + Carry;
-            Carry := 0;
-            if R (I) = 10 then
-               R (I) := 0;
-               Carry := 1;
-            end if;
-            exit when Carry = 0;
-         end loop;
-         if Carry > 0 then
-            RN := RN + 1;
-            R (RN) := 1;
-            RDP := RDP + 1;
-         end if;
       end Round_Up;
    begin
       if Bits = 0 then

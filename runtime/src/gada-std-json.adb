@@ -304,8 +304,8 @@ package body Gada.Std.Json is
                      J := J + 1;
                   end if;
                end loop;
-               if J > Text'Last or else not Only_Ws_From (Text, J + 1) then
-                  return;
+               if J > Text'Last then
+                  return;   --  unterminated string
                end if;
                declare
                   U  : Boolean;
@@ -316,28 +316,26 @@ package body Gada.Std.Json is
                      return;
                   end if;
                   V := (K_String, To_Unbounded_String (Uc));
+                  I := J + 1;
                   OK := True;
                end;
             end;
          when 't' =>
-            if Text (I .. Text'Last) = "true"
-              and then Only_Ws_From (Text, I + 4)
-            then
+            if Text (I .. Text'Last) = "true" then
                V := (K_Bool, True);
+               I := I + 4;
                OK := True;
             end if;
          when 'f' =>
-            if Text (I .. Text'Last) = "false"
-              and then Only_Ws_From (Text, I + 5)
-            then
+            if Text (I .. Text'Last) = "false" then
                V := (K_Bool, False);
+               I := I + 5;
                OK := True;
             end if;
          when 'n' =>
-            if Text (I .. Text'Last) = "null"
-              and then Only_Ws_From (Text, I + 4)
-            then
+            if Text (I .. Text'Last) = "null" then
                V := (Kind => K_Null);
+               I := I + 4;
                OK := True;
             end if;
          when '-' | '0' .. '9' =>
@@ -381,9 +379,6 @@ package body Gada.Std.Json is
                      J := J + 1;
                   end loop;
                end if;
-               if not Only_Ws_From (Text, J) then
-                  return;
-               end if;
                declare
                   Num : constant String := Text (I .. J - 1);
                begin
@@ -408,13 +403,123 @@ package body Gada.Std.Json is
                            end;
                      end;
                   end if;
+                  I := J;
                   OK := True;
                end;
             end;
          when others =>
             return;
       end case;
+   end Parse_Scalar_At;
+
+   --  Parse_Scalar parses one JSON scalar from the whole of Text
+   --  (leading/trailing whitespace allowed). OK = False on any syntax
+   --  error or trailing junk.
+   procedure Parse_Scalar (Text : String; V : out Scalar;
+                           OK : out Boolean) is
+      I : Natural := Text'First;
+   begin
+      Parse_Scalar_At (Text, I, V, OK);
+      if OK and then not Only_Ws_From (Text, I) then
+         OK := False;
+      end if;
    end Parse_Scalar;
+
+   --  Parse_Object parses a flat JSON object into Members. Values must
+   --  be scalars in v1; '[' / '{' values are rejected.
+   procedure Parse_Object (Text    : String;
+                           Members : out Member_Vectors.Vector;
+                           OK      : out Boolean) is
+      I : Natural := Text'First;
+      procedure Skip_Ws is
+      begin
+         while I <= Text'Last and then Is_Ws (Text (I)) loop
+            I := I + 1;
+         end loop;
+      end Skip_Ws;
+   begin
+      OK := False;
+      Members := Member_Vectors.Empty_Vector;
+      Skip_Ws;
+      if I > Text'Last or else Text (I) /= '{' then
+         return;
+      end if;
+      I := I + 1;
+      Skip_Ws;
+      if I <= Text'Last and then Text (I) = '}' then
+         I := I + 1;
+         OK := True;
+         return;
+      end if;
+      while I <= Text'Last loop
+         --  key: a JSON string
+         if Text (I) /= '"' then
+            return;
+         end if;
+         declare
+            J : Natural := I + 1;
+         begin
+            while J <= Text'Last loop
+               if Text (J) = '\' then
+                  J := J + 2;
+               elsif Text (J) = '"' then
+                  exit;
+               else
+                  J := J + 1;
+               end if;
+            end loop;
+            if J > Text'Last then
+               return;
+            end if;
+            declare
+               U  : Boolean;
+               Uc : constant String := Unescape (Text (I + 1 .. J - 1), U);
+            begin
+               if not U then
+                  return;
+               end if;
+               I := J + 1;
+               Skip_Ws;
+               if I > Text'Last or else Text (I) /= ':' then
+                  return;
+               end if;
+               I := I + 1;
+               Skip_Ws;
+               if I > Text'Last then
+                  return;
+               end if;
+               if Text (I) = '[' or else Text (I) = '{' then
+                  return;   --  nested composite: v1 rejects
+               end if;
+               declare
+                  V   : Scalar;
+                  VOK : Boolean;
+               begin
+                  Parse_Scalar_At (Text, I, V, VOK);
+                  if not VOK then
+                     return;
+                  end if;
+                  Member_Vectors.Append
+                    (Members, (To_Unbounded_String (Uc), V));
+               end;
+            end;
+         end;
+         Skip_Ws;
+         if I > Text'Last then
+            return;
+         end if;
+         if Text (I) = ',' then
+            I := I + 1;
+            Skip_Ws;
+         elsif Text (I) = '}' then
+            I := I + 1;
+            OK := True;
+            return;
+         else
+            return;
+         end if;
+      end loop;
+   end Parse_Object;
 
    ---------------------------------------------------------------
    --  Reflect-driven value encoding

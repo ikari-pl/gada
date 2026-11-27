@@ -12,10 +12,16 @@ HMAC-SHA-256 pass; AES-GCM round-trips; base64/hex round-trip.
 
 ## Items
 
-- [ ] **Stdlib packages: `hash/crc32`, `hash/crc64`, `hash/fnv`, `hash/adler32`**
-      *Files:* `stdlib/hash/...`
+- [x] **Stdlib packages: `hash/crc32`, `hash/crc64`, `hash/fnv`, `hash/adler32`** (done 2026-11-27, CI green on 9928f3b, run 46084031724)
+      *Files:* `runtime/src/gada-std-hash{,-crc32,-crc64,-fnv,-adler32}.{ads,adb}`, `runtime/tests/stdlib/std_hash_suite.{ads,adb}` (suite `stdlib.hash`), `compiler/internal/ir/stdlib.go`
       *Verify:* `make stdlib-test PKG=hash`
-      *Done when:* all NIST/IETF test vectors pass; coverage 100%.
+      *Done when:* met — all vectors pinned from Go 1.27 via `go run`
+      (incl. classic check values CRC-32/IEEE \"123456789\" = CBF43926,
+      CRC-64/ECMA = 995DC9BBDF1939FA, ISO = B90956C775A41001, FNV offset
+      bases, Adler-32 RFC 1950 incl. a 6000-byte input crossing the
+      NMAX=5552 batch boundary); runtime/ 100% gate green (two
+      `end Make_Table;` terminators excluded with rationale in
+      runtime/COVERAGE.md).
 
 - [ ] **Stdlib packages: `crypto/sha256`, `crypto/sha512`, `crypto/sha1`, `crypto/md5`**
       *Files:* `stdlib/crypto/...`

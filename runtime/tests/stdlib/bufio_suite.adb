@@ -116,6 +116,20 @@ package body Bufio_Suite is
       return Errors.No_Error;
    end Write;
 
+   --  Fixed-capacity sink: accepts half the bytes and reports io.EOF
+   --  (a closed pipe / full device).
+   type Eof_Writer is new IO.Writer with record
+      Data : Unbounded_String;
+   end record;
+
+   overriding function Write (W : in out Eof_Writer; Data : String;
+                              N : out Natural) return Errors.Error_Access is
+   begin
+      N := Data'Length / 2;
+      Append (W.Data, Data (Data'First .. Data'First + N - 1));
+      return IO.EOF;
+   end Write;
+
    function Buf_Src (S : String) return IO.Reader_Access is
      (new Mem_Reader'(IO.Reader with Data => To_Unbounded_String (S),
                       Pos => 1));
@@ -303,6 +317,20 @@ package body Bufio_Suite is
               "short write = ErrShortWrite");
       Assert (Len (B) = 3, "unwritten tail stays buffered, got"
               & Integer'Image (Len (B)));
+      --  Regression (PR #45 review #12): io.EOF from the destination is
+      --  a write error too; Flush used to report success and keep the
+      --  tail buffered silently.
+      declare
+         Sink : constant IO.Writer_Access := new Eof_Writer;
+         B2   : Writer := New_Writer (Sink);
+      begin
+         Write_String (B2, "hello", N, E);
+         Flush (B2, E);
+         Assert (Errors.Is_K (E, IO.EOF), "Flush returns the writer's EOF");
+         Assert (Len (B2) = 3, "unwritten tail stays buffered");
+         Assert (To_String (Eof_Writer (Sink.all).Data) = "he",
+                 "written prefix reached the sink");
+      end;
    end Test_Flush_Short_Write;
 
    procedure Test_Read_Line_Stored_Error (T : in out

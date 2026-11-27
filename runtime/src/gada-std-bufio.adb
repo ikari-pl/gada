@@ -247,17 +247,13 @@ package body Gada.Std.Bufio is
             --  Keep only the unwritten tail buffered (Go's Flush).
             Delete (W.Buf, 1, N);
          end if;
-         if WE /= Errors.No_Error and then not Errors.Is_K (WE, IO.EOF) then
+         --  Go's Flush returns any write error — io.EOF included (a
+         --  closed pipe or full sink must not look like success).
+         if WE /= Errors.No_Error then
             Err := WE;
-            return;
-         end if;
-         if WE = Errors.No_Error and then N < Total then
+         elsif N < Total then
             --  Go: success with n < len(p) is io.ErrShortWrite.
             Err := IO.Err_Short_Write;
-            return;
-         end if;
-         if N = Total then
-            W.Buf := Null_Unbounded_String;
          end if;
       end if;
    end Flush;

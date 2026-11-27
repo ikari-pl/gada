@@ -626,7 +626,10 @@ package body Gada.Std.Strconv is
       if F = 0.0 and then Is_Neg_Zero (F) then
          Neg := True;
       end if;
-      Exact_Digits (F, B, Len, DP);
+      --  Exact_Digits works on the magnitude (Long_Float'Fraction keeps
+      --  the sign, which would leave the digit loop empty); Neg carries
+      --  the sign into the formatters.
+      Exact_Digits (abs F, B, Len, DP);
       case Fmt is
          when 'f' | 'F' =>
             if Prec < 0 then

@@ -81,6 +81,11 @@ package body Fmt_Suite is
       Assert (Sprintf ("%e", (1 => A (31415.9))) = "3.141590e+04", "%e");
       Assert (Sprintf ("%g", (1 => A (3.14))) = "3.14", "%g");
       Assert (Sprintf ("%v", (1 => A (100000.0))) = "100000", "%v float");
+      --  Negative floats (PR #45 review #1; Go-verified).
+      Assert (Sprintf ("%v", (1 => A (-1.5))) = "-1.5", "%v negative");
+      Assert (Sprintf ("%.2f", (1 => A (-3.5))) = "-3.50", "%.2f negative");
+      Assert (Sprintf ("%e", (1 => A (-31415.9))) = "-3.141590e+04",
+              "%e negative");
    end Test_Sprintf_Float;
 
    procedure Test_Sprintf_Misc (T : in out AUnit.Test_Cases.Test_Case'Class) is

@@ -32,5 +32,7 @@ package Strconv_Suite is
    procedure Test_Num_Error_Is_As (T : in out
       AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Format_Float_Negative (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
 
 end Strconv_Suite;

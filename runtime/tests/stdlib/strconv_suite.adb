@@ -38,6 +38,8 @@ package body Strconv_Suite is
       Register_Routine (T, Test_Num_Error_Is_As'Access,
                         "NumError Is/As/Message");
       Register_Routine (T, Test_Edges'Access, "escapes/UTF-8/rounding edges");
+      Register_Routine (T, Test_Format_Float_Negative'Access,
+                        "FormatFloat negative values");
    end Register_Tests;
 
    procedure Test_Itoa (T : in out AUnit.Test_Cases.Test_Case'Class) is
@@ -427,5 +429,20 @@ package body Strconv_Suite is
                  "static 0.1 + 0.2 folds to fl(0.3)");
       end;
    end Test_Edges;
+
+   --  Regression (PR #45 review #1): Exact_Digits got the signed value,
+   --  so every negative non-zero float raised ('g'/'e') or printed
+   --  -0.0 ('f'). Expected strings are Go's FormatFloat output.
+   procedure Test_Format_Float_Negative (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+   begin
+      Assert (Format_Float (-1.5) = "-1.5", "-1.5 g/-1");
+      Assert (Format_Float (-2.5, 'f', 1) = "-2.5", "-2.5 f/1");
+      Assert (Format_Float (-3.5, 'f', 2) = "-3.50", "-3.5 f/2");
+      Assert (Format_Float (-31415.9, 'e', 3) = "-3.142e+04", "-31415.9 e/3");
+      Assert (Format_Float (-0.1) = "-0.1", "-0.1 g/-1");
+      Assert (Format_Float (-1.0e21) = "-1e+21", "-1e21 g/-1");
+      Assert (Format_Float (-0.000012) = "-1.2e-05", "-1.2e-05 g/-1");
+   end Test_Format_Float_Negative;
 
 end Strconv_Suite;

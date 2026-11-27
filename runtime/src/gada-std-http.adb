@@ -130,6 +130,8 @@ package body Gada.Std.Http is
       Err := No_Error;
       loop
          C.all.Read (Buf, N, E);
+         Ada.Text_IO.Put_Line ("[dbg] server read N=" & N'Image & " err=" &
+           (if E = No_Error then "<nil>" else E.all.Message));
          if E /= No_Error then
             Err := E;
             return;
@@ -142,6 +144,8 @@ package body Gada.Std.Http is
             Append (Acc, Byte_Vectors.Element (Buf, I));
          end loop;
          Hd := Index (Acc, CRLF & CRLF);
+         Ada.Text_IO.Put_Line ("[dbg] server acc len=" & Length (Acc)'Image
+           & " hd=" & Hd'Image);
          exit when Hd > 0;
          if Length (Acc) > 1_048_576 then
             Err := New_K ("http: header section too large");

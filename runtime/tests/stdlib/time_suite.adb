@@ -210,13 +210,13 @@ package body Time_Suite is
    --  Regression (#2): Formatting splits defaulted to UTC while Calendar
    --  splits and Time_Of were local, and UTC()/Local() shifted the
    --  instant on top — every non-UTC host printed wrong hours. Pinned
-   --  against Go for a whole-hour and a half-hour offset zone.
+   --  against Go for whole-hour (east and west of UTC) and half-hour zones.
    procedure Test_Zones_Non_UTC (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
       type Case_Rec is record
          Zone, In_Local, Local_Date, Local_As_UTC, Midnight : access String;
       end record;
-      Cases : constant array (1 .. 2) of Case_Rec :=
+      Cases : constant array (1 .. 3) of Case_Rec :=
         [(new String'("Europe/Warsaw"),
           new String'("2026-11-26T08:08:09.123456789+01:00"),
           new String'("2026-11-26T07:08:09.123456789+01:00"),
@@ -226,7 +226,12 @@ package body Time_Suite is
           new String'("2026-11-26T12:38:09.123456789+05:30"),
           new String'("2026-11-26T07:08:09.123456789+05:30"),
           new String'("2026-11-26T01:38:09.123456789Z"),
-          new String'("2026-11-27T05:00:00+05:30"))];
+          new String'("2026-11-27T05:00:00+05:30")),
+         (new String'("America/New_York"),
+          new String'("2026-11-26T02:08:09.123456789-05:00"),
+          new String'("2026-11-26T07:08:09.123456789-05:00"),
+          new String'("2026-11-26T12:08:09.123456789Z"),
+          new String'("2026-11-26T18:30:00-05:00"))];
    begin
       for C of Cases loop
          Set_TZ (C.Zone.all);
@@ -250,7 +255,9 @@ package body Time_Suite is
             Assert (RFC3339_Nano (UTC (L)) = C.Local_As_UTC.all,
                     C.Zone.all & ": Local->UTC, got "
                     & RFC3339_Nano (UTC (L)));
-            Assert (RFC3339_Nano (M) = C.Midnight.all and then Day (M) = 27
+            Assert (RFC3339_Nano (M) = C.Midnight.all
+                      and then Day (M) = (if C.Midnight (10) = '7' then 27
+                                          else 26)
                       and then Month (M) = 11 and then Year (M) = 2026,
                     C.Zone.all & ": date rolls with the hour, got "
                     & RFC3339_Nano (M));

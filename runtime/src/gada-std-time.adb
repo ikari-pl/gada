@@ -180,19 +180,15 @@ package body Gada.Std.Time is
               UTC  => In_UTC);
    end Date;
 
+   --  Real_Time span as Go nanoseconds.
+   function To_Ns (S : RT.Time_Span) return Duration is
+     (Duration (Long_Integer (Long_Float (RT.To_Duration (S)) * 1.0e9)));
+
    function Since (T : Time) return Duration is
-   begin
-      return Duration
-        (Long_Integer (Long_Float (RT.To_Duration
-           (RT."-" (RT.Clock, T.Mono))) * 1_000_000_000.0));
-   end Since;
+     (To_Ns (RT."-" (RT.Clock, T.Mono)));
 
    function Until_K (T : Time; U : Time) return Duration is
-   begin
-      return Duration
-        (Long_Integer (Long_Float (RT.To_Duration
-           (RT."-" (U.Mono, T.Mono))) * 1_000_000_000.0));
-   end Until_K;
+     (To_Ns (RT."-" (U.Mono, T.Mono)));
 
    --  Zone conversions (Go: same instant, other zone): only the
    --  display flag changes; Wall is the instant either way.
@@ -249,8 +245,7 @@ package body Gada.Std.Time is
       else
          declare
             Mins : constant Integer := Integer (Zone (T));
-            Sign : constant Character :=
-              (if Mins < 0 then '-' else '+');
+            Sign : constant Character := (if Mins < 0 then '-' else '+');
             A    : constant Natural := (if Mins < 0 then -Mins else Mins);
          begin
             Append (B, Sign & Dig2 (A / 60) & ':' & Dig2 (A mod 60));

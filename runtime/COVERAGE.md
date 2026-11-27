@@ -474,8 +474,11 @@ the lcov 2.4 misattribution class documented above.
 
 ### `runtime/src/gada-std-time.adb` (Phase 6 wave 2)
 
-69, 223, 234 — `end Append_Frac;`, `end Dig2;`, `end Image_Date_Time;`
-terminators. Every contained line of these subprograms is hit by
+69, 223, 234, 496 — `end Append_Frac;`, `end Dig2;`, `end Image_Date_Time;`,
+`end One_Shot;` terminators. (496 is reported unhit only by the Linux CI
+lcov; both `One_Shot` paths — d <= 0 immediate fire and the queued
+node — are exercised by Time_Suite's After/NewTimer zero and positive
+cases.) Every contained line of these subprograms is hit by
 Time_Suite (Duration.String, Date + accessors, the pinned-zone RFC3339
 tests are all green in the same run); lcov 2.4 leaves hit-count 0 on the
 block terminator itself. Same misattribution class as

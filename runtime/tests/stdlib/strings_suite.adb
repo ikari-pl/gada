@@ -329,18 +329,19 @@ package body Strings_Suite is
       --  Split ("", "") is the empty slice, so this builds zero pairs.
       Assert (Replace (New_Replacer (Split ("", "")), "abc") = "abc",
               "empty pair list is a no-op");
-      --  Go panics on an empty old string in a pair.
-      begin
-         declare
-            R : constant Replacer := New_Replacer (Split (",x", ","));
-            pragma Unreferenced (R);
-         begin
-            Assert (False, "empty old must raise");
-         end;
-      exception
-         when Constraint_Error =>
-            null;  --  expected
-      end;
+      --  Regression (PR #45 review #11): Go accepts an empty old string
+      --  (only an odd argument count panics); it matches at every
+      --  position and at the end, once per position. Go-verified.
+      Assert (Replace (New_Replacer (Split (",X", ",")), "ab") = "XaXbX",
+              "empty old matches between every byte and at the end");
+      Assert (Replace (New_Replacer (Split (",X", ",")), "") = "X",
+              "empty old on empty input");
+      Assert (Replace (New_Replacer (Split (",X,a,A", ",")), "ab")
+                = "XAXbX", "empty old first, then a at the same spot");
+      Assert (Replace (New_Replacer (Split ("a,A,,X", ",")), "ab")
+                = "AXbX", "a wins over a later empty old");
+      Assert (Replace (New_Replacer (Split ("a,1,,-,bc,2", ",")), "abcd")
+                = "1-2-d-", "mixed empty and non-empty olds");
    end Test_Replacer;
 
    procedure Test_Edges (T : in out AUnit.Test_Cases.Test_Case'Class) is

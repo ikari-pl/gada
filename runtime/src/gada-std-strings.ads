@@ -108,7 +108,9 @@ package Gada.Std.Strings is
 
    type Replacer is private;
    --  New_Replacer takes a flat old,new,old,new,… slice (Go's
-   --  variadic oldnew ...string); odd length raises Constraint_Error.
+   --  variadic oldnew ...string); odd length raises Constraint_Error
+   --  (Go panics). An empty old string is legal and matches at every
+   --  position, including the end of the input (Go's genericReplacer).
    function New_Replacer (Oldnew : String_Slice) return Replacer;
    function Replace (R : Replacer; S : String) return String;
 

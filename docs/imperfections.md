@@ -148,6 +148,12 @@ section at the bottom with the resolution commit / PR reference.
 *What "fixed" looks like:* `Parse_Float` corrects `'Value`'s result by comparing the input's exact decimal against the exact half-ulp midpoints (the `Exact_Mul` machinery already exists) and a differential test over subnormal decimals against Go passes with zero mismatches.
 *Tracker:* `roadmap/05-stdlib-wave1.md` strconv item.
 
+### Stdlib wave 1 API gaps
+*Where:* `runtime/src/gada-std-{strings,io,bufio,bytes,fmt}.ads` — Phase 5 shipped a subset of each Go package. Notably missing: `io.WriteString`, `io.LimitReader`, `io.SectionReader`; `bufio.Scanner` split functions other than ScanLines (`ScanWords`, `ScanRunes`, custom `SplitFunc`), `bufio.Reader.Peek`/`ReadBytes`; `bytes.ToUpper`, `bytes.Reader.ReadAt`; `strings.Builder`, `Cut*`, the `*Func` index/trim family, `NewReader`, `Compare`; fmt reading from stdin (`Scanf`/`Scan`), only `Sscanf` exists. The roadmap's Done notes had claimed several of these (corrected 2026-11-27, PR #45 review #14).
+*Why not fixed yet:* the review round fixed correctness bugs in what shipped; adding API was out of its scope.
+*What "fixed" looks like:* each missing function ported with a Go-parity test, and the strings item's "60+ functions" bar (35 subprograms today) met or re-scoped by the owner.
+*Tracker:* `roadmap/05-stdlib-wave1.md` (strings / io / bufio / bytes / fmt items).
+
 ## Resolved
 
 ### In-tree bench harness scaffolding pending

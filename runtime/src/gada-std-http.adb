@@ -401,7 +401,8 @@ package body Gada.Std.Http is
            & CRLF & CRLF;
       begin
          C.all.Write (To_Bytes (Req), N, E);
-         if E = No_Error and then Byte_Vectors.Length (Body_K) > 0 then
+         if E = No_Error and then
+           Integer (Byte_Vectors.Length (Body_K)) > 0 then
             C.all.Write (Body_K, N, E);
          end if;
          if E /= No_Error then

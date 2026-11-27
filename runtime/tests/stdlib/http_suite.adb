@@ -256,6 +256,23 @@ package body Http_Suite is
          Assert (Err = Errors.No_Error, "dial: " & Err_Text (Err));
          C.all.Close;
       end;
+      declare
+         C   : Conn;
+         Err : Errors.Error_Access;
+         N   : Natural;
+      begin
+         --  Content-Length promises 100 bytes but the peer closes
+         --  after 3: the server's body read hits EOF -> 400
+         Dial ("tcp", "127.0.0.1:"
+                 & Ada.Strings.Fixed.Trim (The_Port'Image,
+                                            Ada.Strings.Left),
+               C, Err);
+         Assert (Err = Errors.No_Error, "dial: " & Err_Text (Err));
+         C.all.Write (To_Bytes
+           ("POST /x HTTP/1.1" & CRLF & "Content-Length: 100" & CRLF
+            & CRLF & "abc"), N, Err);
+         C.all.Close;
+      end;
       Scheduler.Shutdown;
    end Test_Bad_Requests;
 
@@ -276,6 +293,11 @@ package body Http_Suite is
       Assert (Ada.Strings.Fixed.Index
                 (To_String (Resp.Body_K), "404 page not found") > 0,
               "expected 404 body");
+      --  no path in the URL: Split_URL defaults Path to "/"
+      Get (Base_URL, Resp, Err);
+      Assert (Err = Errors.No_Error, "GET no-path: " & Err_Text (Err));
+      Assert (Resp /= null and then Resp.StatusCode = 404,
+              "GET no-path expected 404");
       Scheduler.Shutdown;
    end Test_Client_404;
 

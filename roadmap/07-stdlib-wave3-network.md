@@ -23,7 +23,7 @@ reflection end-to-end, `net/http` exercises everything.
       calls, `make([]byte, N)`, `[]byte(s)`. Runtime 100%, emit ≥95%,
       translate ≥95%.
 
-- [ ] **Stdlib package: `encoding/json`**
+- [x] **Stdlib package: `encoding/json`** (done 2026-11-27, CI green on e04571d)
       *Files:* `runtime/src/gada-std-json.{ads,adb}`, `runtime/tests/stdlib/json_suite.{ads,adb}`, `compiler/internal/{ir/stdlib.go,emit/emit.go,translate/translate.go}`
       *Verify:* `make stdlib-test PKG=encoding.json`
       *Done when:* `Marshal`, `Unmarshal` round-trip arbitrary structs (driven by `Gada.Reflect`); coverage ≥ 95%.
@@ -37,7 +37,7 @@ reflection end-to-end, `net/http` exercises everything.
             `json.Unmarshal(data, &v)` for scalar-typed `x`/`v` lower
             through `Gada.Reflect.Values.Value_Of`.
             *Verify:* `make stdlib-test PKG=encoding.json` + Go unit tests.
-      - [ ] **2b: struct Marshal/Unmarshal (compiler-specialized)** —
+      - [x] **2b: struct Marshal/Unmarshal (compiler-specialized)** (done 2026-11-27, CI green on e04571d) —
             the emitter generates a per-struct `Marshal_T` /
             `Unmarshal_T` in the program unit, reading field names from
             the emitted `Gada.Reflect` metadata (`Register_Type` /

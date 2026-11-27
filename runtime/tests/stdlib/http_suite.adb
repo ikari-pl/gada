@@ -6,6 +6,7 @@
 
 pragma Warnings (Off, "use of an anonymous access type allocator");
 
+with Ada.Exceptions;
 with Ada.Text_IO;
 with AUnit.Assertions; use AUnit.Assertions;
 
@@ -192,7 +193,14 @@ package body Http_Suite is
                         Err : out Errors.Error_Access) is
    begin
       for I in 1 .. 500 loop
-         Get (URL, Resp, Err);
+         begin
+            Get (URL, Resp, Err);
+         exception
+            when X : others =>
+               Trace ("Get raised: " &
+                 Ada.Exceptions.Exception_Information (X));
+               raise;
+         end;
          exit when Err = Errors.No_Error;
          delay 0.001;
       end loop;

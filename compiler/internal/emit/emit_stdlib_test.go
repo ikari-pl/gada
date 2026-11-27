@@ -573,3 +573,51 @@ func TestErrorWithClauseFromBoundErrors(t *testing.T) {
 		t.Errorf("error result: missing %q in:\n%s", with, buf.String())
 	}
 }
+
+// TestBlankOutCallLHS is the regression test for PR #45 review #10:
+// `n, _ := strconv.Atoi(s)` / `_, err := os.ReadFile(p)` emitted `_`
+// as an Ada identifier ("identifier cannot start with underline"). Each
+// blank gets its own Discard_N local in its out position.
+func TestBlankOutCallLHS(t *testing.T) {
+	t.Parallel()
+	atoi := func(lhs ...ir.Expr) *ir.Assign {
+		return &ir.Assign{
+			LHS:    lhs,
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("strconv"), Sel: "Atoi"},
+				Args:        []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"7"`}},
+				ResultTypes: []ir.Type{&ir.IntType{}, &ir.ErrorType{}},
+			}},
+		}
+	}
+	out := emitMain(t, []string{"strconv"},
+		atoi(idn("n"), idn("_")),
+		atoi(idn("_"), idn("err")),
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("_"), idn("q")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("strconv"), Sel: "Unquote"},
+				Args:        []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"x"`}},
+				ResultTypes: []ir.Type{&ir.StringType{}, &ir.ErrorType{}},
+			}},
+		},
+	)
+	for _, want := range []string{
+		"Discard_1 : Gada.Std.Errors.Error_Access;",
+		`Gada.Std.Strconv.Atoi ("7", N, Discard_1);`,
+		"Discard_2 : Integer;",
+		`Gada.Std.Strconv.Atoi ("7", Discard_2, Err);`,
+		`Discard_3 : Ada.Strings.Unbounded.Unbounded_String := Ada.Strings.Unbounded.To_Unbounded_String ("");`,
+		`Gada.Std.Strconv.Unquote ("x", Discard_3, Q);`,
+		"with Ada.Strings.Unbounded;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, " _ ") || strings.Contains(out, ", _") {
+		t.Errorf("blank identifier leaked into Ada:\n%s", out)
+	}
+}

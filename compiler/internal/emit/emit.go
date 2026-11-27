@@ -188,6 +188,7 @@ type emitter struct {
 	pendingHead         []pendingHeadInit         // per-subprogram queue of head-of-body defines whose *initialisation* must run at the top of the body in source order (2-LHS stdlib out-calls, and any := whose RHS references an out-call result — Go evaluates RHS at the := point, but Ada declarative initialisers run before the body, so these are declared bare and initialised in the body). Drained by emitPendingHead at body top. Reset per subprogram.
 	deferredDecls       map[string]bool           // names whose decl initialiser was deferred to the body (out-call targets and anything referencing them).
 	unboundedStrings    map[string]bool           // local string vars, declared as Unbounded_String (Ada String objects are bound-constrained; Go strings are variable-length).
+	discardSeq          int                       // numbering for the Discard_N locals that stand in for `_` in stdlib out-call positions (unique per file)
 	pendingRecvs        []pendingChanRecv         // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
 	pendingAsserts      []pendingTypeAssert       // per-subprogram queue of `v, ok := x.(T)` (comma-ok, item 6b) defines whose body-side membership-test + guarded-conversion block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order (same "RHS evaluates at the := point" rule). Reset at every emitSubprogram call.
 	err                 error
@@ -1700,11 +1701,16 @@ func (e *emitter) populateLocals(fn *ir.Function) {
 			if c, ok := a.RHS[0].(*ir.Call); ok && len(c.ResultTypes) == 2 {
 				for i, lhs := range a.LHS {
 					e.noteErrorType(c.ResultTypes[i])
-					if id, ok := lhs.(*ir.Ident); ok && c.ResultTypes[i] != nil {
+					_, isStr := c.ResultTypes[i].(*ir.StringType)
+					if isStr {
+						// Also for `_`: its Discard_N local is an
+						// Unbounded_String too.
+						e.needsUnbounded = true
+					}
+					if id, ok := lhs.(*ir.Ident); ok && id.Name != "_" && c.ResultTypes[i] != nil {
 						e.localTypes[id.Name] = c.ResultTypes[i]
-						if _, isStr := c.ResultTypes[i].(*ir.StringType); isStr {
+						if isStr {
 							e.unboundedStrings[id.Name] = true
-							e.needsUnbounded = true
 						}
 					}
 				}
@@ -1808,31 +1814,43 @@ func (e *emitter) emitStdlibOutCallDecl(a *ir.Assign, c *ir.Call) {
 			e.fail(err)
 			return
 		}
+		// The blank identifier still needs an Ada object in its `out`
+		// position (`_` is not a legal Ada name): a fresh Discard_N
+		// local that nothing else refers to, as Discard_OK is for
+		// channel receives.
+		name := adaIdent(id.Name)
+		blank := id.Name == "_"
+		if blank {
+			e.discardSeq++
+			name = fmt.Sprintf("Discard_%d", e.discardSeq)
+		}
 		if rt := c.ResultTypes[i]; rt != nil {
 			if _, isStr := rt.(*ir.StringType); isStr {
 				typ = "Ada.Strings.Unbounded.Unbounded_String"
-				e.unboundedStrings[id.Name] = true
+				if !blank {
+					e.unboundedStrings[id.Name] = true
+				}
 				e.needsUnbounded = true
-				decl := adaIdent(id.Name) + " : " + typ +
+				decl := name + " : " + typ +
 					` := Ada.Strings.Unbounded.To_Unbounded_String ("")`
 				e.println(decl + ";")
-				lhs = append(lhs, adaIdent(id.Name))
+				lhs = append(lhs, name)
 				continue
 			}
 		}
-		decl := adaIdent(id.Name) + " : " + typ
+		decl := name + " : " + typ
 		if init := declInit(c.ResultTypes[i]); init != "" {
 			decl += " := " + init
 		}
 		e.println(decl + ";")
-		lhs = append(lhs, adaIdent(id.Name))
+		lhs = append(lhs, name)
 	}
 	e.pendingHead = append(e.pendingHead,
 		pendingHeadInit{outCall: &pendingOutCall{call: c, lhs: lhs}})
 	// Key by the *Go* name — refsDeferred matches on ir.Ident.Name,
 	// which is still the un-capitalised Go spelling.
 	for _, l := range a.LHS {
-		if id, ok := l.(*ir.Ident); ok {
+		if id, ok := l.(*ir.Ident); ok && id.Name != "_" {
 			e.deferredDecls[id.Name] = true
 		}
 	}

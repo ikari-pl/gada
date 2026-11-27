@@ -15,7 +15,7 @@ package body Gada.Std.Runtime is
       return Scheduler.Live_Goroutines + 1;
    end Num_Goroutine;
 
-   function Go_Max_Procs (Set_To : Natural := 0) return Natural is
+   function GOMAXPROCS (Set_To : Natural := 0) return Natural is
       Old : constant Natural := Scheduler.Live_Workers;
    begin
       if Set_To > 0 and then Set_To /= Old
@@ -28,12 +28,12 @@ package body Gada.Std.Runtime is
          Scheduler.Init (Set_To);
       end if;
       return Old;
-   end Go_Max_Procs;
+   end GOMAXPROCS;
 
-   procedure Go_Sched is
+   procedure Gosched is
    begin
       Scheduler.Yield;
-   end Go_Sched;
+   end Gosched;
 
    procedure GC is
    begin

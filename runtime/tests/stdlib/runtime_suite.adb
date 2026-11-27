@@ -41,8 +41,8 @@ package body Runtime_Suite is
       use AUnit.Test_Cases.Registration;
    begin
       Register_Routine (T, Test_Num_Goroutine'Access, "NumGoroutine");
-      Register_Routine (T, Test_Go_Max_Procs'Access, "GOMAXPROCS");
-      Register_Routine (T, Test_Go_Sched_And_GC'Access, "Gosched + GC");
+      Register_Routine (T, Test_GOMAXPROCS'Access, "GOMAXPROCS");
+      Register_Routine (T, Test_Gosched_And_GC'Access, "Gosched + GC");
    end Register_Tests;
 
    procedure Test_Num_Goroutine (T : in out
@@ -75,25 +75,25 @@ package body Runtime_Suite is
               & Natural'Image (Num_Goroutine));
    end Test_Num_Goroutine;
 
-   procedure Test_Go_Max_Procs (T : in out
+   procedure Test_GOMAXPROCS (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
    begin
       Scheduler.Shutdown;
       Scheduler.Init (Workers => 2);
-      Assert (Go_Max_Procs (0) = 2, "query returns 2 workers");
+      Assert (GOMAXPROCS (0) = 2, "query returns 2 workers");
       --  Resize from the main task (non-goroutine context): returns
       --  the old count and applies the new one.
-      Assert (Go_Max_Procs (3) = 2, "set returns previous count");
-      Assert (Go_Max_Procs (0) = 3, "resize applied, now 3");
+      Assert (GOMAXPROCS (3) = 2, "set returns previous count");
+      Assert (GOMAXPROCS (0) = 3, "resize applied, now 3");
       Scheduler.Shutdown;
-   end Test_Go_Max_Procs;
+   end Test_GOMAXPROCS;
 
-   procedure Test_Go_Sched_And_GC (T : in out
+   procedure Test_Gosched_And_GC (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
    begin
-      Go_Sched;  --  no-op outside a goroutine; must not raise
+      Gosched;  --  no-op outside a goroutine; must not raise
       GC;        --  full collection; must not raise
       Assert (Num_Goroutine >= 1, "runtime still sane after Gosched+GC");
-   end Test_Go_Sched_And_GC;
+   end Test_Gosched_And_GC;
 
 end Runtime_Suite;

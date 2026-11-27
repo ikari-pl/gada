@@ -284,10 +284,10 @@ file = "runtime/src/gada-std-os.adb"
 lines = [62, 63, 64, 65, 66, 67, 68, 70, 71, 83, 84, 149, 168]
 reason = "untriggerable read-error arm + lcov terminators + argv loop — see runtime/COVERAGE.md"
 
-# `end Go_Max_Procs;` terminator — lcov 2.4 no-return-block
+# `end GOMAXPROCS;` terminator — lcov 2.4 no-return-block
 # misattribution (same class as gada-std-time.adb). Rationale:
 # runtime/COVERAGE.md (gada-std-runtime).
 [[exclude]]
 file = "runtime/src/gada-std-runtime.adb"
 lines = [31]
-reason = "end Go_Max_Procs terminator — see runtime/COVERAGE.md"
+reason = "end GOMAXPROCS terminator — see runtime/COVERAGE.md"

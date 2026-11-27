@@ -2,8 +2,8 @@
 --  wave 2).
 --
 --  Covers Num_Goroutine (baseline, +2 while two blockers are parked,
---  back to baseline after drain), Go_Max_Procs (query, resize from
---  the main task), Go_Sched (no-op outside a goroutine, must not
+--  back to baseline after drain), GOMAXPROCS (query, resize from
+--  the main task), Gosched (no-op outside a goroutine, must not
 --  crash), and GC (forces a collection, must not crash).
 
 with AUnit;
@@ -18,9 +18,9 @@ package Runtime_Suite is
 
    procedure Test_Num_Goroutine (T : in out
       AUnit.Test_Cases.Test_Case'Class);
-   procedure Test_Go_Max_Procs (T : in out
+   procedure Test_GOMAXPROCS (T : in out
       AUnit.Test_Cases.Test_Case'Class);
-   procedure Test_Go_Sched_And_GC (T : in out
+   procedure Test_Gosched_And_GC (T : in out
       AUnit.Test_Cases.Test_Case'Class);
 
 end Runtime_Suite;

@@ -14,11 +14,11 @@ package Gada.Std.Runtime is
    --  context (Shutdown would join every in-flight goroutine, which
    --  deadlocks when called from inside one); from inside a
    --  goroutine the call is a query and the old value is returned.
-   function Go_Max_Procs (Set_To : Natural := 0) return Natural;
+   function GOMAXPROCS (Set_To : Natural := 0) return Natural;
 
    --  Go runtime.Gosched: cooperative yield (no-op outside a
    --  goroutine, per Scheduler.Yield).
-   procedure Go_Sched;
+   procedure Gosched;
 
    --  Go runtime.GC: force a full Boehm collection cycle.
    procedure GC;

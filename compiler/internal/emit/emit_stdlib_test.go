@@ -515,6 +515,34 @@ func TestRuntimeImportEmit(t *testing.T) {
 	}
 }
 
+// TestRuntimeGoschedGomaxprocsEmit pins the mechanical member mapping
+// for runtime.Gosched / runtime.GOMAXPROCS (regression: the runtime
+// declared Go_Sched / Go_Max_Procs, so the emitted calls did not
+// resolve). goNameToAdaMember leaves both names unchanged.
+func TestRuntimeGoschedGomaxprocsEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"runtime"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("p")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("runtime"), Sel: "GOMAXPROCS"},
+				Args:        []ir.Expr{litInt("2")},
+				ResultTypes: []ir.Type{&ir.IntType{}},
+			}},
+		},
+		&ir.Call{Fun: &ir.Selector{X: idn("runtime"), Sel: "Gosched"}},
+	)
+	for _, want := range []string{
+		"Gada.Std.Runtime.Gosched;",
+		"Gada.Std.Runtime.GOMAXPROCS (2)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
 // TestTimeChanImportEmit pins the Phase 6 `chan time.Time` mapping:
 // `timer := time.After(...)` declares a Gada.Std.Time.Time_Channels
 // channel and no per-file Channels_Of_Time instantiation is emitted.

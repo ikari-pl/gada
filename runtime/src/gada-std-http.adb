@@ -320,6 +320,7 @@ package body Gada.Std.Http is
       procedure Set (NL : Gada.Std.Net.Listener) is
       begin
          Cur := NL;
+         Stop_Flag := False;
       end Set;
 
       procedure Stop is

@@ -746,13 +746,6 @@ package body Gada.Std.Net is
       procedure Close is
       begin
          if Sock /= GS.No_Socket then
-            --  shutdown(2) first: on POSIX, close alone does not wake a
-            --  thread blocked in accept(2) on the same socket
-            begin
-               GS.Shutdown_Socket (Sock, GS.Shutdown_Both);
-            exception
-               when GS.Socket_Error => null;
-            end;
             GS.Close_Socket (Sock);
             Sock := GS.No_Socket;
          end if;
@@ -915,13 +908,6 @@ package body Gada.Std.Net is
       procedure Close is
       begin
          if Sock /= GS.No_Socket then
-            --  shutdown(2) first: on POSIX, close alone does not wake a
-            --  thread blocked in accept(2) on the same socket
-            begin
-               GS.Shutdown_Socket (Sock, GS.Shutdown_Both);
-            exception
-               when GS.Socket_Error => null;
-            end;
             GS.Close_Socket (Sock);
             Sock := GS.No_Socket;
          end if;

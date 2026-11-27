@@ -91,6 +91,15 @@ func (tr *translator) stdlibCall(c *ast.CallExpr) (*ir.Call, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	// Phase 7: `http.ListenAndServe(addr, nil)` — the nil handler
+	// means "the default mux", which the Ada port serves implicitly,
+	// so drop the argument.
+	if path == "net/http" && sel.Sel.Name == "ListenAndServe" &&
+		len(args) == 2 {
+		if lit, ok := args[1].(*ir.Lit); ok && lit.Kind == ir.LitNil {
+			args = args[:1]
+		}
+	}
 	// Phase 7: `json.Unmarshal(data, &v)` — the Go pointer-to-target
 	// becomes the Ada out-parameter directly, so drop the `&` and pass
 	// the operand itself; the emitter appends it as an out-arg.
@@ -132,6 +141,7 @@ var fallbackResultTypes = map[string][]ir.Type{
 		&ir.ErrorType{},
 	},
 	"encoding/json.Unmarshal": {&ir.ErrorType{}},
+	"net/http.ListenAndServe": {&ir.ErrorType{}},
 }
 
 // goTypesToIR converts a go/types type to the IR type(s) it denotes.

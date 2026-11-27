@@ -706,6 +706,16 @@ type ChanType struct {
 func (*ChanType) irType()          {}
 func (*ChanType) NodeKind() string { return "ChanType" }
 
+// PointerType is Go `*T` (Phase 7: used for stdlib pointer types like
+// *http.Request, which map to the port's access type). Elem is the
+// pointee type.
+type PointerType struct {
+	Elem Type
+}
+
+func (*PointerType) irType()          {}
+func (*PointerType) NodeKind() string { return "PointerType" }
+
 // StructField is one named field of a StructType, in source order. A
 // Go field group like `X, Y int` expands to one StructField per name.
 type StructField struct {
@@ -1017,6 +1027,12 @@ func unmarshalType(raw json.RawMessage) (Type, error) {
 			return nil, err
 		}
 		return &n, nil
+	case "PointerType":
+		t := &PointerType{}
+		if err := t.UnmarshalJSON(raw); err != nil {
+			return nil, err
+		}
+		return t, nil
 	case "ChanType":
 		var n ChanType
 		if err := json.Unmarshal(raw, &n); err != nil {
@@ -1635,6 +1651,31 @@ func (t *SliceType) UnmarshalJSON(b []byte) error {
 	}
 	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
 		return fmt.Errorf("ir: SliceType missing elem")
+	}
+	elem, err := unmarshalType(aux.Elem)
+	if err != nil {
+		return err
+	}
+	t.Elem = elem
+	return nil
+}
+
+func (t *PointerType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Elem Type   `json:"elem"`
+	}{"PointerType", t.Elem})
+}
+
+func (t *PointerType) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Elem json.RawMessage `json:"elem"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
+		return fmt.Errorf("ir: PointerType missing elem")
 	}
 	elem, err := unmarshalType(aux.Elem)
 	if err != nil {

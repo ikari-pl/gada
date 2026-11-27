@@ -255,6 +255,13 @@ func (tr *translator) transType(e ast.Expr) (ir.Type, error) {
 			return nil, err
 		}
 		return &ir.SliceType{Elem: elem}, nil
+	case *ast.StarExpr:
+		// `*T` (Phase 7: stdlib pointer types like *http.Request).
+		elem, err := tr.transType(t.X)
+		if err != nil {
+			return nil, err
+		}
+		return &ir.PointerType{Elem: elem}, nil
 	case *ast.MapType:
 		k, err := tr.transType(t.Key)
 		if err != nil {

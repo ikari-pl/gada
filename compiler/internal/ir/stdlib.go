@@ -21,4 +21,5 @@ var StdlibPackages = map[string]string{
 	"runtime":       "Gada.Std.Runtime",
 	"net":           "Gada.Std.Net",
 	"encoding/json": "Gada.Std.Json",
+	"net/http":      "Gada.Std.Http",
 }

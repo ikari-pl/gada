@@ -1144,3 +1144,229 @@ func TestJsonMarshalUnmarshal(t *testing.T) {
 		t.Errorf("unmarshal define emitted as function call:\n%s", out)
 	}
 }
+
+// TestHTTPServerLowering pins the Phase 7 net/http server lowering:
+// `http.HandleFunc("/echo", echo)` lowers to `Handle_Func` with the
+// handler's 'Access, `http.ListenAndServe(addr, nil)` (nil stripped by
+// translate) is a single-result head define whose declarative
+// initialiser is `Listen_And_Serve (Addr);`, a bare `w.Write(b)` statement discards its (int, error)
+// results into block locals around the protected dot-call
+// `W.all.Write (B, N, Err);`, and the 2-LHS define `n, err2 :=
+// w.Write(b)` passes N/Err2 straight as the out-args.
+func TestHTTPServerLowering(t *testing.T) {
+	t.Parallel()
+	str := func(v string) *ir.Lit {
+		return &ir.Lit{Kind: ir.LitString, Value: "\"" + v + "\""}
+	}
+	pkg := &ir.Package{Name: "p", Files: []*ir.File{
+		{Name: "x.go", Imports: []string{"net/http"}, Decls: []ir.Decl{
+			&ir.Function{Name: "echo", Body: []ir.Stmt{}},
+			funcMain(
+				&ir.Assign{
+					LHS:    []ir.Expr{idn("w")},
+					Define: true,
+					RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "ResponseWriter"}}},
+				},
+				&ir.Assign{
+					LHS:    []ir.Expr{idn("b")},
+					Define: true,
+					RHS:    []ir.Expr{&ir.MakeSlice{Elem: &ir.ByteType{}, Len: litInt("64")}},
+				},
+				&ir.Assign{
+					LHS:    []ir.Expr{idn("n"), idn("err2")},
+					Define: true,
+					RHS: []ir.Expr{&ir.Call{
+						Fun:  &ir.Selector{X: idn("w"), Sel: "Write"},
+						Args: []ir.Expr{idn("b")},
+						ResultTypes: []ir.Type{
+							&ir.IntType{}, &ir.ErrorType{},
+						},
+					}},
+				},
+				&ir.Assign{
+					LHS:    []ir.Expr{idn("err")},
+					Define: true,
+					RHS: []ir.Expr{&ir.Call{
+						Fun:  &ir.Selector{X: idn("http"), Sel: "ListenAndServe"},
+						Args: []ir.Expr{str("127.0.0.1:18099")},
+						ResultTypes: []ir.Type{
+							&ir.ErrorType{},
+						},
+					}},
+				},
+				&ir.ExprStmt{X: &ir.Call{
+					Fun:  &ir.Selector{X: idn("http"), Sel: "HandleFunc"},
+					Args: []ir.Expr{str("/echo"), idn("echo")},
+				}},
+				&ir.ExprStmt{X: &ir.Call{
+					Fun:  &ir.Selector{X: idn("w"), Sel: "Write"},
+					Args: []ir.Expr{idn("b")},
+					ResultTypes: []ir.Type{
+						&ir.IntType{}, &ir.ErrorType{},
+					},
+				}},
+			),
+		}},
+	}}
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	out := flattenSpaces(buf.String())
+	for _, want := range []string{
+		"W : Gada.Std.Http.Response_Writer",
+		"Gada.Std.Http.Handle_Func (\"/echo\", Echo'Access);",
+		"W.all.Write (B, N, Err);",
+		"W.all.Write (B, N, Err2);",
+		"Err : Gada.Std.Errors.Error_Access := Gada.Std.Http.Listen_And_Serve (\"127.0.0.1:18099\");",
+		"with Gada.Std.Http;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	// The bare-statement Write must be wrapped in a declare block that
+	// owns its own N/Err discards; the 2-LHS define must NOT re-declare.
+	if !strings.Contains(out, "declare N : Natural; Err : Gada.Std.Errors.Error_Access; begin W.all.Write") {
+		t.Errorf("bare w.Write not wrapped in declare block:\n%s", out)
+	}
+}
+
+// TestHTTPMethodCallDeclineArms pins that httpMethodCall declines (and
+// the generic dispatching-call error fires) when the prefix is not an
+// identifier, the local is not an http type, a local type shadows the
+// http type name, or the net/http import is absent — no `.all.` may
+// leak into the output in any of those cases.
+func TestHTTPMethodCallDeclineArms(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		imports    []string
+		decls      []ir.Decl
+		stmt       ir.Stmt
+		needsLocal bool
+	}{
+		{
+			name:    "non-ident prefix",
+			imports: []string{"net/http"},
+			stmt: &ir.ExprStmt{X: &ir.Call{
+				Fun: &ir.Selector{
+					X:   &ir.Selector{X: idn("a"), Sel: "b"},
+					Sel: "Write",
+				},
+				Args: []ir.Expr{idn("b")},
+			}},
+		},
+		{
+			name:    "non-http local type",
+			imports: []string{"net/http"},
+			decls: []ir.Decl{
+				&ir.TypeDecl{Name: "Time", Underlying: &ir.StructType{}},
+			},
+			stmt: &ir.ExprStmt{X: &ir.Call{
+				Fun:  &ir.Selector{X: idn("t"), Sel: "Write"},
+				Args: []ir.Expr{idn("b")},
+			}},
+			needsLocal: true,
+		},
+		{
+			name:    "shadowed http type name",
+			imports: []string{"net/http"},
+			decls: []ir.Decl{
+				&ir.TypeDecl{Name: "ResponseWriter", Underlying: &ir.StructType{}},
+			},
+			stmt: &ir.ExprStmt{X: &ir.Call{
+				Fun:  &ir.Selector{X: idn("w"), Sel: "Write"},
+				Args: []ir.Expr{idn("b")},
+			}},
+			needsLocal: true,
+		},
+		{
+			name:    "http not imported",
+			imports: []string{"net"},
+			decls: []ir.Decl{
+				&ir.TypeDecl{Name: "Local", Underlying: &ir.StructType{}},
+			},
+			stmt: &ir.ExprStmt{X: &ir.Call{
+				Fun:  &ir.Selector{X: idn("w"), Sel: "Write"},
+				Args: []ir.Expr{idn("b")},
+			}},
+			needsLocal: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var body []ir.Stmt
+			if tc.needsLocal {
+				local := idn("w")
+				typ := &ir.NamedType{Name: "ResponseWriter"}
+				if tc.name == "non-http local type" {
+					local = idn("t")
+					typ = &ir.NamedType{Name: "Time"}
+				}
+				if tc.name == "http not imported" {
+					typ = &ir.NamedType{Name: "Local"}
+				}
+				body = append(body, &ir.Assign{
+					LHS:    []ir.Expr{local},
+					Define: true,
+					RHS:    []ir.Expr{&ir.ZeroVal{Type: typ}},
+				})
+			}
+			body = append(body, tc.stmt)
+			decls := append([]ir.Decl{}, tc.decls...)
+			decls = append(decls, funcMain(body...))
+			pkg := &ir.Package{Name: "p", Files: []*ir.File{
+				{Name: "x.go", Imports: tc.imports, Decls: decls},
+			}}
+			var buf bytes.Buffer
+			err := Package(pkg, &buf)
+			if err == nil {
+				t.Fatalf("emit succeeded, want loud dispatching error; out:\n%s",
+					buf.String())
+			}
+			if !strings.Contains(err.Error(), "dispatching") {
+				t.Fatalf("wrong error: %v", err)
+			}
+			if strings.Contains(buf.String(), ".all.") {
+				t.Fatalf("declined selector was misrouted to a protected dot-call:\n%s",
+					buf.String())
+			}
+		})
+	}
+}
+
+// TestHTTPRequestPointerType pins that a `*http.Request` local declares
+// as the port's access type `Gada.Std.Http.Request_Access` and that a
+// field read on it lowers to the reserved-word-escaped component
+// `R.Body_K` (Go field `Body` is an Ada reserved word).
+func TestHTTPRequestPointerType(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"net/http"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("r")},
+			Define: true,
+			RHS: []ir.Expr{&ir.ZeroVal{
+				Type: &ir.PointerType{Elem: &ir.NamedType{Name: "Request"}},
+			}},
+		},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("b")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.SliceType{Elem: &ir.ByteType{}}}},
+		},
+		&ir.Assign{
+			LHS: []ir.Expr{idn("b")},
+			RHS: []ir.Expr{&ir.Selector{X: idn("r"), Sel: "Body"}},
+		},
+	)
+	for _, want := range []string{
+		"R : Gada.Std.Http.Request_Access",
+		"B := R.Body_K;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}

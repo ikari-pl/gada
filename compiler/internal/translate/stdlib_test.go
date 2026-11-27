@@ -552,3 +552,86 @@ func f(data []byte, v int) {
 			ucall.Args[1])
 	}
 }
+
+// TestHTTPNetTranslate pins the Phase 7 net/http translate changes:
+// `*http.Request` translates to *ir.PointerType (Elem = NamedType
+// Request), `http.ListenAndServe(addr, nil)` drops the nil handler
+// argument, and `http.HandleFunc("/echo", g)` passes both arguments
+// through untouched.
+func TestHTTPNetTranslate(t *testing.T) {
+	t.Parallel()
+	src := `package p
+
+import "net/http"
+
+func f() {
+	var r *http.Request
+	_ = r
+	_ = http.ListenAndServe("127.0.0.1:8080", nil)
+	http.HandleFunc("/echo", g)
+}
+
+func g(w http.ResponseWriter, r *http.Request) {}
+`
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "x.go", src, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	conf := types.Config{Importer: importer.Default()}
+	info := &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+	}
+	if _, err = conf.Check("p", fset, []*ast.File{af}, info); err != nil {
+		t.Fatalf("typecheck: %v", err)
+	}
+	tr, err := newTranslator(af, info)
+	if err != nil {
+		t.Fatalf("newTranslator: %v", err)
+	}
+	fn := af.Decls[1].(*ast.FuncDecl)
+	// var r *http.Request
+	gd := fn.Body.List[0].(*ast.DeclStmt).Decl.(*ast.GenDecl)
+	vs := gd.Specs[0].(*ast.ValueSpec)
+	typ, err := tr.transType(vs.Type)
+	if err != nil {
+		t.Fatalf("transType(*http.Request): %v", err)
+	}
+	pt, ok := typ.(*ir.PointerType)
+	if !ok {
+		t.Fatalf("*http.Request translated to %T, want *ir.PointerType", typ)
+	}
+	if nt, ok := pt.Elem.(*ir.NamedType); !ok || nt.Name != "Request" {
+		t.Fatalf("PointerType.Elem = %#v, want NamedType Request", pt.Elem)
+	}
+	// _ = http.ListenAndServe("127.0.0.1:8080", nil)
+	lasStmt := fn.Body.List[2].(*ast.AssignStmt)
+	lasCall := lasStmt.Rhs[0].(*ast.CallExpr)
+	las, ok, err := tr.stdlibCall(lasCall)
+	if err != nil || !ok {
+		t.Fatalf("stdlibCall(ListenAndServe) = %v, %v, %v", las, ok, err)
+	}
+	if len(las.Args) != 1 {
+		t.Fatalf("ListenAndServe args = %d, want 1 (nil stripped)", len(las.Args))
+	}
+	if len(las.ResultTypes) != 1 ||
+		las.ResultTypes[0].NodeKind() != "ErrorType" {
+		t.Fatalf("ListenAndServe ResultTypes = %#v", las.ResultTypes)
+	}
+	// http.HandleFunc("/echo", g)
+	hfStmt := fn.Body.List[3].(*ast.ExprStmt)
+	hfCall := hfStmt.X.(*ast.CallExpr)
+	hf, ok, err := tr.stdlibCall(hfCall)
+	if err != nil || !ok {
+		t.Fatalf("stdlibCall(HandleFunc) = %v, %v, %v", hf, ok, err)
+	}
+	if len(hf.Args) != 2 {
+		t.Fatalf("HandleFunc args = %d, want 2", len(hf.Args))
+	}
+	sel, ok := hf.Fun.(*ir.Selector)
+	if !ok || sel.Sel != "HandleFunc" {
+		t.Fatalf("HandleFunc Fun = %#v", hf.Fun)
+	}
+}

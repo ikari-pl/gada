@@ -299,11 +299,11 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 			e.needsUnbounded = true
 		}
 		if imp == "os" || imp == "errors" || imp == "net" ||
-			imp == "encoding/json" {
+			imp == "encoding/json" || imp == "net/http" {
 			e.needsStdErrors = true
 		}
 		if imp == "os" || imp == "bytes" || imp == "net" ||
-			imp == "encoding/json" {
+			imp == "encoding/json" || imp == "net/http" {
 			e.needsStdBytes = true
 		}
 	}
@@ -1216,7 +1216,46 @@ func (e *emitter) stdlibValueType(name string) (string, bool) {
 	if _, ok := e.stdlibImports["net"]; ok && netTypeNames[name] {
 		return "Gada.Std.Net." + goNameToAdaMember(name), true
 	}
+	if _, ok := e.stdlibImports["http"]; ok && httpTypeNames[name] {
+		return "Gada.Std.Http." + goNameToAdaMember(name), true
+	}
 	return "", false
+}
+
+// httpTypeNames are the Gada.Std.Http types whose declarations lower to
+// the port's Ada types when the net/http import is present.
+var httpTypeNames = map[string]bool{
+	"ResponseWriter": true, "Request": true,
+}
+
+// httpAccessTypeNames are the http types that are access-to-protected
+// (methods lower with an explicit `.all`).
+var httpAccessTypeNames = map[string]bool{
+	"ResponseWriter": true,
+}
+
+// httpMethodCall renders a method call on a Gada.Std.Http-typed local:
+// `w.Write(b)` -> `W.all.Write`. Same misroute guards as netMethodCall.
+func (e *emitter) httpMethodCall(s *ir.Selector) (string, bool) {
+	id, ok := s.X.(*ir.Ident)
+	if !ok {
+		return "", false
+	}
+	if _, httpImported := e.stdlibImports["http"]; !httpImported {
+		return "", false
+	}
+	nt, ok := e.localTypes[id.Name].(*ir.NamedType)
+	if !ok || !httpTypeNames[nt.Name] {
+		return "", false
+	}
+	if e.localTypeNames[nt.Name] {
+		return "", false
+	}
+	member := adaIdent(s.Sel)
+	if netAccessTypeNames[nt.Name] || httpAccessTypeNames[nt.Name] {
+		return e.emitExpr(s.X) + ".all." + member, true
+	}
+	return e.emitExpr(s.X) + "." + member, true
 }
 
 // println writes a single line, prefixed with the current indent
@@ -3911,6 +3950,12 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 				// Phase 7: bare `json.Unmarshal(data, &v);` statement
 				// — discard the error into a block-local and pass the
 				// target as the trailing out-arg.
+				if sel.Sel == "HandleFunc" && len(c.Args) == 2 {
+					if hid, ok := c.Args[1].(*ir.Ident); ok &&
+						e.funcByName[hid.Name] != nil {
+						args[1] = args[1] + "'Access"
+					}
+				}
 				if e.isJSONUnmarshal(c) {
 					e.println("declare")
 					e.indent++
@@ -3966,6 +4011,33 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 				e.println(netFun + ";")
 			} else {
 				e.println(netFun + " (" + strings.Join(args, ", ") + ");")
+			}
+			return
+		}
+		// Phase 7: net/http method call in statement position
+		// (`w.Write(b)` discarding the (int, error) results) — the Ada
+		// protected op has out-params, so wrap in a block with locals.
+		if httpFun, ok := e.httpMethodCall(sel); ok {
+			args := make([]string, 0, len(c.Args))
+			for _, a := range c.Args {
+				args = append(args, e.emitExpr(a))
+			}
+			if len(c.ResultTypes) == 2 {
+				e.println("declare")
+				e.indent++
+				e.println("N : Natural;")
+				e.println("Err : Gada.Std.Errors.Error_Access;")
+				e.println("begin")
+				e.indent++
+				args = append(args, "N", "Err")
+				e.println(httpFun + " (" + strings.Join(args, ", ") + ");")
+				e.indent--
+				e.println("end;")
+				e.indent--
+			} else if len(args) == 0 {
+				e.println(httpFun + ";")
+			} else {
+				e.println(httpFun + " (" + strings.Join(args, ", ") + ");")
 			}
 			return
 		}
@@ -5207,6 +5279,10 @@ func (e *emitter) emitSelector(s *ir.Selector) string {
 	if netFun, ok := e.netMethodCall(s); ok {
 		return netFun
 	}
+	// Phase 7: same routing for net/http (`w.Write(b)` -> `W.all.Write`).
+	if httpFun, ok := e.httpMethodCall(s); ok {
+		return httpFun
+	}
 	// `fmt.Println` in statement position is intercepted by emitCallStmt
 	// (-> emitFmtPrintln), so it never reaches here. Any other selector
 	// renders as the Ada dotted form. The selected name goes through
@@ -5320,6 +5396,15 @@ func (e *emitter) typeName(t ir.Type) (string, error) {
 			return "", err
 		}
 		return pkg + ".Channel", nil
+	case *ir.PointerType:
+		// v1: stdlib pointer types (*http.Request) map to the port's
+		// access type (`Gada.Std.Http.Request_Access`).
+		if nt, ok := t.Elem.(*ir.NamedType); ok {
+			if pkg, ok := e.stdlibValueType(nt.Name); ok {
+				return pkg + "_Access", nil
+			}
+		}
+		return "", fmt.Errorf("emit: pointer type over %T not supported (v1: stdlib types only)", t.Elem)
 	case nil:
 		return "", fmt.Errorf("emit: missing type")
 	}

@@ -794,7 +794,7 @@ func (e *emitter) collectWiths() []string {
 	if e.pkgName == "main" && e.needsMainHandler() {
 		add("with Gada.Core.Process;")
 	}
-	if e.needsAsyncScheduler {
+	if e.needsAsyncScheduler || e.needsDeadlockDetection() {
 		add("with Gada.Async.Scheduler;")
 	}
 	if e.needsReflect {
@@ -1355,6 +1355,22 @@ func (e *emitter) needsProcessExit() bool {
 	return e.needsAsyncScheduler || usesTime
 }
 
+// needsDeadlockDetection reports whether the main task can block on a
+// channel (its own channels, time's timer channels, or sync.Cond's), so
+// the generated main opts in to Go's "all goroutines are asleep"
+// deadlock report (Scheduler.Set_Deadlock_Detection). Hand-written Ada
+// never opts in: it may feed channels from tasks the scheduler cannot
+// see.
+func (e *emitter) needsDeadlockDetection() bool {
+	if e.pkgName != "main" {
+		return false
+	}
+	_, usesTime := e.stdlibImports["time"]
+	_, usesSync := e.stdlibImports["sync"]
+	return e.needsAsyncScheduler || len(e.chanElemOrder) > 0 ||
+		len(e.selectorElemOrder) > 0 || usesTime || usesSync
+}
+
 // needsMainHandler reports whether Main gets the outer exception
 // handler that routes an escaping panic through
 // Gada.Core.Process.Unhandled (Go's exit status 2, without waiting
@@ -1634,6 +1650,9 @@ func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
 	// "Init not called" precondition.
 	if e.needsAsyncScheduler {
 		e.println("Gada.Async.Scheduler.Init;")
+	}
+	if e.needsDeadlockDetection() {
+		e.println("Gada.Async.Scheduler.Set_Deadlock_Detection (True);")
 	}
 
 	if mainDefersInsideWrapper {

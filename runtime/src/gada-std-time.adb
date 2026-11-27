@@ -4,6 +4,7 @@ with Ada.Calendar.Formatting;
 with Ada.Calendar.Time_Zones;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 with Interfaces;
+with Gada.Async.Scheduler;
 
 package body Gada.Std.Time is
 
@@ -262,11 +263,16 @@ package body Gada.Std.Time is
    --  calls Fire_Due, which delivers every due entry *inside* the
    --  protected action — so a Stop either removes a pending entry
    --  (returns True, nothing is ever sent) or finds it gone (it fired;
-   --  returns False). Inserting a new head deadline kicks Service so
+   --  returns False). Each queued timer counts as a Scheduler waker
+   --  (deadlock detection); a ticker stays one waker while it lives,
+   --  and a one-shot is released only after its value is delivered.
+   --  Inserting a new head deadline kicks Service so
    --  it re-reads the queue instead of oversleeping. With nothing
    --  queued Service waits on an accept with a terminate alternative,
    --  so it never keeps a program's environment task alive by itself.
    ---------------------------------------------------------------
+
+   package Scheduler renames Gada.Async.Scheduler;
 
    use type RT.Time;
    use type RT.Time_Span;
@@ -341,6 +347,7 @@ package body Gada.Std.Time is
       procedure Insert (N : Timer_Node_Access; New_Head : out Boolean) is
       begin
          Link (N);
+         Scheduler.Add_Waker;  --  a pending timer may wake main
          New_Head := Head = N;
       end Insert;
 
@@ -349,6 +356,7 @@ package body Gada.Std.Time is
          Was_Queued := N.Queued;
          if Was_Queued then
             Unlink (N);
+            Scheduler.Remove_Waker;
          end if;
       end Remove;
 
@@ -358,6 +366,7 @@ package body Gada.Std.Time is
          while N /= null loop
             if N.Ch = Ch then
                Unlink (N);
+               Scheduler.Remove_Waker;
                return;
             end if;
             N := N.Next;
@@ -368,6 +377,7 @@ package body Gada.Std.Time is
       begin
          while Head /= null loop
             Unlink (Head);
+            Scheduler.Remove_Waker;
          end loop;
       end Clear;
 
@@ -385,6 +395,9 @@ package body Gada.Std.Time is
             Unlink (N);
             if N.Period = RT.Time_Span_Zero then
                Time_Channels.Send (N.Ch, True);
+               --  Only after the value is in the channel: a main task
+               --  polling for deadlock must never see neither.
+               Scheduler.Remove_Waker;
             else
                if Time_Channels.Length (N.Ch) = 0 then
                   Time_Channels.Send (N.Ch, True);

@@ -20,6 +20,7 @@ procedure Main is
 
 begin
    Gada.Async.Scheduler.Init;
+   Gada.Async.Scheduler.Set_Deadlock_Detection (True);
    Helper;
    Gada.Core.Process.Exit_Main;
 exception

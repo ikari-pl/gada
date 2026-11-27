@@ -45,6 +45,7 @@ with Scheduler_Suite;
 with Channels_Suite;
 with Channels_Unbounded_Suite;
 with Selector_Suite;
+with Deadlock_Suite;
 with Race_Suite;
 with Reflect_Types_Suite;
 with Reflect_Suite;
@@ -91,6 +92,7 @@ procedure Test_Runner is
       or else Pkg = "async.channels.bounded"
       or else Pkg = "async.channels.unbounded"
       or else Pkg = "async.select"
+      or else Pkg = "async.deadlock"
       or else Pkg = "async.race"
       or else Pkg = "reflect.type"
       or else Pkg = "reflect"
@@ -171,6 +173,9 @@ procedure Test_Runner is
       end if;
       if Should_Register ("async.select") then
          Add_Test (Result, new Selector_Suite.Selector_Test);
+      end if;
+      if Should_Register ("async.deadlock") then
+         Add_Test (Result, new Deadlock_Suite.Deadlock_Test);
       end if;
       if Should_Register ("async.race") then
          Add_Test (Result, new Race_Suite.Race_Test);

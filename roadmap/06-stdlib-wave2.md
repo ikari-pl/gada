@@ -136,3 +136,14 @@ historical record.
   *Verify:* `cd compiler && go test ./internal/emit -run 'TestSync|TestRuntimeGosched'`
   and `go test -tags=integration ./cmd/gada -run SyncMethods` (compiles
   and runs the emitted Ada).
+- **Main-task deadlock detection** (finding #11, + the poll-loop
+  duplication note). Bounded Send/Receive and Unbounded Receive share
+  one `Scheduler.Main_Block` poll loop; it (and Selector's main-task
+  arm) prints Go's `fatal error: all goroutines are asleep - deadlock!`
+  and exits 2 only when detection is on (generated mains whose main
+  task can block opt in; hand-written Ada never does), no goroutine is
+  in flight, no timer is pending (each queued timer is a scheduler
+  "waker"), and a re-poll still fails. Conservative v1: a program
+  whose goroutines are all parked forever still hangs instead of
+  reporting.
+  *Verify:* `make -C runtime test PKG=async.deadlock`.

@@ -1018,3 +1018,33 @@ func TestSyncOnceDoRejectsNonFunction(t *testing.T) {
 		}
 	}
 }
+
+// TestDeadlockDetectionOptIn pins that a `package main` whose main
+// task can block on a channel arms Go's deadlock report
+// (Scheduler.Set_Deadlock_Detection) and withs the scheduler, while a
+// non-main package (hand-written-Ada callers) and a channel-free main
+// never opt in (PR #46 review finding #11).
+func TestDeadlockDetectionOptIn(t *testing.T) {
+	t.Parallel()
+	mk := &ir.Assign{
+		LHS:    []ir.Expr{idn("c")},
+		Define: true,
+		RHS:    []ir.Expr{&ir.MakeChan{Elem: &ir.IntType{}, Capacity: litInt("1")}},
+	}
+	const on = "Gada.Async.Scheduler.Set_Deadlock_Detection (True);"
+	out := emitMainPkg(t, nil, mk)
+	for _, want := range []string{"with Gada.Async.Scheduler;", on} {
+		if !strings.Contains(out, want) {
+			t.Errorf("chan main: missing %q in:\n%s", want, out)
+		}
+	}
+	if out := emitMainPkg(t, []string{"sync"}); !strings.Contains(out, on) {
+		t.Errorf("sync main (Cond can block): missing %q in:\n%s", on, out)
+	}
+	if out := emitMain(t, nil, mk); strings.Contains(out, "Set_Deadlock_Detection") {
+		t.Errorf("non-main package must not opt in:\n%s", out)
+	}
+	if out := emitMainPkg(t, []string{"strings"}); strings.Contains(out, "Set_Deadlock_Detection") {
+		t.Errorf("channel-free main must not opt in:\n%s", out)
+	}
+}

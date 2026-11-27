@@ -226,6 +226,11 @@ package body Gada.Async.Selector is
       Timeout_Index    : Natural;
       Earliest_Timeout : Time;
       Fired            : Boolean;
+      --  Main-task deadlock detection: set when a failed pass saw
+      --  Scheduler.No_Progress_Possible; a second failed pass that
+      --  still sees it reports (same two-observation rule as
+      --  Scheduler.Main_Block).
+      Suspect          : Boolean := False;
    begin
       Validate_And_Scan
         (Cases, Default_Index, Earliest_Timeout, Timeout_Index);
@@ -316,6 +321,18 @@ package body Gada.Async.Selector is
             then
                Gada.Async.Scheduler.Yield;
             else
+               if Timeout_Index = 0
+                 and then Gada.Async.Scheduler.No_Progress_Possible
+               then
+                  if Suspect then
+                     Gada.Async.Scheduler.Report_Deadlock;
+                     raise Program_Error  --  only under a test exit handler
+                       with "Gada.Async.Selector: deadlock reported";
+                  end if;
+                  Suspect := True;
+               else
+                  Suspect := False;
+               end if;
                delay Poll_Interval;
             end if;
          end loop;

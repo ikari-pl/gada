@@ -424,19 +424,23 @@ package body Gada.Async.Channels.Bounded is
       --  pointer. Instead of raising, poll the ring buffer with a timed
       --  delay until there is room or the channel closes: Go allows a
       --  main-task send to block, and a main task has no cothread to
-      --  park. Same timed-poll pattern as Selector.Select_One's
-      --  main-task arm.
+      --  park. The shared Scheduler.Main_Block loop also reports Go's
+      --  deadlock fatal when nothing can ever make room.
       if Scheduler.Current = Scheduler.No_Goroutine then
-         loop
-            C.Ref.State.Try_Buffered_Send (V, Stored, Was_Closed);
-            if Was_Closed then
-               raise Channel_Closed
-                 with "Gada.Async.Channels.Bounded.Send: channel is "
-                      & "closed";
-            end if;
-            exit when Stored;
-            delay 0.001;
-         end loop;
+         declare
+            function Try return Boolean is
+            begin
+               C.Ref.State.Try_Buffered_Send (V, Stored, Was_Closed);
+               return Stored or else Was_Closed;
+            end Try;
+            procedure Wait is new Scheduler.Main_Block (Try);
+         begin
+            Wait;
+         end;
+         if Was_Closed then
+            raise Channel_Closed
+              with "Gada.Async.Channels.Bounded.Send: channel is closed";
+         end if;
          return;
       end if;
       Slot := new Wait_Slot'(G              => Scheduler.Current,
@@ -507,18 +511,18 @@ package body Gada.Async.Channels.Bounded is
       --  (main task has no cothread to park): Go allows a main-task
       --  receive to block. Mirror of the Send poll arm above.
       if Scheduler.Current = Scheduler.No_Goroutine then
-         loop
-            C.Ref.State.Try_Buffered_Receive (V, Got, Was_Closed);
-            if Got then
-               OK := True;
-               return;
-            end if;
-            if Was_Closed then
-               OK := False;
-               return;
-            end if;
-            delay 0.001;
-         end loop;
+         declare
+            function Try return Boolean is
+            begin
+               C.Ref.State.Try_Buffered_Receive (V, Got, Was_Closed);
+               return Got or else Was_Closed;
+            end Try;
+            procedure Wait is new Scheduler.Main_Block (Try);
+         begin
+            Wait;
+         end;
+         OK := Got;   --  False: closed (or a test-only deadlock return)
+         return;
       end if;
       Slot := new Wait_Slot;
       Slot.G := Scheduler.Current;

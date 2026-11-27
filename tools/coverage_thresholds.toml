@@ -97,7 +97,7 @@ reason = "Trampoline C-boundary exception arm — see runtime/COVERAGE.md"
 # (gada-async-scheduler).
 [[exclude]]
 file = "runtime/src/gada-async-scheduler.adb"
-lines = [614, 615, 616, 617, 618, 619, 620]
+lines = [639, 640, 641, 642, 643, 644, 645]
 reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 
 # Spawn's `Make` failure leak guard. Same fault-injection prerequisite
@@ -109,7 +109,7 @@ reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 # (gada-async-scheduler).
 [[exclude]]
 file = "runtime/src/gada-async-scheduler.adb"
-lines = [665, 666, 667]
+lines = [690, 691, 692]
 reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"
 
 # Park_Sender's race-recheck arm: between the caller's
@@ -128,7 +128,7 @@ reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-bounded.adb"
-lines = [448, 449]
+lines = [452, 453]
 reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
 
 # Park_Receiver's race-recheck arms (Got=True / Closed=True). Mirror of
@@ -141,7 +141,7 @@ reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-bounded.adb"
-lines = [527, 528, 529, 532, 533, 534]
+lines = [531, 532, 533, 536, 537, 538]
 reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
 
 # Channels.Unbounded mirror of the Channels.Bounded Park_Receiver
@@ -153,7 +153,7 @@ reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE
 # Rationale: runtime/COVERAGE.md (gada-async-channels-unbounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-unbounded.adb"
-lines = [416, 417, 418, 421, 422, 423]
+lines = [417, 418, 419, 422, 423, 424]
 reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
 
 # Selector defensive / unreachable lines (line numbers adjusted in
@@ -190,7 +190,7 @@ reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE
 # Rationale: runtime/COVERAGE.md (gada-async-selector).
 [[exclude]]
 file = "runtime/src/gada-async-selector.adb"
-lines = [104, 109, 165, 166, 167, 322]
+lines = [104, 109, 165, 166, 167, 339]
 reason = "Selector defensive/unreachable arms — see runtime/COVERAGE.md"
 
 # --- Phase 5 stdlib wave 1 (Gada.Std.*) ------------------------------------
@@ -267,7 +267,7 @@ reason = "Race.Image fall-through terminator — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-std-time).
 [[exclude]]
 file = "runtime/src/gada-std-time.adb"
-lines = [68, 222, 233]
+lines = [69, 223, 234]
 reason = "end Append_Frac/Dig2/Image_Date_Time/New_Timer terminators — see runtime/COVERAGE.md"
 
 # Read_File's stream-read exception arm (62-68): the directory case is

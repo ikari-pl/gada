@@ -95,7 +95,7 @@ Added in PR #3 review feedback (gemini-code-assist comment #1).
 
 ### `runtime/src/gada-async-scheduler.adb`
 
-#### `Init` — per-worker `new Worker_Task` rollback  *(lines 547–553)*
+#### `Init` — per-worker `new Worker_Task` rollback  *(lines 639–645)*
 
 ```ada
 begin
@@ -104,13 +104,13 @@ begin
       The_Workers (I) := new Worker_Task (Idx => I);
    end loop;
 exception
-   when others =>                          --  line 547
-      Run_Queue.Worker_Stopped;            --  line 548
-      Run_Queue.Mark_Shutdown;             --  line 549
-      Run_Queue.Drain;                     --  line 550
-      The_Workers := null;                  --  line 551
-      Run_Queue.Set_Initialised (False);   --  line 552
-      raise;                                --  line 553
+   when others =>                          --  line 639
+      Run_Queue.Worker_Stopped;            --  line 640
+      Run_Queue.Mark_Shutdown;             --  line 641
+      Run_Queue.Drain;                     --  line 642
+      The_Workers := null;                  --  line 643
+      Run_Queue.Set_Initialised (False);   --  line 644
+      raise;                                --  line 645
 end;
 ```
 
@@ -139,16 +139,16 @@ lifted to the multi-worker rollback shape in sub-item 3b. Sub-items
 Exit_Syscall surface) shifted the line numbers but did not change
 the arm's structure.
 
-#### `Spawn` — `Make` failure leak guard  *(lines 587–589)*
+#### `Spawn` — `Make` failure leak guard  *(lines 690–692)*
 
 ```ada
 begin
    Gada.Async.Context.Make
      (G.Ctx, Goroutine_Trampoline'Access, Stack_Size => 256 * 1024);
 exception
-   when others =>          --  line 587
-      Free_Goroutine (G);  --  line 588
-      raise;                --  line 589
+   when others =>          --  line 690
+      Free_Goroutine (G);  --  line 691
+      raise;                --  line 692
 end;
 ```
 
@@ -169,13 +169,13 @@ Added in PR #3 review feedback (gemini-code-assist comment #4).
 
 ### `runtime/src/gada-async-channels-bounded.adb`
 
-#### `Send` — `Park_Sender` close-race recheck  *(lines 448–449)*
+#### `Send` — `Park_Sender` close-race recheck  *(lines 452–453)*
 
 ```ada
 C.Ref.State.Park_Sender (Slot, Was_Closed);
 if Was_Closed then
-   Free_Slot (Slot);                                  --  line 448
-   raise Channel_Closed                               --  line 449
+   Free_Slot (Slot);                                  --  line 452
+   raise Channel_Closed                               --  line 453
      with "Gada.Async.Channels.Bounded.Send: closed during park";
 end if;
 ```
@@ -198,19 +198,19 @@ injection seam (slated alongside Phase 4 panic-marshalling work)
 will park the calling goroutine *between* those two protected calls,
 fire a Close, and re-cover this arm. Two lines.
 
-#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 527–529, 532–534)*
+#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 531–533, 536–538)*
 
 ```ada
 C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);
 if Got then
-   Free_Slot (Slot);   --  line 527
-   OK := True;          --  line 528
-   return;              --  line 529
+   Free_Slot (Slot);   --  line 531
+   OK := True;          --  line 532
+   return;              --  line 533
 end if;
 if Was_Closed then
-   Free_Slot (Slot);   --  line 532
-   OK := False;         --  line 533
-   return;              --  line 534
+   Free_Slot (Slot);   --  line 536
+   OK := False;         --  line 537
+   return;              --  line 538
 end if;
 ```
 
@@ -237,19 +237,19 @@ them here documents the testability gap, not their value.
 
 ### `runtime/src/gada-async-channels-unbounded.adb`
 
-#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 416–418, 421–423)*
+#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 417–419, 422–424)*
 
 ```ada
 C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);
 if Got then
-   Free_Slot (Slot);   --  line 416
-   OK := True;          --  line 417
-   return;              --  line 418
+   Free_Slot (Slot);   --  line 417
+   OK := True;          --  line 418
+   return;              --  line 419
 end if;
 if Was_Closed then
-   Free_Slot (Slot);   --  line 421
-   OK := False;         --  line 422
-   return;              --  line 423
+   Free_Slot (Slot);   --  line 422
+   OK := False;         --  line 423
+   return;              --  line 424
 end if;
 ```
 
@@ -475,7 +475,7 @@ the lcov 2.4 misattribution class documented above.
 
 ### `runtime/src/gada-std-time.adb` (Phase 6 wave 2)
 
-68, 222, 233 — `end Append_Frac;`, `end Dig2;`, `end Image_Date_Time;`
+69, 223, 234 — `end Append_Frac;`, `end Dig2;`, `end Image_Date_Time;`
 terminators. Every contained line of these subprograms is hit by
 Time_Suite (Duration.String, Date + accessors, the pinned-zone RFC3339
 tests are all green in the same run); lcov 2.4 leaves hit-count 0 on the

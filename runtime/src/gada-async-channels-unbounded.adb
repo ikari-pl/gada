@@ -394,20 +394,21 @@ package body Gada.Async.Channels.Unbounded is
       --  leaves Slot orphaned for a later Send or Close to write
       --  through. Poll with a timed delay instead (a main task has no
       --  cothread to park): Go allows a main-task receive to block.
-      --  Mirror of the poll arm in Channels.Bounded.
+      --  Shared Scheduler.Main_Block loop (also reports Go's deadlock
+      --  fatal when no sender can ever exist).
       if Scheduler.Current = Scheduler.No_Goroutine then
-         loop
-            C.Ref.State.Try_Receive (V, Got, Was_Closed);
-            if Got then
-               OK := True;
-               return;
-            end if;
-            if Was_Closed then
-               OK := False;
-               return;
-            end if;
-            delay 0.001;
-         end loop;
+         declare
+            function Try return Boolean is
+            begin
+               C.Ref.State.Try_Receive (V, Got, Was_Closed);
+               return Got or else Was_Closed;
+            end Try;
+            procedure Wait is new Scheduler.Main_Block (Try);
+         begin
+            Wait;
+         end;
+         OK := Got;   --  False: closed (or a test-only deadlock return)
+         return;
       end if;
       Slot := new Wait_Slot;
       Slot.G := Scheduler.Current;

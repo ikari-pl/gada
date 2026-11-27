@@ -15,6 +15,7 @@ procedure Main is
 
 begin
    Gada.Async.Scheduler.Init;
+   Gada.Async.Scheduler.Set_Deadlock_Detection (True);
    Unused_G := Gada.Async.Scheduler.Spawn (Go_Closure_1'Unrestricted_Access);
    Gada.Core.Process.Exit_Main;
 exception

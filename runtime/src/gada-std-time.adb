@@ -4,6 +4,7 @@ with Ada.Calendar.Formatting;
 with Ada.Calendar.Time_Zones;
 with Ada.Containers.Indefinite_Vectors;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
+with Interfaces;
 with System;
 
 package body Gada.Std.Time is
@@ -69,8 +70,15 @@ package body Gada.Std.Time is
    end Append_Frac;
 
    function To_String (D : Duration) return String is
+      use type Interfaces.Unsigned_64;
       Ns : constant Long_Integer := Long_Integer (D);
-      U  : constant Long_Integer := (if Ns < 0 then -Ns else Ns);
+      --  Magnitude in Unsigned_64: -Long_Integer'First overflows
+      --  (Go's math.MinInt64 Duration prints "-2562047h47m16.854775808s").
+      U  : constant Interfaces.Unsigned_64 :=
+        (if Ns < 0 then Interfaces.Unsigned_64 (-(Ns + 1)) + 1
+         else Interfaces.Unsigned_64 (Ns));
+      function L (X : Interfaces.Unsigned_64) return Long_Integer is
+        (Long_Integer (X));
       B  : Unbounded_String;
    begin
       if Ns < 0 then
@@ -78,27 +86,27 @@ package body Gada.Std.Time is
       end if;
       if U = 0 then
          return To_String (B) & "0s";
-      elsif U < Long_Integer (Second) then
+      elsif U < Interfaces.Unsigned_64 (Second) then
          if U < 1_000 then
-            Append_Num (B, U);
+            Append_Num (B, L (U));
             Append (B, "ns");
          elsif U < 1_000_000 then
-            Append_Num (B, U / 1_000);
-            Append_Frac (B, U mod 1_000, 3);
+            Append_Num (B, L (U / 1_000));
+            Append_Frac (B, L (U mod 1_000), 3);
             Append (B, "µs");
          else
-            Append_Num (B, U / 1_000_000);
-            Append_Frac (B, U mod 1_000_000, 6);
+            Append_Num (B, L (U / 1_000_000));
+            Append_Frac (B, L (U mod 1_000_000), 6);
             Append (B, "ms");
          end if;
       else
          declare
-            H : constant Long_Integer := U / 3_600_000_000_000;
+            H : constant Long_Integer := L (U / 3_600_000_000_000);
             M : constant Long_Integer :=
-              (U mod 3_600_000_000_000) / 60_000_000_000;
+              L ((U mod 3_600_000_000_000) / 60_000_000_000);
             S : constant Long_Integer :=
-              (U mod 60_000_000_000) / 1_000_000_000;
-            F : constant Long_Integer := U mod 1_000_000_000;
+              L ((U mod 60_000_000_000) / 1_000_000_000);
+            F : constant Long_Integer := L (U mod 1_000_000_000);
          begin
             if H > 0 then
                Append_Num (B, H);

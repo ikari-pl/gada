@@ -96,6 +96,11 @@ package body Time_Suite is
                 = "1h2m3.004s", "1h2m3.004s");
       Assert (To_String (-1500 * Millisecond) = "-1.5s", "-1.5s");
       Assert (To_String (24 * Hour) = "24h0m0s", "24h0m0s");
+      --  Regression (#16): math.MinInt64 / MaxInt64 must not overflow.
+      Assert (To_String (Gada.Std.Time.Duration'First) = "-2562047h47m16.854775808s",
+              "MinInt64, got " & To_String (Gada.Std.Time.Duration'First));
+      Assert (To_String (Gada.Std.Time.Duration'Last) = "2562047h47m16.854775807s",
+              "MaxInt64, got " & To_String (Gada.Std.Time.Duration'Last));
    end Test_Duration_String;
 
    procedure Test_Duration_Arith (T : in out

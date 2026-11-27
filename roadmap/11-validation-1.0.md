@@ -13,6 +13,18 @@ performance ratio against stock Go.
 
 ## Items
 
+- [ ] **Adapted Go stdlib test corpus** (carried over from Phase 5's
+      original exit criterion, accepted as replaced on 2026-11-27 —
+      PR #45 review #15)
+      *Files:* `testing`-package support in the compiler, adapted corpus
+      under `stdlib/go-tests/` (or similar)
+      *Verify:* `make stdlib-go-test PKG=$p` transpiles and runs a sample
+      of Go's own stdlib tests (adapted) for each ported package.
+      *Done when:* ≥ 80% pass per package with remaining failures
+      documented per package. Until then, Phase 5's exit evidence is the
+      per-package AUnit replacement recorded in
+      [05-stdlib-wave1.md](05-stdlib-wave1.md).
+
 - [ ] **Pick the 3 target programs**
       *Files:* `docs/v1_targets.md`
       *Verify:* document is reviewed; each target is named with rationale.

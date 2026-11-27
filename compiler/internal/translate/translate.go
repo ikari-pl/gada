@@ -37,9 +37,12 @@ import (
 // info may be nil; Phase 1 does not consult it. The parameter is
 // kept in the signature so later phases need not break callers.
 func File(f *ast.File, info *types.Info) (*ir.Package, error) {
-	_ = info // reserved for later phases
 	if f == nil {
 		return nil, fmt.Errorf("translate: nil ast.File")
+	}
+	tr, err := newTranslator(f, info)
+	if err != nil {
+		return nil, err
 	}
 	if f.Name == nil {
 		return nil, fmt.Errorf("translate: file has no package clause")
@@ -71,7 +74,7 @@ func File(f *ast.File, info *types.Info) (*ir.Package, error) {
 				// already handled via f.Imports above
 			case token.TYPE:
 				for _, spec := range d.Specs {
-					td, err := transTypeDecl(spec.(*ast.TypeSpec))
+					td, err := tr.transTypeDecl(spec.(*ast.TypeSpec))
 					if err != nil {
 						return nil, err
 					}
@@ -81,7 +84,7 @@ func File(f *ast.File, info *types.Info) (*ir.Package, error) {
 				return nil, fmt.Errorf("translate: top-level %s decls not supported in Phase 1", d.Tok)
 			}
 		case *ast.FuncDecl:
-			fn, err := transFunc(d)
+			fn, err := tr.transFunc(d)
 			if err != nil {
 				return nil, err
 			}
@@ -98,7 +101,7 @@ func File(f *ast.File, info *types.Info) (*ir.Package, error) {
 // transFunc produces the IR for a top-level function or method
 // declaration. A method (Recv != nil) gets a non-nil Receiver naming its
 // concrete type; a free function leaves Receiver nil.
-func transFunc(fd *ast.FuncDecl) (*ir.Function, error) {
+func (tr *translator) transFunc(fd *ast.FuncDecl) (*ir.Function, error) {
 	if fd.Body == nil {
 		return nil, fmt.Errorf("translate: function %s has no body", fd.Name.Name)
 	}
@@ -106,26 +109,26 @@ func transFunc(fd *ast.FuncDecl) (*ir.Function, error) {
 	fn := &ir.Function{Name: fd.Name.Name}
 
 	if fd.Recv != nil {
-		recv, err := transReceiver(fd.Recv)
+		recv, err := tr.transReceiver(fd.Recv)
 		if err != nil {
 			return nil, err
 		}
 		fn.Receiver = recv
 	}
 
-	params, err := transFieldList(fd.Type.Params)
+	params, err := tr.transFieldList(fd.Type.Params)
 	if err != nil {
 		return nil, err
 	}
 	fn.Params = params
 
-	results, err := transFieldList(fd.Type.Results)
+	results, err := tr.transFieldList(fd.Type.Results)
 	if err != nil {
 		return nil, err
 	}
 	fn.Results = results
 
-	body, err := transStmtList(fd.Body.List)
+	body, err := tr.transStmtList(fd.Body.List)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +141,7 @@ func transFunc(fd *ast.FuncDecl) (*ir.Function, error) {
 // `Point` (*ast.Ident) or a pointer receiver `*Point` (*ast.StarExpr
 // over an Ident); the name part may be absent (`func (Point) M()`).
 // Generic receivers (`Point[T]`) and any other shape reject for now.
-func transReceiver(fl *ast.FieldList) (*ir.Receiver, error) {
+func (tr *translator) transReceiver(fl *ast.FieldList) (*ir.Receiver, error) {
 	field := fl.List[0]
 	recv := &ir.Receiver{}
 	if len(field.Names) > 0 {
@@ -164,13 +167,13 @@ func transReceiver(fl *ast.FieldList) (*ir.Receiver, error) {
 // transFieldList expands a Go FieldList (which groups parameters by
 // shared type) into the IR's flat per-name list. Unnamed fields,
 // e.g. `func f() int`, become a single Param with Name == "".
-func transFieldList(fl *ast.FieldList) ([]*ir.Param, error) {
+func (tr *translator) transFieldList(fl *ast.FieldList) ([]*ir.Param, error) {
 	if fl == nil || len(fl.List) == 0 {
 		return nil, nil
 	}
 	var out []*ir.Param
 	for _, field := range fl.List {
-		t, err := transType(field.Type)
+		t, err := tr.transType(field.Type)
 		if err != nil {
 			return nil, err
 		}
@@ -199,12 +202,12 @@ func transFieldList(fl *ast.FieldList) ([]*ir.Param, error) {
 var unsupportedBuiltinType = map[string]bool{
 	"int8": true, "int16": true, "int32": true, "int64": true,
 	"uint": true, "uint8": true, "uint16": true, "uint32": true,
-	"uint64": true, "uintptr": true, "byte": true, "rune": true,
+	"uint64": true, "uintptr": true, "rune": true,
 	"float32": true, "complex64": true, "complex128": true,
-	"error": true, "any": true, "comparable": true,
+	"any": true, "comparable": true,
 }
 
-func transType(e ast.Expr) (ir.Type, error) {
+func (tr *translator) transType(e ast.Expr) (ir.Type, error) {
 	switch t := e.(type) {
 	case *ast.Ident:
 		switch t.Name {
@@ -216,6 +219,10 @@ func transType(e ast.Expr) (ir.Type, error) {
 			return &ir.BoolType{}, nil
 		case "float64":
 			return &ir.Float64Type{}, nil
+		case "byte", "uint8":
+			return &ir.ByteType{}, nil
+		case "error":
+			return &ir.ErrorType{}, nil
 		default:
 			// A Go *predeclared* type GADA does not support (the wider
 			// numerics, complex, byte/rune, error, any) is rejected here —
@@ -231,21 +238,36 @@ func transType(e ast.Expr) (ir.Type, error) {
 			}
 			return &ir.NamedType{Name: t.Name}, nil
 		}
+	case *ast.SelectorExpr:
+		// Qualified type `pkg.T` (e.g. sync.Mutex, time.Duration):
+		// carry the bare type name; the emitter qualifies it against
+		// the file's stdlib imports (stdlibValueType in emit.go).
+		if _, ok := t.X.(*ast.Ident); ok {
+			return &ir.NamedType{Name: t.Sel.Name}, nil
+		}
+		return nil, fmt.Errorf("translate: unsupported qualified type expr %T", t.X)
 	case *ast.ArrayType:
 		if t.Len != nil {
 			return nil, fmt.Errorf("translate: fixed-size array types not supported in Phase 2")
 		}
-		elem, err := transType(t.Elt)
+		elem, err := tr.transType(t.Elt)
 		if err != nil {
 			return nil, err
 		}
 		return &ir.SliceType{Elem: elem}, nil
-	case *ast.MapType:
-		k, err := transType(t.Key)
+	case *ast.StarExpr:
+		// `*T` (Phase 7: stdlib pointer types like *http.Request).
+		elem, err := tr.transType(t.X)
 		if err != nil {
 			return nil, err
 		}
-		v, err := transType(t.Value)
+		return &ir.PointerType{Elem: elem}, nil
+	case *ast.MapType:
+		k, err := tr.transType(t.Key)
+		if err != nil {
+			return nil, err
+		}
+		v, err := tr.transType(t.Value)
 		if err != nil {
 			return nil, err
 		}
@@ -258,15 +280,15 @@ func transType(e ast.Expr) (ir.Type, error) {
 		if t.Dir != ast.SEND|ast.RECV {
 			return nil, fmt.Errorf("translate: directional channel types (chan<-, <-chan) not supported in Phase 3")
 		}
-		elem, err := transType(t.Value)
+		elem, err := tr.transType(t.Value)
 		if err != nil {
 			return nil, err
 		}
 		return &ir.ChanType{Elem: elem}, nil
 	case *ast.StructType:
-		return transStructType(t)
+		return tr.transStructType(t)
 	case *ast.InterfaceType:
-		return transInterfaceType(t)
+		return tr.transInterfaceType(t)
 	default:
 		return nil, fmt.Errorf("translate: unsupported type expr %T", e)
 	}
@@ -279,7 +301,7 @@ func transType(e ast.Expr) (ir.Type, error) {
 // yields an InterfaceType with no methods. Embedded interfaces (a field
 // with no names — the interface is named by its type) are rejected: they
 // need method-set flattening, which is out of scope here.
-func transInterfaceType(t *ast.InterfaceType) (ir.Type, error) {
+func (tr *translator) transInterfaceType(t *ast.InterfaceType) (ir.Type, error) {
 	it := &ir.InterfaceType{}
 	if t.Methods == nil {
 		return it, nil
@@ -294,11 +316,11 @@ func transInterfaceType(t *ast.InterfaceType) (ir.Type, error) {
 				"translate: interface method %q has unexpected type %T",
 				field.Names[0].Name, field.Type)
 		}
-		params, err := transFieldList(ft.Params)
+		params, err := tr.transFieldList(ft.Params)
 		if err != nil {
 			return nil, err
 		}
-		results, err := transFieldList(ft.Results)
+		results, err := tr.transFieldList(ft.Results)
 		if err != nil {
 			return nil, err
 		}
@@ -315,7 +337,7 @@ func transInterfaceType(t *ast.InterfaceType) (ir.Type, error) {
 // StructField per name (source order preserved). Anonymous / embedded
 // fields (no names) are rejected — they need the promoted-field /
 // embedding machinery, which is out of scope here.
-func transStructType(t *ast.StructType) (ir.Type, error) {
+func (tr *translator) transStructType(t *ast.StructType) (ir.Type, error) {
 	st := &ir.StructType{}
 	// Fields is non-nil for any parser-produced struct type (even
 	// `struct{}` yields an empty-but-non-nil FieldList), but guard it so
@@ -327,7 +349,7 @@ func transStructType(t *ast.StructType) (ir.Type, error) {
 		if len(field.Names) == 0 {
 			return nil, fmt.Errorf("translate: embedded/anonymous struct fields not supported")
 		}
-		ft, err := transType(field.Type)
+		ft, err := tr.transType(field.Type)
 		if err != nil {
 			return nil, err
 		}
@@ -344,8 +366,8 @@ func transStructType(t *ast.StructType) (ir.Type, error) {
 // struct { ... }`, `type Celsius float64`, `type Buf []byte`, etc. all
 // work; an unsupported underlying (interface, func, …) rejects there
 // with a clear "unsupported type" error rather than dropping silently.
-func transTypeDecl(spec *ast.TypeSpec) (*ir.TypeDecl, error) {
-	underlying, err := transType(spec.Type)
+func (tr *translator) transTypeDecl(spec *ast.TypeSpec) (*ir.TypeDecl, error) {
+	underlying, err := tr.transType(spec.Type)
 	if err != nil {
 		return nil, err
 	}
@@ -366,17 +388,18 @@ var builtinNames = map[string]bool{
 	"panic":   true,
 	"recover": true,
 	"close":   true,
+	"string":  true, // conversion string(x), e.g. string([]byte)
 }
 
 // --- statements -----------------------------------------------------------
 
-func transStmtList(stmts []ast.Stmt) ([]ir.Stmt, error) {
+func (tr *translator) transStmtList(stmts []ast.Stmt) ([]ir.Stmt, error) {
 	if len(stmts) == 0 {
 		return nil, nil
 	}
 	out := make([]ir.Stmt, 0, len(stmts))
 	for _, s := range stmts {
-		ts, err := transStmt(s)
+		ts, err := tr.transStmt(s)
 		if err != nil {
 			return nil, err
 		}
@@ -385,40 +408,89 @@ func transStmtList(stmts []ast.Stmt) ([]ir.Stmt, error) {
 	return out, nil
 }
 
-func transStmt(s ast.Stmt) (ir.Stmt, error) {
+func (tr *translator) transStmt(s ast.Stmt) (ir.Stmt, error) {
 	switch s := s.(type) {
 	case *ast.AssignStmt:
-		return transAssign(s)
+		return tr.transAssign(s)
 	case *ast.IfStmt:
-		return transIf(s)
+		return tr.transIf(s)
 	case *ast.ForStmt:
-		return transFor(s)
+		return tr.transFor(s)
 	case *ast.RangeStmt:
-		return transRange(s)
+		return tr.transRange(s)
 	case *ast.DeferStmt:
-		return transDefer(s)
+		return tr.transDefer(s)
 	case *ast.GoStmt:
-		return transGo(s)
+		return tr.transGo(s)
 	case *ast.SelectStmt:
-		return transSelect(s)
+		return tr.transSelect(s)
 	case *ast.TypeSwitchStmt:
-		return transTypeSwitch(s)
+		return tr.transTypeSwitch(s)
 	case *ast.SendStmt:
-		return transSend(s)
+		return tr.transSend(s)
 	case *ast.ReturnStmt:
-		return transReturn(s)
+		return tr.transReturn(s)
 	case *ast.ExprStmt:
-		return transExprStmt(s)
+		return tr.transExprStmt(s)
+	case *ast.DeclStmt:
+		return tr.transDeclStmt(s)
 	default:
 		return nil, fmt.Errorf("translate: unsupported stmt %T", s)
 	}
+}
+
+// transDeclStmt handles a no-initializer `var x T` inside a function
+// body (the only DeclStmt shape Phase 6 needs — e.g. `var mu
+// sync.Mutex`). It becomes a defining Assign whose RHS is a ZeroVal
+// carrying the translated type, so the emitter's head-of-body define
+// machinery declares `X : T;` bare.
+func (tr *translator) transDeclStmt(s *ast.DeclStmt) (ir.Stmt, error) {
+	gd, ok := s.Decl.(*ast.GenDecl)
+	if !ok || gd.Tok != token.VAR {
+		return nil, fmt.Errorf("translate: unsupported DeclStmt (only var)")
+	}
+	if len(gd.Specs) != 1 {
+		return nil, fmt.Errorf("translate: multi-spec var decl not supported")
+	}
+	vs, ok := gd.Specs[0].(*ast.ValueSpec)
+	if !ok {
+		return nil, fmt.Errorf("translate: unsupported var spec %T", gd.Specs[0])
+	}
+	if len(vs.Values) != 0 {
+		// `var a = 1` is legal Go and equivalent to `a := 1`:
+		// lower it to a normal defining assign.
+		if len(vs.Names) != 1 || len(vs.Values) != 1 {
+			return nil, fmt.Errorf("translate: multi-name/multi-value var decl not supported")
+		}
+		rhs, err := tr.transExpr(vs.Values[0])
+		if err != nil {
+			return nil, err
+		}
+		return &ir.Assign{
+			LHS:    []ir.Expr{&ir.Ident{Name: vs.Names[0].Name}},
+			Define: true,
+			RHS:    []ir.Expr{rhs},
+		}, nil
+	}
+	if len(vs.Names) != 1 {
+		return nil, fmt.Errorf("translate: multi-name var decl not supported")
+	}
+	t, err := tr.transType(vs.Type)
+	if err != nil {
+		return nil, err
+	}
+	return &ir.Assign{
+		LHS:    []ir.Expr{&ir.Ident{Name: vs.Names[0].Name}},
+		Define: true,
+		RHS:    []ir.Expr{&ir.ZeroVal{Type: t}},
+	}, nil
 }
 
 // transRange handles `for k, v := range x { ... }` plus the elided
 // shapes `for k := range x`, `for k, _ := range x`, and `for range x`.
 // The blank identifier (`_`) and the absent-name case both decode to
 // an empty Name on the IR side.
-func transRange(s *ast.RangeStmt) (*ir.RangeStmt, error) {
+func (tr *translator) transRange(s *ast.RangeStmt) (*ir.RangeStmt, error) {
 	if s.Tok != token.ASSIGN && s.Tok != token.DEFINE && s.Tok != token.ILLEGAL {
 		return nil, fmt.Errorf("translate: unsupported range token %s", s.Tok)
 	}
@@ -430,11 +502,11 @@ func transRange(s *ast.RangeStmt) (*ir.RangeStmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	x, err := transExpr(s.X)
+	x, err := tr.transExpr(s.X)
 	if err != nil {
 		return nil, err
 	}
-	body, err := transStmtList(s.Body.List)
+	body, err := tr.transStmtList(s.Body.List)
 	if err != nil {
 		return nil, err
 	}
@@ -455,13 +527,13 @@ func transRange(s *ast.RangeStmt) (*ir.RangeStmt, error) {
 // values, function literals) re-route through transExpr's standard
 // dispatch and surface the usual unsupported errors at the right
 // failure axis.
-func transDefer(s *ast.DeferStmt) (*ir.DeferStmt, error) {
-	if b, ok, err := tryBuiltinCall(s.Call); err != nil {
+func (tr *translator) transDefer(s *ast.DeferStmt) (*ir.DeferStmt, error) {
+	if b, ok, err := tr.tryBuiltinCall(s.Call); err != nil {
 		return nil, err
 	} else if ok {
 		return &ir.DeferStmt{Call: b}, nil
 	}
-	c, err := transCall(s.Call)
+	c, err := tr.transCall(s.Call)
 	if err != nil {
 		return nil, err
 	}
@@ -477,13 +549,13 @@ func transDefer(s *ast.DeferStmt) (*ir.DeferStmt, error) {
 // Stmt keeps the IR symmetrical with DeferStmt and lets the emit
 // layer surface the rejection on the right axis (the Phase 3
 // emit's GoStmt handler refuses BuiltinCall payloads).
-func transGo(s *ast.GoStmt) (*ir.GoStmt, error) {
-	if b, ok, err := tryBuiltinCall(s.Call); err != nil {
+func (tr *translator) transGo(s *ast.GoStmt) (*ir.GoStmt, error) {
+	if b, ok, err := tr.tryBuiltinCall(s.Call); err != nil {
 		return nil, err
 	} else if ok {
 		return &ir.GoStmt{Call: b}, nil
 	}
-	c, err := transCall(s.Call)
+	c, err := tr.transCall(s.Call)
 	if err != nil {
 		return nil, err
 	}
@@ -501,12 +573,12 @@ func transGo(s *ast.GoStmt) (*ir.GoStmt, error) {
 // translate time; the next phase's *types.Info plumbing will gate
 // that, and rejecting earlier here would make the error path surface
 // as "unsupported stmt" instead of the more useful emit-side message.
-func transSend(s *ast.SendStmt) (*ir.ChanSend, error) {
-	ch, err := transExpr(s.Chan)
+func (tr *translator) transSend(s *ast.SendStmt) (*ir.ChanSend, error) {
+	ch, err := tr.transExpr(s.Chan)
 	if err != nil {
 		return nil, err
 	}
-	v, err := transExpr(s.Value)
+	v, err := tr.transExpr(s.Value)
 	if err != nil {
 		return nil, err
 	}
@@ -534,7 +606,7 @@ func transSend(s *ast.SendStmt) (*ir.ChanSend, error) {
 // that constraint lives at the emit boundary (where the per-T
 // `Selectors_Of_<T>` instantiation is selected), so a future
 // type-erased select can lift it without changing translate.
-func transSelect(s *ast.SelectStmt) (*ir.SelectStmt, error) {
+func (tr *translator) transSelect(s *ast.SelectStmt) (*ir.SelectStmt, error) {
 	// Go's parser populates SelectStmt.Body.List exclusively with
 	// *ast.CommClause entries — a non-CommClause would be a parser
 	// invariant violation, not a translatable input. We type-assert
@@ -542,11 +614,11 @@ func transSelect(s *ast.SelectStmt) (*ir.SelectStmt, error) {
 	cases := make([]*ir.SelectCase, 0, len(s.Body.List))
 	for _, raw := range s.Body.List {
 		clause := raw.(*ast.CommClause)
-		body, err := transStmtList(clause.Body)
+		body, err := tr.transStmtList(clause.Body)
 		if err != nil {
 			return nil, err
 		}
-		c, err := transSelectCommClauseHead(clause.Comm, body)
+		c, err := tr.transSelectCommClauseHead(clause.Comm, body)
 		if err != nil {
 			return nil, err
 		}
@@ -559,17 +631,17 @@ func transSelect(s *ast.SelectStmt) (*ir.SelectStmt, error) {
 // (the `case <stuff>:` line). Split out so transSelect's loop stays
 // readable and the per-shape error messages stay close to the
 // pattern that produced them.
-func transSelectCommClauseHead(comm ast.Stmt, body []ir.Stmt) (*ir.SelectCase, error) {
+func (tr *translator) transSelectCommClauseHead(comm ast.Stmt, body []ir.Stmt) (*ir.SelectCase, error) {
 	if comm == nil {
 		return &ir.SelectCase{Kind: ir.SelectCaseDefault, Body: body}, nil
 	}
 	switch c := comm.(type) {
 	case *ast.SendStmt:
-		ch, err := transExpr(c.Chan)
+		ch, err := tr.transExpr(c.Chan)
 		if err != nil {
 			return nil, err
 		}
-		v, err := transExpr(c.Value)
+		v, err := tr.transExpr(c.Value)
 		if err != nil {
 			return nil, err
 		}
@@ -594,7 +666,7 @@ func transSelectCommClauseHead(comm ast.Stmt, body []ir.Stmt) (*ir.SelectCase, e
 		if !ok || recv.Op != token.ARROW {
 			return nil, fmt.Errorf("translate: select recv case rhs must be `<-c`, got %T", c.Rhs[0])
 		}
-		ch, err := transExpr(recv.X)
+		ch, err := tr.transExpr(recv.X)
 		if err != nil {
 			return nil, err
 		}
@@ -621,7 +693,7 @@ func transSelectCommClauseHead(comm ast.Stmt, body []ir.Stmt) (*ir.SelectCase, e
 		if !ok || recv.Op != token.ARROW {
 			return nil, fmt.Errorf("translate: select drain case must be `case <-c:`, got %T", c.X)
 		}
-		ch, err := transExpr(recv.X)
+		ch, err := tr.transExpr(recv.X)
 		if err != nil {
 			return nil, err
 		}
@@ -654,15 +726,15 @@ func identNameOrBlank(e ast.Expr) (string, error) {
 	return id.Name, nil
 }
 
-func transAssign(s *ast.AssignStmt) (*ir.Assign, error) {
+func (tr *translator) transAssign(s *ast.AssignStmt) (*ir.Assign, error) {
 	if s.Tok != token.ASSIGN && s.Tok != token.DEFINE {
 		return nil, fmt.Errorf("translate: unsupported assign token %s", s.Tok)
 	}
-	lhs, err := transExprList(s.Lhs)
+	lhs, err := tr.transExprList(s.Lhs)
 	if err != nil {
 		return nil, err
 	}
-	rhs, err := transExprList(s.Rhs)
+	rhs, err := tr.transExprList(s.Rhs)
 	if err != nil {
 		return nil, err
 	}
@@ -683,15 +755,15 @@ func transAssign(s *ast.AssignStmt) (*ir.Assign, error) {
 	return &ir.Assign{LHS: lhs, Define: s.Tok == token.DEFINE, RHS: rhs}, nil
 }
 
-func transIf(s *ast.IfStmt) (*ir.If, error) {
+func (tr *translator) transIf(s *ast.IfStmt) (*ir.If, error) {
 	if s.Init != nil {
 		return nil, fmt.Errorf("translate: if-with-init not supported in Phase 1")
 	}
-	cond, err := transExpr(s.Cond)
+	cond, err := tr.transExpr(s.Cond)
 	if err != nil {
 		return nil, err
 	}
-	then, err := transStmtList(s.Body.List)
+	then, err := tr.transStmtList(s.Body.List)
 	if err != nil {
 		return nil, err
 	}
@@ -701,12 +773,12 @@ func transIf(s *ast.IfStmt) (*ir.If, error) {
 	case nil:
 		els = nil
 	case *ast.BlockStmt:
-		els, err = transStmtList(e.List)
+		els, err = tr.transStmtList(e.List)
 		if err != nil {
 			return nil, err
 		}
 	case *ast.IfStmt:
-		nested, nerr := transIf(e)
+		nested, nerr := tr.transIf(e)
 		if nerr != nil {
 			return nil, nerr
 		}
@@ -717,38 +789,38 @@ func transIf(s *ast.IfStmt) (*ir.If, error) {
 	return &ir.If{Cond: cond, Then: then, Else: els}, nil
 }
 
-func transFor(s *ast.ForStmt) (*ir.For, error) {
+func (tr *translator) transFor(s *ast.ForStmt) (*ir.For, error) {
 	var init ir.Stmt
 	var cond ir.Expr
 	var post ir.Stmt
 	var err error
 	if s.Init != nil {
-		init, err = transStmt(s.Init)
+		init, err = tr.transStmt(s.Init)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if s.Cond != nil {
-		cond, err = transExpr(s.Cond)
+		cond, err = tr.transExpr(s.Cond)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if s.Post != nil {
-		post, err = transStmt(s.Post)
+		post, err = tr.transStmt(s.Post)
 		if err != nil {
 			return nil, err
 		}
 	}
-	body, err := transStmtList(s.Body.List)
+	body, err := tr.transStmtList(s.Body.List)
 	if err != nil {
 		return nil, err
 	}
 	return &ir.For{Init: init, Cond: cond, Post: post, Body: body}, nil
 }
 
-func transReturn(s *ast.ReturnStmt) (*ir.Return, error) {
-	results, err := transExprList(s.Results)
+func (tr *translator) transReturn(s *ast.ReturnStmt) (*ir.Return, error) {
+	results, err := tr.transExprList(s.Results)
 	if err != nil {
 		return nil, err
 	}
@@ -761,16 +833,16 @@ func transReturn(s *ast.ReturnStmt) (*ir.Return, error) {
 // *ir.BuiltinCall (when the call's Fun is a recognised Go predeclared
 // identifier — `panic("boom")` is the Phase 2 driver), or the more
 // general ir.ExprStmt wrapper.
-func transExprStmt(s *ast.ExprStmt) (ir.Stmt, error) {
+func (tr *translator) transExprStmt(s *ast.ExprStmt) (ir.Stmt, error) {
 	if call, ok := s.X.(*ast.CallExpr); ok {
-		if b, ok, err := tryBuiltinCall(call); err != nil {
+		if b, ok, err := tr.tryBuiltinCall(call); err != nil {
 			return nil, err
 		} else if ok {
 			return b, nil
 		}
-		return transCall(call)
+		return tr.transCall(call)
 	}
-	x, err := transExpr(s.X)
+	x, err := tr.transExpr(s.X)
 	if err != nil {
 		return nil, err
 	}
@@ -797,7 +869,7 @@ func transExprStmt(s *ast.ExprStmt) (ir.Stmt, error) {
 // because its first argument is a *type* expression — a shape
 // `tryBuiltinCall` cannot handle without losing the type/value
 // distinction needed by the emit-side `Channels_Of_<T>` instantiation.
-func tryMakeChan(c *ast.CallExpr) (*ir.MakeChan, bool, error) {
+func (tr *translator) tryMakeChan(c *ast.CallExpr) (*ir.MakeChan, bool, error) {
 	id, ok := c.Fun.(*ast.Ident)
 	if !ok || id.Name != "make" {
 		return nil, false, nil
@@ -812,7 +884,7 @@ func tryMakeChan(c *ast.CallExpr) (*ir.MakeChan, bool, error) {
 		// today.
 		return nil, false, nil
 	}
-	elem, err := transType(chanT)
+	elem, err := tr.transType(chanT)
 	if err != nil {
 		return nil, false, err
 	}
@@ -822,7 +894,7 @@ func tryMakeChan(c *ast.CallExpr) (*ir.MakeChan, bool, error) {
 		// `make (chan T)` — unbuffered. Capacity stays nil; emit
 		// lowers to Bounded.Make (1) per the runtime spec.
 	case 2:
-		capacity, err := transExpr(c.Args[1])
+		capacity, err := tr.transExpr(c.Args[1])
 		if err != nil {
 			return nil, false, err
 		}
@@ -833,12 +905,41 @@ func tryMakeChan(c *ast.CallExpr) (*ir.MakeChan, bool, error) {
 	return mc, true, nil
 }
 
-func tryBuiltinCall(c *ast.CallExpr) (*ir.BuiltinCall, bool, error) {
+// tryMakeSlice returns (ms, true, nil) iff c is `make ([]T, N)` or
+// `make ([]T)`. Maps/arrays/other make shapes fall through (false).
+func (tr *translator) tryMakeSlice(c *ast.CallExpr) (*ir.MakeSlice, bool, error) {
+	id, ok := c.Fun.(*ast.Ident)
+	if !ok || id.Name != "make" {
+		return nil, false, nil
+	}
+	if len(c.Args) < 1 || len(c.Args) > 2 {
+		return nil, false, nil
+	}
+	arr, isArr := c.Args[0].(*ast.ArrayType)
+	if !isArr || arr.Len != nil {
+		return nil, false, nil
+	}
+	elem, err := tr.transType(arr.Elt)
+	if err != nil {
+		return nil, false, err
+	}
+	ms := &ir.MakeSlice{Elem: elem}
+	if len(c.Args) == 2 {
+		ln, err := tr.transExpr(c.Args[1])
+		if err != nil {
+			return nil, false, err
+		}
+		ms.Len = ln
+	}
+	return ms, true, nil
+}
+
+func (tr *translator) tryBuiltinCall(c *ast.CallExpr) (*ir.BuiltinCall, bool, error) {
 	id, ok := c.Fun.(*ast.Ident)
 	if !ok || !builtinNames[id.Name] {
 		return nil, false, nil
 	}
-	args, err := transExprList(c.Args)
+	args, err := tr.transExprList(c.Args)
 	if err != nil {
 		return nil, false, err
 	}
@@ -850,15 +951,15 @@ func tryBuiltinCall(c *ast.CallExpr) (*ir.BuiltinCall, bool, error) {
 // (a type switch, item 6c) and is rejected here. transAssign flips
 // CommaOK on the 2-LHS `v, ok := x.(T)` shape (item 6b); a plain
 // assertion stays CommaOK false.
-func transTypeAssert(e *ast.TypeAssertExpr) (*ir.TypeAssert, error) {
+func (tr *translator) transTypeAssert(e *ast.TypeAssertExpr) (*ir.TypeAssert, error) {
 	if e.Type == nil {
 		return nil, fmt.Errorf("translate: `x.(type)` outside a type switch is invalid Go; the type-switch form is a separate construct")
 	}
-	x, err := transExpr(e.X)
+	x, err := tr.transExpr(e.X)
 	if err != nil {
 		return nil, err
 	}
-	t, err := transType(e.Type)
+	t, err := tr.transType(e.Type)
 	if err != nil {
 		return nil, err
 	}
@@ -877,7 +978,7 @@ func transTypeAssert(e *ast.TypeAssertExpr) (*ir.TypeAssert, error) {
 // *types.Info to type the intermediate. Each case clause must list at
 // most one type — `case A, B:` binds the variable at the operand's
 // interface type and rides a later item; an empty list is `default`.
-func transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
+func (tr *translator) transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
 	if s.Init != nil {
 		return nil, fmt.Errorf("translate: type switch with an init statement (`switch v := f(); v.(type)`) not supported yet (item 6c)")
 	}
@@ -918,7 +1019,7 @@ func transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
 	if _, ok := guard.X.(*ast.Ident); !ok {
 		return nil, fmt.Errorf("translate: type switch operand must be a plain identifier (got %T); item 6c", guard.X)
 	}
-	x, err := transExpr(guard.X)
+	x, err := tr.transExpr(guard.X)
 	if err != nil {
 		return nil, err
 	}
@@ -943,7 +1044,7 @@ func transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
 			if id, ok := cc.List[0].(*ast.Ident); ok && id.Name == "nil" {
 				return nil, fmt.Errorf("translate: `case nil:` in a type switch is not supported yet (item 6c)")
 			}
-			t, err := transType(cc.List[0])
+			t, err := tr.transType(cc.List[0])
 			if err != nil {
 				return nil, err
 			}
@@ -951,7 +1052,7 @@ func transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
 		default:
 			return nil, fmt.Errorf("translate: multi-type case `case A, B:` not supported yet (item 6c covers single-type cases and default)")
 		}
-		body, err := transStmtList(cc.Body)
+		body, err := tr.transStmtList(cc.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -961,27 +1062,34 @@ func transTypeSwitch(s *ast.TypeSwitchStmt) (*ir.TypeSwitch, error) {
 	return ts, nil
 }
 
-func transCall(c *ast.CallExpr) (*ir.Call, error) {
-	fun, err := transExpr(c.Fun)
+func (tr *translator) transCall(c *ast.CallExpr) (*ir.Call, error) {
+	fun, err := tr.transExpr(c.Fun)
 	if err != nil {
 		return nil, err
 	}
-	args, err := transExprList(c.Args)
+	args, err := tr.transExprList(c.Args)
 	if err != nil {
 		return nil, err
 	}
-	return &ir.Call{Fun: fun, Args: args}, nil
+	call := &ir.Call{Fun: fun, Args: args}
+	// Method calls (e.g. `conn.Read(buf)`) need result types too, so the
+	// emitter can lower `n, err := conn.Read(buf)` as a 2-LHS out-call.
+	// Stdlib package calls get the same treatment via stdlibCall.
+	if tr.info != nil {
+		call.ResultTypes = tr.goTypesToIR(tr.info.TypeOf(c))
+	}
+	return call, nil
 }
 
 // --- expressions ----------------------------------------------------------
 
-func transExprList(es []ast.Expr) ([]ir.Expr, error) {
+func (tr *translator) transExprList(es []ast.Expr) ([]ir.Expr, error) {
 	if len(es) == 0 {
 		return nil, nil
 	}
 	out := make([]ir.Expr, 0, len(es))
 	for _, e := range es {
-		te, err := transExpr(e)
+		te, err := tr.transExpr(e)
 		if err != nil {
 			return nil, err
 		}
@@ -990,42 +1098,69 @@ func transExprList(es []ast.Expr) ([]ir.Expr, error) {
 	return out, nil
 }
 
-func transExpr(e ast.Expr) (ir.Expr, error) {
+func (tr *translator) transExpr(e ast.Expr) (ir.Expr, error) {
 	switch e := e.(type) {
 	case *ast.Ident:
-		return transIdent(e), nil
+		return tr.transIdent(e), nil
 	case *ast.BasicLit:
-		return transBasicLit(e)
+		return tr.transBasicLit(e)
 	case *ast.BinaryExpr:
-		return transBinary(e)
+		return tr.transBinary(e)
 	case *ast.UnaryExpr:
-		return transUnary(e)
+		return tr.transUnary(e)
 	case *ast.SelectorExpr:
-		return transSelector(e)
+		return tr.transSelector(e)
 	case *ast.ParenExpr:
 		// Phase 1 IR has no paren node — operator precedence is
 		// captured by tree shape, and the emitter can re-paren on
 		// output if it needs to. So we transparently unwrap.
-		return transExpr(e.X)
+		return tr.transExpr(e.X)
 	case *ast.CompositeLit:
-		return transCompositeLit(e)
+		return tr.transCompositeLit(e)
 	case *ast.IndexExpr:
-		return transIndex(e)
+		return tr.transIndex(e)
 	case *ast.SliceExpr:
-		return transSlice(e)
+		return tr.transSlice(e)
 	case *ast.TypeAssertExpr:
-		return transTypeAssert(e)
+		return tr.transTypeAssert(e)
 	case *ast.CallExpr:
+		// Phase 7: `[]byte(s)` conversion — the Fun is the type
+		// expression *ast.ArrayType (byte elem, no length).
+		if at, isConv := e.Fun.(*ast.ArrayType); isConv && at.Len == nil {
+			if id, isByte := at.Elt.(*ast.Ident); isByte && id.Name == "byte" {
+				args, aerr := tr.transExprList(e.Args)
+				if aerr != nil {
+					return nil, aerr
+				}
+				return &ir.BuiltinCall{Name: "bytes", Args: args}, nil
+			}
+		}
 		// Phase 3 channel-emit sub-item (b): `make (chan T, N)` and
 		// `make (chan T)` are intercepted *before* tryBuiltinCall
 		// because their first argument is a type expression, not an
 		// ordinary Expr. The dedicated `*ir.MakeChan` node carries
 		// the element Type and the optional Capacity Expr through to
 		// emit's `Channels_Of_<T>.Make (N)` lowering.
-		if mc, ok, err := tryMakeChan(e); err != nil {
+		if mc, ok, err := tr.tryMakeChan(e); err != nil {
 			return nil, err
 		} else if ok {
 			return mc, nil
+		}
+		// Phase 7: `make ([]T, N)` / `make ([]T)` ride a dedicated
+		// *ir.MakeSlice node (element Type + optional Len Expr).
+		if ms, ok, err := tr.tryMakeSlice(e); err != nil {
+			return nil, err
+		} else if ok {
+			return ms, nil
+		}
+		// Phase 5 wave 1: a call whose Fun is a stdlib package
+		// selector (`strings.Fields(s)`, `os.ReadFile(p)`) is a
+		// package call, not a conversion, so it is unambiguous
+		// without type info; result types come from *types.Info.
+		if sc, ok, err := tr.stdlibCall(e); err != nil {
+			return nil, err
+		} else if ok {
+			return sc, nil
 		}
 		// Only builtin calls are valid in expression position in
 		// Phase 2; general call-as-expression (e.g. `f()` on the RHS
@@ -1033,12 +1168,20 @@ func transExpr(e ast.Expr) (ir.Expr, error) {
 		// distinguish a function call from a type conversion. The
 		// builtins return values that the corpus already needs:
 		// `xs = append(xs, 4)`, `n := len(xs)`, `if r := recover(); …`.
-		b, ok, err := tryBuiltinCall(e)
+		b, ok, err := tr.tryBuiltinCall(e)
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
-			return nil, fmt.Errorf("translate: general call-as-expression not supported in Phase 2 (only builtin calls are)")
+			// With *types.Info present a general call's type is
+			// known, so method calls (`conn.Read(buf)`) ride
+			// transCall — Phase 7 needs their ResultTypes for the
+			// 2-LHS out-call lowering. Without info the Phase 2
+			// restriction stands.
+			if tr.info != nil {
+				return tr.transCall(e)
+			}
+			return nil, fmt.Errorf("translate: general call-as-expression not supported in Phase 2 (only builtin calls and stdlib package calls are)")
 		}
 		return b, nil
 	default:
@@ -1054,7 +1197,7 @@ func transExpr(e ast.Expr) (ir.Expr, error) {
 // threaded through the translator we cannot yet tell `Point{…}` (struct)
 // from `Ints{…}` (a named slice type), and named slice/map types are
 // not a supported feature. Fixed-size array literals are post-1.0.
-func transCompositeLit(c *ast.CompositeLit) (ir.Expr, error) {
+func (tr *translator) transCompositeLit(c *ast.CompositeLit) (ir.Expr, error) {
 	if c.Type == nil {
 		return nil, fmt.Errorf("translate: composite literal with elided type not supported in Phase 2")
 	}
@@ -1063,31 +1206,31 @@ func transCompositeLit(c *ast.CompositeLit) (ir.Expr, error) {
 		if ct.Len != nil {
 			return nil, fmt.Errorf("translate: fixed-size array composite literals not supported in Phase 2")
 		}
-		elem, err := transType(ct.Elt)
+		elem, err := tr.transType(ct.Elt)
 		if err != nil {
 			return nil, err
 		}
-		elems, err := transExprList(c.Elts)
+		elems, err := tr.transExprList(c.Elts)
 		if err != nil {
 			return nil, err
 		}
 		return &ir.SliceLit{Elem: elem, Elems: elems}, nil
 	case *ast.MapType:
-		k, err := transType(ct.Key)
+		k, err := tr.transType(ct.Key)
 		if err != nil {
 			return nil, err
 		}
-		v, err := transType(ct.Value)
+		v, err := tr.transType(ct.Value)
 		if err != nil {
 			return nil, err
 		}
-		entries, err := transMapEntries(c.Elts)
+		entries, err := tr.transMapEntries(c.Elts)
 		if err != nil {
 			return nil, err
 		}
 		return &ir.MapLit{Key: k, Value: v, Entries: entries}, nil
 	case *ast.Ident:
-		fields, err := transStructFields(c.Elts)
+		fields, err := tr.transStructFields(c.Elts)
 		if err != nil {
 			return nil, err
 		}
@@ -1105,7 +1248,7 @@ func transCompositeLit(c *ast.CompositeLit) (ir.Expr, error) {
 // A keyed field's key must be a plain field-name *ast.Ident — the
 // parser guarantees that for struct literals, but re-checking here keeps
 // a hand-built AST from smuggling a computed key past the IR boundary.
-func transStructFields(elts []ast.Expr) ([]*ir.StructLitField, error) {
+func (tr *translator) transStructFields(elts []ast.Expr) ([]*ir.StructLitField, error) {
 	if len(elts) == 0 {
 		return nil, nil
 	}
@@ -1124,14 +1267,14 @@ func transStructFields(elts []ast.Expr) ([]*ir.StructLitField, error) {
 			if !ok {
 				return nil, fmt.Errorf("translate: struct literal field key must be an identifier (got %T)", kv.Key)
 			}
-			val, err := transExpr(kv.Value)
+			val, err := tr.transExpr(kv.Value)
 			if err != nil {
 				return nil, err
 			}
 			fields = append(fields, &ir.StructLitField{Name: key.Name, Value: val})
 			continue
 		}
-		val, err := transExpr(elt)
+		val, err := tr.transExpr(elt)
 		if err != nil {
 			return nil, err
 		}
@@ -1145,7 +1288,7 @@ func transStructFields(elts []ast.Expr) ([]*ir.StructLitField, error) {
 // Go's grammar guarantees that for `map[K]V{...}` literals, but we
 // re-check at the IR boundary so a malformed AST surfaces here
 // instead of crashing the emitter.
-func transMapEntries(es []ast.Expr) ([]*ir.MapEntry, error) {
+func (tr *translator) transMapEntries(es []ast.Expr) ([]*ir.MapEntry, error) {
 	if len(es) == 0 {
 		return nil, nil
 	}
@@ -1155,11 +1298,11 @@ func transMapEntries(es []ast.Expr) ([]*ir.MapEntry, error) {
 		if !ok {
 			return nil, fmt.Errorf("translate: map composite literal entry must be K: V (got %T)", e)
 		}
-		k, err := transExpr(kv.Key)
+		k, err := tr.transExpr(kv.Key)
 		if err != nil {
 			return nil, err
 		}
-		v, err := transExpr(kv.Value)
+		v, err := tr.transExpr(kv.Value)
 		if err != nil {
 			return nil, err
 		}
@@ -1168,12 +1311,12 @@ func transMapEntries(es []ast.Expr) ([]*ir.MapEntry, error) {
 	return out, nil
 }
 
-func transIndex(e *ast.IndexExpr) (*ir.IndexExpr, error) {
-	x, err := transExpr(e.X)
+func (tr *translator) transIndex(e *ast.IndexExpr) (*ir.IndexExpr, error) {
+	x, err := tr.transExpr(e.X)
 	if err != nil {
 		return nil, err
 	}
-	idx, err := transExpr(e.Index)
+	idx, err := tr.transExpr(e.Index)
 	if err != nil {
 		return nil, err
 	}
@@ -1183,23 +1326,23 @@ func transIndex(e *ast.IndexExpr) (*ir.IndexExpr, error) {
 // transSlice handles `s[Low:High]`, including the elided forms
 // `s[:H]`, `s[L:]`, and `s[:]`. The three-index form `s[L:H:M]` is
 // rejected for Phase 2 — capacity-bounded sub-slices are post-1.0.
-func transSlice(e *ast.SliceExpr) (*ir.SliceExpr, error) {
+func (tr *translator) transSlice(e *ast.SliceExpr) (*ir.SliceExpr, error) {
 	if e.Slice3 || e.Max != nil {
 		return nil, fmt.Errorf("translate: three-index slice expression (s[l:h:m]) not supported in Phase 2")
 	}
-	x, err := transExpr(e.X)
+	x, err := tr.transExpr(e.X)
 	if err != nil {
 		return nil, err
 	}
 	var lo, hi ir.Expr
 	if e.Low != nil {
-		lo, err = transExpr(e.Low)
+		lo, err = tr.transExpr(e.Low)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if e.High != nil {
-		hi, err = transExpr(e.High)
+		hi, err = tr.transExpr(e.High)
 		if err != nil {
 			return nil, err
 		}
@@ -1211,16 +1354,18 @@ func transSlice(e *ast.SliceExpr) (*ir.SliceExpr, error) {
 // into ir.Lit with Kind=LitBool. Go represents them as plain Idents
 // because they are predeclared identifiers, but the IR — and the
 // emitter — treats them as literal values.
-func transIdent(i *ast.Ident) ir.Expr {
+func (tr *translator) transIdent(i *ast.Ident) ir.Expr {
 	switch i.Name {
 	case "true", "false":
 		return &ir.Lit{Kind: ir.LitBool, Value: i.Name}
+	case "nil":
+		return &ir.Lit{Kind: ir.LitNil, Value: "nil"}
 	default:
 		return &ir.Ident{Name: i.Name}
 	}
 }
 
-func transBasicLit(b *ast.BasicLit) (ir.Expr, error) {
+func (tr *translator) transBasicLit(b *ast.BasicLit) (ir.Expr, error) {
 	var k ir.LitKind
 	switch b.Kind {
 	case token.INT:
@@ -1235,12 +1380,12 @@ func transBasicLit(b *ast.BasicLit) (ir.Expr, error) {
 	return &ir.Lit{Kind: k, Value: b.Value}, nil
 }
 
-func transBinary(b *ast.BinaryExpr) (*ir.BinOp, error) {
-	x, err := transExpr(b.X)
+func (tr *translator) transBinary(b *ast.BinaryExpr) (*ir.BinOp, error) {
+	x, err := tr.transExpr(b.X)
 	if err != nil {
 		return nil, err
 	}
-	y, err := transExpr(b.Y)
+	y, err := tr.transExpr(b.Y)
 	if err != nil {
 		return nil, err
 	}
@@ -1256,8 +1401,8 @@ func transBinary(b *ast.BinaryExpr) (*ir.BinOp, error) {
 // and centralising the test keeps a future "directional <-chan T
 // type" extension on a single seam (it would arrive in transType,
 // not here).
-func transUnary(u *ast.UnaryExpr) (ir.Expr, error) {
-	x, err := transExpr(u.X)
+func (tr *translator) transUnary(u *ast.UnaryExpr) (ir.Expr, error) {
+	x, err := tr.transExpr(u.X)
 	if err != nil {
 		return nil, err
 	}
@@ -1272,8 +1417,8 @@ func transUnary(u *ast.UnaryExpr) (ir.Expr, error) {
 	return &ir.UnaryOp{Op: u.Op.String(), X: x}, nil
 }
 
-func transSelector(sel *ast.SelectorExpr) (*ir.Selector, error) {
-	x, err := transExpr(sel.X)
+func (tr *translator) transSelector(sel *ast.SelectorExpr) (*ir.Selector, error) {
+	x, err := tr.transExpr(sel.X)
 	if err != nil {
 		return nil, err
 	}

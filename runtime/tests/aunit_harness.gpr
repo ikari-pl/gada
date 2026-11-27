@@ -27,7 +27,7 @@ project Aunit_Harness is
    type Build_Mode_Type is ("normal", "coverage");
    Build_Mode : Build_Mode_Type := external ("Build_Mode", "normal");
 
-   for Source_Dirs use (".");
+   for Source_Dirs use (".", "stdlib");
    for Object_Dir  use "obj";
    for Exec_Dir    use "obj";
 

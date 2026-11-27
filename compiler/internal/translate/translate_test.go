@@ -105,6 +105,9 @@ func TestCorpus(t *testing.T) {
 		"type_assert_commaok.go",
 		// Phase 4 — type switch (item 6c).
 		"type_switch.go",
+		// Phase 5 — stdlib import mapping (strings.ToUpper).
+		"stdlib_import.go",
+		"stdlib_calls.go",
 	}
 	if got, want := len(matches), len(wantNames); got != want {
 		t.Fatalf("corpus size mismatch: have %d files, want %d", got, want)
@@ -669,9 +672,27 @@ func TestUnsupportedBuiltinTypes(t *testing.T) {
 	t.Parallel()
 	denied := []string{
 		"int8", "int16", "int32", "int64",
-		"uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
-		"byte", "rune", "float32", "complex64", "complex128",
-		"error", "any", "comparable",
+		"uint", "uint16", "uint32", "uint64", "uintptr",
+		"rune", "float32", "complex64", "complex128",
+		"any", "comparable",
+	}
+	// Phase 5 wave 1 promotes byte/uint8 (→ ByteType) and error
+	// (→ ErrorType) from the denylist to supported types.
+	supported := map[string]string{
+		"byte": "ByteType", "uint8": "ByteType", "error": "ErrorType",
+	}
+	for name, want := range supported {
+		name, want := name, want
+		t.Run("supported/"+name, func(t *testing.T) {
+			t.Parallel()
+			got, err := transType(&ast.Ident{Name: name})
+			if err != nil {
+				t.Fatalf("unexpected error for %q: %v", name, err)
+			}
+			if got.NodeKind() != want {
+				t.Fatalf("type %q = %s, want %s", name, got.NodeKind(), want)
+			}
+		})
 	}
 	for _, name := range denied {
 		name := name
@@ -853,5 +874,44 @@ func TestTransTypeSwitch(t *testing.T) {
 		if _, err := transTypeSwitch(b); err == nil {
 			t.Fatalf("reject case %d: expected error, got none", i)
 		}
+	}
+}
+
+// TestDeclStmtVarZeroVal pins Phase 6's `var x T` inside a function
+// body: it translates to a defining Assign whose RHS is a ZeroVal
+// carrying the translated type (qualified types like sync.Mutex
+// become NamedType{"Mutex"}).
+func TestDeclStmtVarZeroVal(t *testing.T) {
+	t.Parallel()
+	src := `package p
+
+import "sync"
+
+func f() {
+	var mu sync.Mutex
+	mu.Lock()
+}
+`
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "src.go", src, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	pkg, err := File(af, nil)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	fn := pkg.Files[0].Decls[0].(*ir.Function)
+	a, ok := fn.Body[0].(*ir.Assign)
+	if !ok || !a.Define {
+		t.Fatalf("body[0] = %T, want defining Assign", fn.Body[0])
+	}
+	zv, ok := a.RHS[0].(*ir.ZeroVal)
+	if !ok {
+		t.Fatalf("RHS = %T, want *ir.ZeroVal", a.RHS[0])
+	}
+	nt, ok := zv.Type.(*ir.NamedType)
+	if !ok || nt.Name != "Mutex" {
+		t.Fatalf("ZeroVal.Type = %#v, want NamedType{Mutex}", zv.Type)
 	}
 }

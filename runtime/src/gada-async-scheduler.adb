@@ -288,6 +288,10 @@ package body Gada.Async.Scheduler is
       function Is_Initialised return Boolean;
       procedure Set_Initialised (V : Boolean);
 
+      --  Read-only counters for Live_Goroutines / Live_Workers.
+      function Live_Goroutines return Natural;
+      function Live_Workers return Natural;
+
       --  Reset lifecycle state at Init time. Without this, Shutting_Down
       --  carries across Init/Shutdown cycles and the very next worker
       --  pops Stop=True from an empty-but-shutting-down queue, exiting
@@ -368,6 +372,9 @@ package body Gada.Async.Scheduler is
       end Drain;
 
       function Is_Initialised return Boolean is (Initialised);
+
+      function Live_Goroutines return Natural is (In_Flight);
+      function Live_Workers return Natural is (Workers_Active);
 
       procedure Set_Initialised (V : Boolean) is
       begin
@@ -776,5 +783,15 @@ package body Gada.Async.Scheduler is
       Run_Queue.Set_Initialised (False);
       The_Workers := null;
    end Shutdown;
+
+   function Live_Goroutines return Natural is
+   begin
+      return Run_Queue.Live_Goroutines;
+   end Live_Goroutines;
+
+   function Live_Workers return Natural is
+   begin
+      return Run_Queue.Live_Workers;
+   end Live_Workers;
 
 end Gada.Async.Scheduler;

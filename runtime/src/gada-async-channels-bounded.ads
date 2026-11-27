@@ -79,13 +79,11 @@ package Gada.Async.Channels.Bounded is
    --  the parked Send wakes by raising). Sending on an already-closed
    --  channel raises Channel_Closed before any parking.
    --
-   --  Send is callable from inside any goroutine. Calling from a non-
-   --  goroutine context (the main task before any Spawn, a non-worker
-   --  task) is supported as long as the buffer has space — the Park
-   --  fast-path is a no-op outside a goroutine, so a buffer-full Send
-   --  from the main task would otherwise stall. Callers driving Send
-   --  from a non-goroutine context are responsible for ensuring the
-   --  buffer is not full at call time.
+   --  Send is callable from inside any goroutine. From a non-goroutine
+   --  context (the main task, a non-worker task) a buffer-full Send
+   --  cannot park (there is no cothread to suspend), so it timed-polls
+   --  the ring buffer until space frees or the channel closes — matching
+   --  Go's main-task send semantics.
    procedure Send (C : Channel; V : Element_Type);
 
    --  Receive from C. Returns (head_of_buffer, OK => True) on success;
@@ -103,11 +101,10 @@ package Gada.Async.Channels.Bounded is
    --  OK = False, matching the Gada.Async.Channels.Unbounded.Receive
    --  contract.
    --
-   --  As with Send, the blocking path is only meaningful inside a
-   --  goroutine. A non-goroutine Receive on an empty open channel
-   --  would hang; callers driving Receive from non-goroutine context
-   --  are responsible for ensuring the buffer is non-empty or the
-   --  channel is closed at call time.
+   --  As with Send, the parking path is only meaningful inside a
+   --  goroutine. From a non-goroutine context an empty-open Receive
+   --  timed-polls the buffer until a value arrives or the channel
+   --  closes — matching Go's main-task receive semantics.
    procedure Receive
      (C  : Channel;
       V  : out Element_Type;

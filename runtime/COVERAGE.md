@@ -169,13 +169,13 @@ Added in PR #3 review feedback (gemini-code-assist comment #4).
 
 ### `runtime/src/gada-async-channels-bounded.adb`
 
-#### `Send` — `Park_Sender` close-race recheck  *(lines 413–414)*
+#### `Send` — `Park_Sender` close-race recheck  *(lines 448–449)*
 
 ```ada
 C.Ref.State.Park_Sender (Slot, Was_Closed);
 if Was_Closed then
-   Free_Slot (Slot);                                  --  line 413
-   raise Channel_Closed                               --  line 414
+   Free_Slot (Slot);                                  --  line 448
+   raise Channel_Closed                               --  line 449
      with "Gada.Async.Channels.Bounded.Send: closed during park";
 end if;
 ```
@@ -198,21 +198,26 @@ injection seam (slated alongside Phase 4 panic-marshalling work)
 will park the calling goroutine *between* those two protected calls,
 fire a Close, and re-cover this arm. Two lines.
 
-#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 466–468, 471–473)*
+#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 527–529, 532–534)*
 
 ```ada
 C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);
 if Got then
-   Free_Slot (Slot);   --  line 466
-   OK := True;          --  line 467
-   return;              --  line 468
+   Free_Slot (Slot);   --  line 527
+   OK := True;          --  line 528
+   return;              --  line 529
 end if;
 if Was_Closed then
-   Free_Slot (Slot);   --  line 471
-   OK := False;         --  line 472
-   return;              --  line 473
+   Free_Slot (Slot);   --  line 532
+   OK := False;         --  line 533
+   return;              --  line 534
 end if;
 ```
+
+The main-task timed-poll arms of both `Send` and `Receive` (including
+the poll-sees-closed arms) are covered, not excluded:
+`Test_Main_Task_{Send_Polls_When_Full, Receive_Polls_Until_Send,
+Send_Poll_Raises_On_Close, Receive_Poll_Closed_Gives_False}`.
 
 Mirror image of the Send-side race-recheck above. `Park_Receiver`
 re-checks `Count > 0` and `Closed_F` under its protected lock;
@@ -232,21 +237,26 @@ them here documents the testability gap, not their value.
 
 ### `runtime/src/gada-async-channels-unbounded.adb`
 
-#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 387–389, 392–394)*
+#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 416–418, 421–423)*
 
 ```ada
 C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);
 if Got then
-   Free_Slot (Slot);   --  line 387
-   OK := True;          --  line 388
-   return;              --  line 389
+   Free_Slot (Slot);   --  line 416
+   OK := True;          --  line 417
+   return;              --  line 418
 end if;
 if Was_Closed then
-   Free_Slot (Slot);   --  line 392
-   OK := False;         --  line 393
-   return;              --  line 394
+   Free_Slot (Slot);   --  line 421
+   OK := False;         --  line 422
+   return;              --  line 423
 end if;
 ```
+
+The main-task timed-poll arm of `Receive` (including the
+poll-sees-closed arm) is covered, not excluded:
+`Channels_Unbounded_Suite.Test_Main_Task_Receive_Polls_Until_Send` and
+`..._Poll_Closed_Gives_False`.
 
 Mirror of the Channels.Bounded Park_Receiver race-recheck above.
 Same single-worker-determinism constraint: the only window for the
@@ -390,6 +400,205 @@ of how lcov 2.x attributes basic blocks to an always-returning Ada
 function. It can be revisited only if the coverage toolchain changes
 its line attribution (e.g. a future lcov that drops the implicit
 terminator block, or a switch to `gnatcoverage`).
+
+---
+
+### `runtime/src/gada-std-strconv.adb` (Phase 5)
+
+Excluded lines (see `tools/coverage_thresholds.toml`):
+
+  * **405-406, 415-418, 431-432** — the three zero-pad loop bodies of
+    `Fmt_F`. These *are* executed — `Format_Float (123.0, 'f', 3) =
+    "123.000"` can only be produced through the `RDP >= RN` pad arm
+    (407-410), `Format_Float (1.5, 'f', 5) = "1.50000"` through the
+    middle-branch pad (423-424) — yet lcov 2.4 reports hit-count 0 on
+    the loop-body lines while crediting the `for` lines. Same
+    misattribution class as the approved `gada-async-race.adb:80`
+    terminator exclusion. (`Format_Float (0.5, 'f', 3) = "0.500"`
+    additionally exercises 397-398 semantically.)
+  * **451-452** — `return 17` fallback of `Shortest_K` plus its
+    terminator. Unreachable by construction: 17 significant decimal
+    digits always round-trip a binary64 (that is the worst case, and
+    the `K = 17` iteration returns first). Mathematical fact, not a
+    test gap.
+  * **522, 694, 695, 697, 740, 745, 845, 868, 890, 902** —
+    `end X;` fall-through terminators and `declare`/`end;` block
+    markers (`end Normalize;`, `end Format_Float;`, `end Message;`,
+    inner block ends in the 'g' branch, Parse_Float and Unquote).
+    lcov 2.x instruments the implicit basic block at 0 even when the
+    enclosing routine is fully covered — the same fixed toolchain
+    property documented for `gada-async-race.adb:80`.
+  * **751, 753, 755, 756** — `Parse_Float`'s `when Constraint_Error`
+    arm. The Alire FSF GNAT 15.1 runtime *returns* ±Inf on decimal
+    overflow instead of raising, so this arm cannot fire on the CI
+    toolchain; the `Value > Long_Float'Last` post-check right below it
+    handles the overflow and is covered by the `1e999`/`-1e999`
+    Err_Range tests. The arm is kept for GNAT modes/configurations
+    that do raise.
+
+### `runtime/src/gada-std-strings.adb` (Phase 5)
+
+Excluded lines: 142, 249, 377, 386, 395, 522, 544 — `end loop;` /
+`end To_Upper;` / `end To_Lower;` / `end Map;` terminators and two
+`declare` markers in `Replacer.Replace`. All executed — the Split,
+Case and Replacer tests are green in the same run — but lcov 2.4
+leaves hit-count 0 on in-loop returns and block markers. Same
+misattribution class as `gada-async-race.adb:80`.
+
+### `runtime/src/gada-std-fmt.adb` (Phase 5)
+
+Excluded lines: 54, 55, 100, 143, 253, 314, 390, 400, 440, 509. Line 54
+(`when others => null;` in `Parse_Spec`) is unreachable by
+construction: the `while` guard already restricts `F (I)` to
+`'-' | '+' | ' ' | '#' | '0'`, so the `others` arm can never fire —
+defensive exhaustiveness. The rest are `end;`/`declare` block markers
+misattributed by lcov 2.4 (same class as above).
+
+### `runtime/src/gada-std-os.adb` (Phase 5)
+
+Superseded by the Phase 6 wave 2 entry below: the Read_File body was
+rewritten (heap buffer + directory guard), so the old Phase-5 line
+numbers no longer exist. The current exclusions for this file are
+documented in the Phase 6 wave 2 section.
+
+### `runtime/src/gada-std-bytes.adb`, `gada-std-bufio.adb`, `gada-std-io.adb` (Phase 5)
+
+bytes: 28, 122, 166 — `end To_String;` terminators and an `end loop;`
+marker. bufio: 51, 106, 179, 295 — `end Fill;`, two `declare` markers
+in the Read_Line/Read_String search loops, and the `end if;` after
+Scanner's final-token `return True;` (executed by the "final token
+w/o LF" assert). The stored-error branches of Read/Read_Line/
+Read_String are covered by the readErr tests, not excluded. io: 44,
+57, 81 — the inner `end;`, `end Copy;`, `end Read_All;` markers (the
+ErrShortWrite arm itself is covered by the short-write test). All in
+the lcov 2.4 misattribution class documented above.
+
+### `runtime/src/gada-std-time.adb` (Phase 6 wave 2)
+
+69, 231, 242, 455 — `end Append_Frac;`, `end Dig2;`, `end Image_Date_Time;`,
+`end New_Timer;` terminators. Every contained line of these subprograms is
+hit by Time_Suite (Duration.String/Arith, Date + accessors, UTC/Local
+RFC3339, NewTimer + Stop are all green in the same run); lcov 2.4 leaves
+hit-count 0 on the block terminator itself. Same misattribution class as
+`gada-async-race.adb:80` documented above. The zone-conversion bodies of
+UTC()/Local() (from a Local value) are covered by Test_UTC_Local_Format,
+the public Stop_All wrapper by Test_Stop_All, the Repeater's atomic
+Tick_Fire path by Test_Tick, and the one-shot Try_Fire claim by
+Test_Timer_Stop — none excluded.
+
+### `runtime/src/gada-std-os.adb` (Phase 6 wave 2)
+
+62-68 — Read_File's `when Device_Error | End_Error | Data_Error` arm.
+The directory case is rejected up front by the `Ada.Directories.Kind`
+guard (covered by OS_Suite's Test_Read_File_Dir, which asserts the
+"is a directory" error); a read failure on a regular file needs a
+failing device, which no portable AUnit test can arrange. 70-71, 149,
+168 — `end;`/`end Read_File;`/`end Open;`/`end Create;` block terminators
+where lcov 2.4 leaves hit-count 0 despite every contained line being hit
+(same misattribution class as gada-std-time.adb). 83-84 — the `Args` argv
+loop body; the CI full-suite coverage run invokes test_runner with no
+filter argument (Argument_Count = 0), so the loop body never executes
+there (single-suite `make stdlib-test PKG=...` runs do pass one).
+Open/Create/Stat/Mkdir happy and error paths are all covered by
+OS_Suite, not excluded.
+
+### `runtime/src/gada-std-runtime.adb` (Phase 6 wave 2)
+
+31 — `end Go_Max_Procs;` terminator: lcov 2.4 leaves hit-count 0 on the
+block terminator even though every contained line is hit by
+Runtime_Suite (NumGoroutine/GOMAXPROCS/Gosched+GC all green in the same
+run; the GOMAXPROCS resize arm is covered by the main-task resize
+test). Same misattribution class as gada-std-time.adb.
+
+### `runtime/src/gada-std-net.adb` (Phase 7 wave 3)
+
+82 — `Parse_IPv4`'s `Part < 4 and then Dot = 0` arm. Unreachable:
+the `Count (S, ".") = 3` guard at line 66 guarantees a dot remains
+in the searched suffix for parts 1..3 (each iteration consumes exactly
+one dot and advances Pos past it), so `Index` never returns 0 there.
+92, 96, 141, 176, 230, 279, 280, 452, 453, 484, 820, 982, 1014 —
+declare-block, loop, exception-handler, and subprogram terminators;
+lcov 2.4 no-return-block misattribution class
+documented above (every contained line is hit by Net_Suite's parse,
+TCP, UDP, LookupHost, and error-path tests). 455-456 — `Resolve`'s
+"resolved but no IPv4 address" fall-through (v6-only names): v1
+sockets are IPv4-only and on Linux CI every resolvable name the suite
+uses (localhost) has a v4 entry; the v6-literal early-out above it IS
+covered by the `[::1]:80` dial error test, and the v4-found loop arm
+by the `localhost:0` listen control. 478-481 — `To_IP`'s
+`Family_Inet6` arm: v1 creates every socket with `Family_Inet`, so no
+Inet6 `Sock_Addr_Type` is ever produced and this arm cannot execute
+(the bracket-parse path in `Split_Address`, 395-400, IS covered by the
+`[::1]:80` dial error test — only the post-socket conversion arm is
+excluded). 507 — `Addr_Image`'s non-inet family guard, same defensive
+class. 704, 814, 976 — the nested `when others => null` inside the
+`Socket_Error` cleanup handlers of `Dial`/`Listen`/`Listen_Packet`:
+reachable only if `Close_Socket` itself raises during error cleanup,
+which needs fault injection; the handlers themselves (808-820,
+970-982) are covered by the `192.0.2.1:0` unassigned-bind tests. All
+other net lines — IP
+parse/format tables, Split_Address, Resolve, Dial/Listen/Listen_Packet
+happy + error paths, Conn/Listener/Packet_Conn ops incl. closed-socket
+and EOF arms, Lookup_Host — are covered by Net_Suite, not excluded.
+
+### `runtime/src/gada-std-json.adb` (Phase 7 wave 3, items 2a/2b)
+
+145-146 — `Unescape`'s `Code > 16#FFFF#` reject: unreachable, four hex
+digits cap Code at 0xFFFF (the surrogate-half reject at 140-142 IS
+covered by the `\uD800` bad case). 392-393, 404-405 — `Parse_Scalar_At`'s
+`Constraint_Error` arms on `Long_Float'Value`: a syntactically valid
+JSON number always parses as a float64, so these cannot fire (the
+int64-overflow → float-widening arm IS covered by the 20-digit test).
+606-608 — `Marshal`'s NaN arm: Go's encoder rejects NaN, but Ada has no
+portable non-finite `Long_Float` literal to test with. 153, 220, 228,
+264, 310, 411, 638, 665, 689, 711 — lcov 2.4 no-return-block
+misattribution on declare / end / subprogram-header lines (same class
+as gada-std-net.adb). Everything else — Escape/Unescape tables incl.
+2/3-byte UTF-8, Float_Image in both plain and scientific forms,
+Parse_Scalar over all scalar tokens plus malformed inputs, Parse_Object
+(member kinds, escaped keys, every malformed shape), Encode_Value over
+registered descriptors, and all four Marshal/Unmarshal overloads incl.
+null no-op and kind mismatch — is covered by Json_Suite, not excluded.
+
+### `runtime/src/gada-std-bytes.adb` (Phase 7 wave 3 delta)
+
+38, 132, 176 — `end To_String;` (Byte_Slice), `end loop;` in Join's
+`Append_All`, `end To_String;` (Buffer): lcov 2.4 block-terminator
+misattribution; the contained loop bodies are hit by Bytes_Suite and
+Net_Suite. The Phase 5 exclusions for this file (28, 122, 166) were
+superseded when the file was rewritten for Phase 7 and are replaced by
+this entry.
+
+### `runtime/src/gada-std-http.adb` (Phase 7 wave 3, items 3-4)
+
+122, 181, 229, 323, 446, 558-559 — `end To_Lower;` / block `end;` /
+`end Serve_One;` terminators; 126 — the `Read_Request` subprogram-header
+line; 160, 210, 510 — `declare` markers: lcov 2.4 no-return-block
+misattribution, same class as the
+gada-std-time.adb / gada-std-json.adb entries (every contained line of
+these blocks is hit by Http_Suite). 391-392 — the accept loop's
+top-of-loop `Stopping` arm: only fires when Stop lands while the loop is
+inside Serve_One; the suite always stops while the loop is blocked in
+Accept_K, which takes the post-accept stop arm (covered). Racy, not
+deterministically triggerable in CI. 147-148 and 245-247 — the
+`N = 0`-without-error arms of the header and body read loops:
+`Gada.Std.Net.Conn.Read` always sets `Err = EOF` on an orderly peer
+shutdown, so `N = 0` implies `E /= No_Error`; the arms are defensive
+and unreachable through the net layer. 166-167 — the `First_Lf = 0`
+arm: unreachable because `Hd > 0` (a CRLFCRLF was found) already
+guarantees a CRLF inside `Head`. 396-397 — the accept-error arm of
+`Listen_And_Serve`: `Stop_Server` wakes a blocked accept with a
+self-connect that succeeds, and genuine accept errors (EMFILE/ENFILE)
+are not deterministically triggerable in CI. 495-497 — the client
+write-error arm of `Do_Request`: it needs EPIPE/RST, and the tests only
+close connections after the server has read the full request.
+Everything else — mux register/lookup, Read_Request request line,
+header loop incl. Content-Length (last-header-line arm), the body read
+loop incl. its EOF arm (Http_Suite Test_Bad_Requests truncated-body
+case and Test_Split_Body), Write_Response, Serve_One incl. its
+exception handler (Test_Handler_Raises), the accept loop's stop paths,
+Split_URL, Do_Request happy + parse-error paths, Client Get/Post — is
+covered by Http_Suite, not excluded.
 
 ---
 

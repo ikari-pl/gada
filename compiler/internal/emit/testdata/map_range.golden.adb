@@ -13,7 +13,8 @@ package body P is
       Total : Integer := 0;
    begin
       declare
-         Cursor_1 : Maps_Of_Integer_To_Integer.Cursor := Maps_Of_Integer_To_Integer.First (M);
+         Cursor_1 : Maps_Of_Integer_To_Integer.Cursor :=
+               Maps_Of_Integer_To_Integer.First (M);
       begin
          while Maps_Of_Integer_To_Integer.Has_Element (M, Cursor_1) loop
             declare

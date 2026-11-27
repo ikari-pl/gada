@@ -219,6 +219,12 @@ package Gada.Async.Scheduler is
    --  matching the Free contract on Gada.Async.Context).
    procedure Shutdown;
 
+   --  Introspection for Gada.Std.Runtime (Go runtime.NumGoroutine /
+   --  GOMAXPROCS). Live counts; both are 0 before Init / after
+   --  Shutdown.
+   function Live_Goroutines return Natural;
+   function Live_Workers return Natural;
+
 private
 
    --  A Goroutine_Id is a thin wrapper around the heap-allocated

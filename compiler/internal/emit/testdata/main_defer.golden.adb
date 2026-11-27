@@ -8,7 +8,8 @@ procedure Main is
       Print ("end");
       New_Line;
    end Defer_Closure_1;
-   Defer_1 : Gada.Core.Defer.Defer_Block (Op => Defer_Closure_1'Unrestricted_Access);
+   Defer_1 : Gada.Core.Defer.Defer_Block (Op =>
+         Defer_Closure_1'Unrestricted_Access);
 
 begin
    Print ("hello");

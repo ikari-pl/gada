@@ -51,29 +51,34 @@ begin
       Meta : Gada.Reflect.Types.Type_Descriptor;
    begin
       --  Reader
-      Meta := Gada.Reflect.Types.Make (Id => 1, Name => "Reader", Kind => Gada.Reflect.Types.Interface_Kind);
+      Meta := Gada.Reflect.Types.Make (Id => 1, Name => "Reader", Kind =>
+            Gada.Reflect.Types.Interface_Kind);
       Gada.Reflect.Types.Add_Method (Meta, "Read");
       Gada.Reflect.Types.Add_Method (Meta, "Close");
       Gada.Reflect.Registry.Register_Type (Meta);
       --  Writer
-      Meta := Gada.Reflect.Types.Make (Id => 2, Name => "Writer", Kind => Gada.Reflect.Types.Interface_Kind);
+      Meta := Gada.Reflect.Types.Make (Id => 2, Name => "Writer", Kind =>
+            Gada.Reflect.Types.Interface_Kind);
       Gada.Reflect.Types.Add_Method (Meta, "Write");
       Gada.Reflect.Types.Add_Method (Meta, "Close");
       Gada.Reflect.Registry.Register_Type (Meta);
       --  Buffer
-      Meta := Gada.Reflect.Types.Make (Id => 3, Name => "Buffer", Kind => Gada.Reflect.Types.Struct_Kind);
+      Meta := Gada.Reflect.Types.Make (Id => 3, Name => "Buffer", Kind =>
+            Gada.Reflect.Types.Struct_Kind);
       Gada.Reflect.Types.Add_Field (Meta, "data", Field_Type => 5);
       Gada.Reflect.Types.Add_Method (Meta, "Read");
       Gada.Reflect.Types.Add_Method (Meta, "Write");
       Gada.Reflect.Types.Add_Method (Meta, "Close");
       Gada.Reflect.Registry.Register_Type (Meta);
       --  Nop
-      Meta := Gada.Reflect.Types.Make (Id => 4, Name => "Nop", Kind => Gada.Reflect.Types.Struct_Kind);
+      Meta := Gada.Reflect.Types.Make (Id => 4, Name => "Nop", Kind =>
+            Gada.Reflect.Types.Struct_Kind);
       Gada.Reflect.Types.Add_Method (Meta, "Read");
       Gada.Reflect.Types.Add_Method (Meta, "Close");
       Gada.Reflect.Registry.Register_Type (Meta);
       --  int
-      Meta := Gada.Reflect.Types.Make (Id => 5, Name => "int", Kind => Gada.Reflect.Types.Int_Kind);
+      Meta := Gada.Reflect.Types.Make (Id => 5, Name => "int", Kind =>
+            Gada.Reflect.Types.Int_Kind);
       Gada.Reflect.Registry.Register_Type (Meta);
    end;
    --  Buffer satisfies Reader

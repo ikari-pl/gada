@@ -109,6 +109,14 @@ test:
 	$(MAKE) -C $(ROOT)/compiler test
 	$(MAKE) -C $(ROOT)/runtime test
 
+# stdlib-test — run one Gada.Std stdlib port's AUnit suite, e.g.
+#   make stdlib-test PKG=errors
+# forwards to `make -C runtime test PKG=stdlib.<pkg>`; the runner's
+# suite-name filter is "stdlib.<pkg>". Empty PKG runs every suite.
+.PHONY: stdlib-test
+stdlib-test:
+	$(MAKE) -C $(ROOT)/runtime test PKG=stdlib.$(PKG)
+
 # bench — runs the runtime micro-benchmark suite. Output is benchstat-
 # compatible (one row per benchmark on stdout). Copy rows into
 # runtime/PERF.md. Per docs/adr/0006-runtime-performance-bar.md, NOT a
@@ -204,7 +212,7 @@ example:
 	@echo "=== running examples/$(HELLO)/$(HELLO) ==="
 	@out=$$(mktemp -t gada-example.XXXXXX) ; \
 	    trap 'rm -f $$out' EXIT ; \
-	    $(ROOT)/examples/$(HELLO)/$(HELLO) > $$out ; \
+	    timeout 120 $(ROOT)/examples/$(HELLO)/$(HELLO) > $$out ; \
 	    rc=$$? ; \
 	    if [ $$rc -ne 0 ]; then \
 	        echo "make example: binary exited $$rc" >&2 ; \

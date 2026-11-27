@@ -16,7 +16,8 @@ begin
       Meta : Gada.Reflect.Types.Type_Descriptor;
    begin
       --  Speaker
-      Meta := Gada.Reflect.Types.Make (Id => 1, Name => "Speaker", Kind => Gada.Reflect.Types.Interface_Kind);
+      Meta := Gada.Reflect.Types.Make (Id => 1, Name => "Speaker", Kind =>
+            Gada.Reflect.Types.Interface_Kind);
       Gada.Reflect.Types.Add_Method (Meta, "Speak");
       Gada.Reflect.Registry.Register_Type (Meta);
    end;

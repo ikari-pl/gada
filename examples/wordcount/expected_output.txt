@@ -1,0 +1,12 @@
+and 1
+barks 1
+brown 3
+dog 3
+fox 3
+jumps 1
+lazy 1
+loud 1
+over 1
+quick 5
+runs 1
+the 4

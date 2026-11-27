@@ -12,10 +12,12 @@
 --  Go. Go name mapping (compiler's goNameToAdaMember): ErrSyntax →
 --  Err_Syntax, NumError → Num_Error, FormatFloat → Format_Float, …
 --
---  v1 limitations (docs/imperfections.md): strings are byte strings, so
---  Quote/Unquote treat bytes >= 16#80# as printable and pass them
---  through (no UTF-8 validation); Unquote's \u/\U escapes still encode
---  proper UTF-8. Parse_Float rejects Go's underscore digit separators
+--  v1 limitations (docs/imperfections.md): strings are byte strings.
+--  Quote validates UTF-8 like Go — invalid bytes become \xNN and the C1
+--  controls U+0080..U+009F become \u00XX — but passes every other valid
+--  multi-byte rune through unescaped (Go also escapes the remaining
+--  non-printable runes, e.g. U+00A0, via unicode.IsPrint tables).
+--  Unquote's \u/\U escapes encode proper UTF-8. Parse_Float rejects Go's underscore digit separators
 --  and hex float literals. Format_Float supports 'f'/'F', 'e'/'E' and
 --  'g'/'G' ('g' with prec < 0 gives Go's shortest round-trip digits,
 --  choosing 'e' when the exponent is < -4 or >= 6, exactly like Go).
@@ -73,7 +75,8 @@ package Gada.Std.Strconv is
    procedure Parse_Float (S : String; Value : out Long_Float;
                           Err : out Gada.Std.Errors.Error_Access);
 
-   --  Go: func QuoteRune(c rune) string — single-quoted Go char literal.
+   --  Go: func QuoteRune(c rune) string — single-quoted Go char literal;
+   --  C is taken as a code point (16#E9# quotes as 'é' in UTF-8).
    function Quote_Rune (C : Character) return String;
 
    --  UTF-8 encoding of a rune (Go: string(r) / utf8.AppendRune). Values

@@ -270,6 +270,52 @@ package body Strconv_Suite is
       --  Apostrophe is printable: not escaped (Go contract).
       Assert (Quote ((1 => Character'Val (39))) = '"' & Character'Val (39)
                 & '"', "Quote apostrophe raw");
+      --  Bytes >= 16#80# (PR #45 review testing gap): valid UTF-8 passes
+      --  through, invalid bytes are \xNN, C1 controls are \u00XX.
+      --  Expected strings are Go's strconv.Quote output.
+      declare
+         E_Acute : constant String :=
+           (Character'Val (16#C3#), Character'Val (16#A9#));
+         Euro    : constant String :=
+           (Character'Val (16#E2#), Character'Val (16#82#),
+            Character'Val (16#AC#));
+         Smiley  : constant String :=
+           (Character'Val (16#F0#), Character'Val (16#9F#),
+            Character'Val (16#98#), Character'Val (16#80#));
+      begin
+         Assert (Quote ("caf" & Character'Val (16#E9#))
+                   = '"' & "caf\xe9" & '"', "Latin-1 byte is \xNN");
+         Assert (Quote ("caf" & E_Acute) = '"' & "caf" & E_Acute & '"',
+                 "valid 2-byte UTF-8 raw");
+         Assert (Quote (Euro) = '"' & Euro & '"', "valid 3-byte raw");
+         Assert (Quote (Smiley) = '"' & Smiley & '"', "valid 4-byte raw");
+         Assert (Quote ((Character'Val (16#FF#), Character'Val (16#FE#)))
+                   = '"' & "\xff\xfe" & '"', "invalid lead bytes");
+         Assert (Quote ((Character'Val (16#C2#), Character'Val (16#85#)))
+                   = '"' & "\u0085" & '"', "C1 control is \u00XX");
+         Assert (Quote ((Character'Val (16#C0#), Character'Val (16#AF#)))
+                   = '"' & "\xc0\xaf" & '"', "overlong rejected");
+         Assert (Quote ((Character'Val (16#ED#), Character'Val (16#A0#),
+                         Character'Val (16#80#)))
+                   = '"' & "\xed\xa0\x80" & '"', "surrogate rejected");
+         Assert (Quote ((Character'Val (16#F4#), Character'Val (16#90#),
+                         Character'Val (16#80#), Character'Val (16#80#)))
+                   = '"' & "\xf4\x90\x80\x80" & '"', "> U+10FFFF rejected");
+         Assert (Quote ((Character'Val (16#E2#), Character'Val (16#82#)))
+                   = '"' & "\xe2\x82" & '"', "truncated sequence");
+         Assert (Quote ((1 => Character'Val (16#C2#)))
+                   = '"' & "\xc2" & '"', "lead byte at end");
+         Assert (Quote (Euro (1 .. 2) & "x")
+                   = '"' & "\xe2\x82x" & '"', "bad continuation byte");
+      end;
+      --  Quote_Rune of the delimiters (Go: '\'' and '"').
+      Assert (Quote_Rune (Character'Val (39)) = "'\''", "QuoteRune '");
+      Assert (Quote_Rune ('"') = "'""'", "QuoteRune dquote unescaped");
+      Assert (Quote_Rune (Character'Val (16#E9#))
+                = "'" & Character'Val (16#C3#) & Character'Val (16#A9#) & "'",
+              "QuoteRune U+00E9 is UTF-8");
+      Assert (Quote_Rune (Character'Val (16#85#)) = "'\u0085'",
+              "QuoteRune C1 control");
    end Test_Quote;
 
    procedure Test_Unquote (T : in out AUnit.Test_Cases.Test_Case'Class) is

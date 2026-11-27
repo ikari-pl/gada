@@ -925,40 +925,97 @@ package body Gada.Std.Strconv is
       end;
    end Parse_Float;
 
+   --  Length of the valid UTF-8 sequence starting at S (I), or 0 when
+   --  the bytes there are not valid UTF-8 (Go's utf8.DecodeRune rules:
+   --  no overlongs, no surrogates, nothing above U+10FFFF).
+   function Utf8_Len (S : String; I : Integer) return Natural is
+      B0 : constant Natural := Character'Pos (S (I));
+      N  : constant Natural :=
+        (case B0 is
+            when 16#C2# .. 16#DF# => 2,
+            when 16#E0# .. 16#EF# => 3,
+            when 16#F0# .. 16#F4# => 4,
+            when others           => 0);
+      --  Allowed range of the second byte (Go's acceptRanges).
+      Lo : constant Natural :=
+        (case B0 is
+            when 16#E0# => 16#A0#,
+            when 16#F0# => 16#90#,
+            when others => 16#80#);
+      Hi : constant Natural :=
+        (case B0 is
+            when 16#ED# => 16#9F#,
+            when 16#F4# => 16#8F#,
+            when others => 16#BF#);
+   begin
+      if N = 0 or else I + N - 1 > S'Last
+        or else Character'Pos (S (I + 1)) not in Lo .. Hi
+      then
+         return 0;
+      end if;
+      for K in 2 .. N - 1 loop
+         if Character'Pos (S (I + K)) not in 16#80# .. 16#BF# then
+            return 0;
+         end if;
+      end loop;
+      return N;
+   end Utf8_Len;
+
    --  Shared core: quotes S with the given delimiter, escaping the
    --  delimiter itself, the backslash, and control chars (Go's Quote
-   --  and QuoteRune differ only in the delimiter).
+   --  and QuoteRune differ only in the delimiter). Valid UTF-8 passes
+   --  through, except the C1 controls U+0080..U+009F (\u00XX); every
+   --  byte that is not part of valid UTF-8 becomes \xNN, like Go.
    function Quote_Core (S : String; Delim : Character) return String is
       B : Unbounded_String;
+      I : Integer := S'First;
    begin
       Append (B, Delim);
-      for C of S loop
-         case C is
-            when BSLASH =>
-               Append (B, BSLASH & BSLASH);     --  \\
-            when Character'Val (7) =>
-               Append (B, "\a");
-            when Character'Val (8) =>
-               Append (B, "\b");
-            when Character'Val (9) =>
-               Append (B, "\t");
-            when Character'Val (10) =>
-               Append (B, "\n");
-            when Character'Val (11) =>
-               Append (B, "\v");
-            when Character'Val (12) =>
-               Append (B, "\f");
-            when Character'Val (13) =>
-               Append (B, "\r");
-            when others =>
-               if C = Delim then
-                  Append (B, BSLASH & Delim);
-               elsif C < ' ' or else C = Character'Val (127) then
-                  Append (B, "\x" & Hex2 (C));
-               else
-                  Append (B, C);
-               end if;
-         end case;
+      while I <= S'Last loop
+         declare
+            C : constant Character := S (I);
+            N : Natural := 1;
+         begin
+            case C is
+               when BSLASH =>
+                  Append (B, BSLASH & BSLASH);     --  \\
+               when Character'Val (7) =>
+                  Append (B, "\a");
+               when Character'Val (8) =>
+                  Append (B, "\b");
+               when Character'Val (9) =>
+                  Append (B, "\t");
+               when Character'Val (10) =>
+                  Append (B, "\n");
+               when Character'Val (11) =>
+                  Append (B, "\v");
+               when Character'Val (12) =>
+                  Append (B, "\f");
+               when Character'Val (13) =>
+                  Append (B, "\r");
+               when Character'Val (16#80#) .. Character'Val (16#FF#) =>
+                  N := Utf8_Len (S, I);
+                  if N = 0 then
+                     N := 1;
+                     Append (B, "\x" & Hex2 (C));
+                  elsif C = Character'Val (16#C2#)
+                    and then S (I + 1) <= Character'Val (16#9F#)
+                  then
+                     Append (B, "\u00" & Hex2 (S (I + 1)));
+                  else
+                     Append (B, S (I .. I + N - 1));
+                  end if;
+               when others =>
+                  if C = Delim then
+                     Append (B, BSLASH & Delim);
+                  elsif C < ' ' or else C = Character'Val (127) then
+                     Append (B, "\x" & Hex2 (C));
+                  else
+                     Append (B, C);
+                  end if;
+            end case;
+            I := I + N;
+         end;
       end loop;
       Append (B, Delim);
       return To_String (B);
@@ -967,8 +1024,10 @@ package body Gada.Std.Strconv is
    function Quote (S : String) return String is
      (Quote_Core (S, DQUOTE));
 
+   --  A Character is a code point here (Go's rune): bytes >= 16#80#
+   --  quote as their UTF-8 encoding, e.g. Character'Val (16#E9#) is 'é'.
    function Quote_Rune (C : Character) return String is
-     (Quote_Core (String'(1 => C), Character'Val (39)));
+     (Quote_Core (Encode_Rune (Character'Pos (C)), SQUOTE));
 
    procedure Unquote (S : String; Value : out Unbounded_String;
                       Err : out Errors.Error_Access) is

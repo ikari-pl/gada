@@ -263,6 +263,10 @@ package body Strings_Suite is
       AUnit.Test_Cases.Test_Case'Class) is
    begin
       Assert (Trim_Space ("  hi" & HT & LF) = "hi", "TrimSpace");
+      --  Trim_Func directly (PR #45 review testing gap).
+      Assert (Trim_Func ("AAhiA", Is_Upper'Access) = "hi", "TrimFunc");
+      Assert (Trim_Func ("AAA", Is_Upper'Access) = "", "TrimFunc all");
+      Assert (Trim_Func ("hi", Is_Upper'Access) = "hi", "TrimFunc none");
       Assert (Trim_Prefix ("foobar", "foo") = "bar", "TrimPrefix");
       Assert (Trim_Prefix ("foobar", "xxx") = "foobar", "TrimPrefix no-op");
       Assert (Trim_Suffix ("foobar", "bar") = "foo", "TrimSuffix");

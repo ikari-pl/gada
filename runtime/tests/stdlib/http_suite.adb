@@ -6,6 +6,7 @@
 
 pragma Warnings (Off, "use of an anonymous access type allocator");
 
+with Ada.Text_IO;
 with AUnit.Assertions; use AUnit.Assertions;
 
 with Ada.Strings;
@@ -67,6 +68,12 @@ package body Http_Suite is
 
    function Err_Text (Err : Errors.Error_Access) return String is
      (if Err = Errors.No_Error then "<nil>" else Err.all.Message);
+
+   --  Progress marker so a CI hang is localisable from the job log.
+   procedure Trace (S : String) is
+   begin
+      Ada.Text_IO.Put_Line ("[http_suite] " & S);
+   end Trace;
 
    --  Probe a free loopback port: bind :0, read back the ephemeral
    --  port, release (same trick Net_Suite uses for refused dials).
@@ -142,7 +149,7 @@ package body Http_Suite is
       Acc  : Unbounded_String;
    begin
       --  retry until the accept loop has bound the port
-      for I in 1 .. 5_000 loop
+      for I in 1 .. 500 loop
          Dial ("tcp", "127.0.0.1:"
                  & Ada.Strings.Fixed.Trim (The_Port'Image, Ada.Strings.Left),
                C, Err);
@@ -204,6 +211,7 @@ package body Http_Suite is
 
    procedure Test_Not_Found (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
+      Trace ("Test_Listen_Error");
    begin
       Start_Server;
       declare
@@ -223,6 +231,7 @@ package body Http_Suite is
    --  needing the scheduler).
    procedure Test_Listen_Error (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
+      Trace ("Test_Not_Found");
       L   : Listener;
       Err : Errors.Error_Access;
    begin
@@ -242,6 +251,7 @@ package body Http_Suite is
    --  sending anything (EOF arm).
    procedure Test_Bad_Requests (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
+      Trace ("Test_Bad_Requests");
    begin
       Start_Server;
       declare
@@ -296,6 +306,7 @@ package body Http_Suite is
    --  registered).
    procedure Test_Client_404 (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
+      Trace ("Test_Client_404");
       Resp : Response_Access;
       Err  : Errors.Error_Access;
    begin
@@ -321,6 +332,7 @@ package body Http_Suite is
    --  spaces / non-digit status code).
    procedure Test_Client_Errors (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
+      Trace ("Test_Client_Errors");
       Resp : Response_Access;
       Err  : Errors.Error_Access;
    begin
@@ -365,6 +377,7 @@ package body Http_Suite is
      (T : in out AUnit.Test_Cases.Test_Case'Class)
    is
       pragma Unreferenced (T);
+      Trace ("Test_Echo_And_Catchall");
    begin
       Start_Server;
       Handle_Func ("/echo", Echo_Body'Access);
@@ -398,6 +411,7 @@ package body Http_Suite is
    --  Test_Echo_And_Catchall so the mux already has "/echo".
    procedure Test_Client_Echo (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
+      Trace ("Test_Client_Echo");
       Resp : Response_Access;
       Err  : Errors.Error_Access;
       C    : Client;

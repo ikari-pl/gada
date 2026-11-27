@@ -341,6 +341,7 @@ package body Json_Suite is
       Check_Bad ("{""k"" 1}");
       Check_Bad ("{""k"":");
       Check_Bad ("{""k"": 1,");
+      Check_Bad ("{""k"": 1 ""x"": 2}");
    end Test_Parse_Object;
 
    procedure Test_Float_Image (T : in out AUnit.Test_Cases.Test_Case'Class)

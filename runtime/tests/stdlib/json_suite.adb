@@ -297,6 +297,7 @@ package body Json_Suite is
 
       Parse_Object
         ("  { ""x"" : 42, ""s"" : ""a\nb"", ""k\u0041y"" : 1," &
+         " ""b"" : true," &
          " ""f"" : -1.5, ""n"" : null }  ", M, OK);
       Assert (OK, "object parse failed");
       Assert (Integer (Member_Vectors.Length (M)) = 6,

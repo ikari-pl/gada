@@ -479,11 +479,11 @@ package body Gada.Std.Http is
       end Get;
 
       procedure Post (URL, Content_Type : String;
-                      Body : Byte_Slice;
+                      Body_K : Byte_Slice;
                       Resp : out Response_Access;
                       Err  : out Error_Access) is
       begin
-         Do_Request ("POST", URL, Content_Type, Body, Resp, Err);
+         Do_Request ("POST", URL, Content_Type, Body_K, Resp, Err);
       end Post;
    end Client;
 
@@ -494,11 +494,11 @@ package body Gada.Std.Http is
    end Get;
 
    procedure Post (URL, Content_Type : String;
-                   Body : Byte_Slice;
+                   Body_K : Byte_Slice;
                    Resp : out Response_Access;
                    Err : out Error_Access) is
    begin
-      Do_Request ("POST", URL, Content_Type, Body, Resp, Err);
+      Do_Request ("POST", URL, Content_Type, Body_K, Resp, Err);
    end Post;
 
 end Gada.Std.Http;

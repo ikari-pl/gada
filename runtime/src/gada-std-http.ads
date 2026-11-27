@@ -96,7 +96,7 @@ package Gada.Std.Http is
       procedure Get (URL : String; Resp : out Response_Access;
                      Err  : out Gada.Std.Errors.Error_Access);
       procedure Post (URL, Content_Type : String;
-                      Body : Gada.Std.Bytes.Byte_Slice;
+                      Body_K : Gada.Std.Bytes.Byte_Slice;
                       Resp : out Response_Access;
                       Err  : out Gada.Std.Errors.Error_Access);
    end Client;
@@ -106,7 +106,7 @@ package Gada.Std.Http is
    procedure Get (URL : String; Resp : out Response_Access;
                   Err : out Gada.Std.Errors.Error_Access);
    procedure Post (URL, Content_Type : String;
-                   Body : Gada.Std.Bytes.Byte_Slice;
+                   Body_K : Gada.Std.Bytes.Byte_Slice;
                    Resp : out Response_Access;
                    Err : out Gada.Std.Errors.Error_Access);
 

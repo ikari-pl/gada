@@ -9,7 +9,6 @@ package body Gada.Std.Http is
    use Gada.Std.Bytes;
    use Gada.Std.Errors;
    use type Gada.Std.Net.Conn;
-   use type Gada.Std.Net.Listener;
 
    CRLF : constant String := Character'Val (13) & Character'Val (10);
 
@@ -302,42 +301,44 @@ package body Gada.Std.Http is
       C.all.Close;
    end Serve_One;
 
-   --  The listener the accept loop is bound to plus a stop flag, so
-   --  Stop_Server can wake the blocked Accept from another task.
-   --  POSIX close(2)/shutdown(2) on a *listening* socket do not wake a
-   --  thread blocked in accept(2); the portable wake is a self-connect
-   --  to the listener's own address, which makes Accept return once.
+   --  The accept loop's stop mechanism. POSIX close(2)/shutdown(2) on
+   --  a *listening* socket do not wake a thread blocked in accept(2),
+   --  and the blocked Accept_K holds the listener's protected lock, so
+   --  Stop must NOT call any listener operation from another task —
+   --  that would deadlock. Instead Set captures the bound address
+   --  string (called by the accept loop itself before it blocks), and
+   --  Stop only sets the flag and self-connects to that address, which
+   --  makes the pending Accept return once so the loop can see the
+   --  flag and close the listener itself.
    protected type Listener_Cell is
-      procedure Set (NL : Gada.Std.Net.Listener);
+      procedure Set (Addr : String);
       procedure Stop;
       function Stopping return Boolean;
    private
-      Cur : Gada.Std.Net.Listener;
+      Addr_Str  : Unbounded_String;
       Stop_Flag : Boolean := False;
    end Listener_Cell;
 
    protected body Listener_Cell is
-      procedure Set (NL : Gada.Std.Net.Listener) is
+      procedure Set (Addr : String) is
       begin
-         Cur := NL;
+         Addr_Str  := To_Unbounded_String (Addr);
          Stop_Flag := False;
       end Set;
 
       procedure Stop is
+         C : Gada.Std.Net.Conn;
+         E : Error_Access;
       begin
          Stop_Flag := True;
-         if Cur /= null then
-            declare
-               C : Gada.Std.Net.Conn;
-               E : Error_Access;
-            begin
-               --  self-connect wakes the blocked Accept
-               Gada.Std.Net.Dial ("tcp", Cur.all.Addr, C, E);
-               if C /= null then
-                  C.all.Close;
-               end if;
-            end;
-            Cur.all.Close;
+         if Length (Addr_Str) > 0 then
+            --  self-connect wakes the blocked Accept; no listener
+            --  operation is called here (the lock is held by the
+            --  blocked Accept_K)
+            Gada.Std.Net.Dial ("tcp", To_String (Addr_Str), C, E);
+            if C /= null then
+               C.all.Close;
+            end if;
          end if;
       end Stop;
 
@@ -363,7 +364,7 @@ package body Gada.Std.Http is
       if Err /= No_Error then
          return Err;
       end if;
-      The_Listener.Set (L);
+      The_Listener.Set (L.all.Addr);
       loop
          if The_Listener.Stopping then
             L.all.Close;

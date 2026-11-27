@@ -239,6 +239,7 @@ package body Json_Suite is
       pragma Unreferenced (T);
       Err : Errors.Error_Access;
       I   : Integer := 0;
+      F   : Long_Float := 0.0;
       B   : Boolean := False;
       S   : Unbounded_String := Null_Unbounded_String;
    begin

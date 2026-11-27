@@ -4,7 +4,9 @@
 --  (incl. unlock-of-unlocked panic), RWMutex reader/writer exclusion,
 --  WaitGroup Add/Done/Wait (incl. underflow panic), Once exactly-once
 --  (incl. the panic path), and Cond Wait/Signal/Broadcast driven by
---  real goroutines through Gada.Async.Scheduler.
+--  real goroutines through Gada.Async.Scheduler, plus single-worker
+--  regressions proving Lock/RLock/Wait/Do park the goroutine instead of
+--  blocking the worker thread.
 
 with AUnit;
 with AUnit.Test_Cases;
@@ -28,6 +30,17 @@ package Sync_Suite is
    procedure Test_Cond_Signal (T : in out
       AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Cond_Broadcast (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+
+   procedure Test_Mutex_Parks (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_RWMutex_Parks (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_WaitGroup_Parks (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Once_Waits_For_F (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Main_Task_Waits (T : in out
       AUnit.Test_Cases.Test_Case'Class);
 
 end Sync_Suite;

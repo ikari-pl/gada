@@ -114,3 +114,13 @@ historical record.
   *Verify:* `cd compiler && go test ./internal/emit -run 'TimeOnlyMain|ProcessExit|PlainMain'`
   and `make -C runtime test PKG=core.process`.
 
+- **Goroutine-aware sync** (findings #3, #7). Mutex/RWMutex/WaitGroup/
+  Once are tagged limited records over a protected core with a waiter
+  list: a goroutine that must wait registers and `Scheduler.Park`s
+  (its worker keeps running other goroutines) and the releasing call
+  `Unpark`s it; only non-goroutine callers block on protected entries.
+  Once is an Idle/Running/Done state machine — f runs outside any
+  protected action, Done is set even if f raises, concurrent callers
+  wait until f returns. TryLock/TryRLock are Boolean functions; Do_K
+  takes an anonymous access-to-procedure.
+  *Verify:* `make stdlib-test PKG=sync` (5 single-worker regressions).

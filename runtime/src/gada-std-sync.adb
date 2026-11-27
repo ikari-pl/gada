@@ -2,32 +2,54 @@
 
 package body Gada.Std.Sync is
 
+   use type Scheduler.Goroutine_Id;
+
+   --  Unpark every goroutine in W (outside any protected action).
+   procedure Wake_All (W : Waiter_Lists.List) is
+   begin
+      for G of W loop
+         Scheduler.Unpark (G);
+      end loop;
+   end Wake_All;
+
    ---------------------------------------------------------------
    --  Mutex
    ---------------------------------------------------------------
 
-   protected body Mutex is
+   protected body Mutex_Core is
 
-      entry Lock when not Locked is
+      entry Lock_Blocking when not Locked is
       begin
          Locked := True;
-      end Lock;
+      end Lock_Blocking;
 
-      procedure Unlock is
+      procedure Lock_Or_Enqueue (G : Scheduler.Goroutine_Id;
+                                 Got : out Boolean) is
+      begin
+         Got := not Locked;
+         if Got then
+            Locked := True;
+         else
+            Waiters.Append (G);
+         end if;
+      end Lock_Or_Enqueue;
+
+      procedure Unlock (Wake : out Scheduler.Goroutine_Id) is
       begin
          --  Go: Unlock of an unlocked mutex is a fatal error (panic).
          if not Locked then
             raise Constraint_Error with "sync: unlock of unlocked mutex";
          end if;
          Locked := False;
+         Wake := Scheduler.No_Goroutine;
+         if not Waiters.Is_Empty then
+            Wake := Waiters.First_Element;
+            Waiters.Delete_First;
+         end if;
       end Unlock;
 
       procedure Try_Lock (Ok : out Boolean) is
       begin
-         --  A protected procedure call already has exclusive access, so
-         --  this never blocks on the mutex itself: it only waits out
-         --  any in-flight protected operation (a nanoseconds-wide
-         --  window, same shape as Go's futex fast path).
          Ok := not Locked;
          if Ok then
             Locked := True;
@@ -36,25 +58,74 @@ package body Gada.Std.Sync is
 
       function Is_Locked return Boolean is (Locked);
 
-   end Mutex;
+   end Mutex_Core;
+
+   procedure Lock (M : in out Mutex) is
+      Me  : constant Scheduler.Goroutine_Id := Scheduler.Current;
+      Got : Boolean;
+   begin
+      if Me = Scheduler.No_Goroutine then
+         M.Core.Lock_Blocking;
+         return;
+      end if;
+      loop
+         M.Core.Lock_Or_Enqueue (Me, Got);
+         exit when Got;
+         Scheduler.Park;  --  an Unlock Unparks us; re-check
+      end loop;
+   end Lock;
+
+   procedure Unlock (M : in out Mutex) is
+      Wake : Scheduler.Goroutine_Id;
+   begin
+      M.Core.Unlock (Wake);
+      Scheduler.Unpark (Wake);  --  no-op for No_Goroutine
+   end Unlock;
+
+   function Try_Lock (M : in out Mutex) return Boolean is
+      Ok : Boolean;
+   begin
+      M.Core.Try_Lock (Ok);
+      return Ok;
+   end Try_Lock;
+
+   function Is_Locked (M : Mutex) return Boolean is (M.Core.Is_Locked);
 
    ---------------------------------------------------------------
    --  RWMutex
    ---------------------------------------------------------------
 
-   protected body RW_Mutex is
+   protected body RW_Core is
 
-      entry Lock when not Writer and then Readers = 0 is
+      entry Lock_Blocking when not Writer and then Readers = 0 is
       begin
          Writer := True;
-      end Lock;
+      end Lock_Blocking;
 
-      entry R_Lock when not Writer is
+      entry R_Lock_Blocking when not Writer is
       begin
          Readers := Readers + 1;
-      end R_Lock;
+      end R_Lock_Blocking;
 
-      procedure Unlock is
+      procedure Lock_Or_Enqueue (G : Scheduler.Goroutine_Id;
+                                 Got : out Boolean) is
+      begin
+         Try_Lock (Got);
+         if not Got then
+            Waiters.Append (G);
+         end if;
+      end Lock_Or_Enqueue;
+
+      procedure R_Lock_Or_Enqueue (G : Scheduler.Goroutine_Id;
+                                   Got : out Boolean) is
+      begin
+         Try_R_Lock (Got);
+         if not Got then
+            Waiters.Append (G);
+         end if;
+      end R_Lock_Or_Enqueue;
+
+      procedure Unlock (Wake : out Waiter_Lists.List) is
       begin
          --  Go: Unlock with no write lock held panics.
          if not Writer then
@@ -62,9 +133,10 @@ package body Gada.Std.Sync is
               with "sync: unlock of unlocked RWMutex";
          end if;
          Writer := False;
+         Wake.Move (Source => Waiters);
       end Unlock;
 
-      procedure R_Unlock is
+      procedure R_Unlock (Wake : out Waiter_Lists.List) is
       begin
          --  Go: RUnlock with no read lock held panics.
          if Readers = 0 then
@@ -72,6 +144,11 @@ package body Gada.Std.Sync is
               with "sync: RUnlock of unlocked RWMutex";
          end if;
          Readers := Readers - 1;
+         Wake.Clear;
+         if Readers = 0 then
+            --  Only a writer can be waiting on readers.
+            Wake.Move (Source => Waiters);
+         end if;
       end R_Unlock;
 
       procedure Try_Lock (Ok : out Boolean) is
@@ -90,66 +167,202 @@ package body Gada.Std.Sync is
          end if;
       end Try_R_Lock;
 
-   end RW_Mutex;
+   end RW_Core;
+
+   procedure Lock (M : in out RW_Mutex) is
+      Me  : constant Scheduler.Goroutine_Id := Scheduler.Current;
+      Got : Boolean;
+   begin
+      if Me = Scheduler.No_Goroutine then
+         M.Core.Lock_Blocking;
+         return;
+      end if;
+      loop
+         M.Core.Lock_Or_Enqueue (Me, Got);
+         exit when Got;
+         Scheduler.Park;
+      end loop;
+   end Lock;
+
+   procedure R_Lock (M : in out RW_Mutex) is
+      Me  : constant Scheduler.Goroutine_Id := Scheduler.Current;
+      Got : Boolean;
+   begin
+      if Me = Scheduler.No_Goroutine then
+         M.Core.R_Lock_Blocking;
+         return;
+      end if;
+      loop
+         M.Core.R_Lock_Or_Enqueue (Me, Got);
+         exit when Got;
+         Scheduler.Park;
+      end loop;
+   end R_Lock;
+
+   procedure Unlock (M : in out RW_Mutex) is
+      Wake : Waiter_Lists.List;
+   begin
+      M.Core.Unlock (Wake);
+      Wake_All (Wake);
+   end Unlock;
+
+   procedure R_Unlock (M : in out RW_Mutex) is
+      Wake : Waiter_Lists.List;
+   begin
+      M.Core.R_Unlock (Wake);
+      Wake_All (Wake);
+   end R_Unlock;
+
+   function Try_Lock (M : in out RW_Mutex) return Boolean is
+      Ok : Boolean;
+   begin
+      M.Core.Try_Lock (Ok);
+      return Ok;
+   end Try_Lock;
+
+   function Try_R_Lock (M : in out RW_Mutex) return Boolean is
+      Ok : Boolean;
+   begin
+      M.Core.Try_R_Lock (Ok);
+      return Ok;
+   end Try_R_Lock;
 
    ---------------------------------------------------------------
    --  WaitGroup
    ---------------------------------------------------------------
 
-   protected body Wait_Group is
+   protected body WG_Core is
 
-      procedure Add (Amount : Integer) is
+      procedure Add (Amount : Integer; Wake : out Waiter_Lists.List) is
       begin
          --  Go: Add with a negative delta that would drive the counter
          --  below zero panics ("sync: negative WaitGroup counter").
-         if Amount < 0 and then Integer (N) + Amount < 0 then
+         if Integer (N) + Amount < 0 then
             raise Constraint_Error
               with "sync: negative WaitGroup counter";
          end if;
          N := N + Amount;
+         Wake.Clear;
+         if N = 0 then
+            Wake.Move (Source => Waiters);
+         end if;
       end Add;
 
-      procedure Done is
-      begin
-         --  Go: Done() == Add(-1), same underflow panic.
-         if N = 0 then
-            raise Constraint_Error
-              with "sync: negative WaitGroup counter";
-         end if;
-         N := N - 1;
-      end Done;
-
-      entry Wait when N = 0 is
+      entry Wait_Blocking when N = 0 is
       begin
          null;  --  the barrier did the work
-      end Wait;
+      end Wait_Blocking;
+
+      procedure Wait_Or_Enqueue (G : Scheduler.Goroutine_Id;
+                                 Zero : out Boolean) is
+      begin
+         Zero := N = 0;
+         if not Zero then
+            Waiters.Append (G);
+         end if;
+      end Wait_Or_Enqueue;
 
       function Value return Natural is (N);
 
-   end Wait_Group;
+   end WG_Core;
+
+   procedure Add (W : in out Wait_Group; Amount : Integer) is
+      Wake : Waiter_Lists.List;
+   begin
+      W.Core.Add (Amount, Wake);
+      Wake_All (Wake);
+   end Add;
+
+   procedure Done (W : in out Wait_Group) is
+   begin
+      Add (W, -1);
+   end Done;
+
+   procedure Wait (W : in out Wait_Group) is
+      Me   : constant Scheduler.Goroutine_Id := Scheduler.Current;
+      Zero : Boolean;
+   begin
+      if Me = Scheduler.No_Goroutine then
+         W.Core.Wait_Blocking;
+         return;
+      end if;
+      loop
+         W.Core.Wait_Or_Enqueue (Me, Zero);
+         exit when Zero;
+         Scheduler.Park;
+      end loop;
+   end Wait;
+
+   function Value (W : Wait_Group) return Natural is (W.Core.Value);
 
    ---------------------------------------------------------------
    --  Once
    ---------------------------------------------------------------
 
-   protected body Once is
+   protected body Once_Core is
 
-      procedure Do_K (F : Procedure_Access) is
+      procedure Claim (G : Scheduler.Goroutine_Id;
+                       Result : out Claim_Result) is
       begin
-         if not Done_Flag then
-            begin
-               F.all;
-            exception
-               --  Go marks done even when f panics (defer in once.Do).
-               when others =>
-                  Done_Flag := True;
-                  raise;
-            end;
-            Done_Flag := True;
-         end if;
-      end Do_K;
+         case State is
+            when Idle =>
+               State  := Running;
+               Result := Run;
+            when Done =>
+               Result := Finished;
+            when Running =>
+               Result := Wait;
+               if G /= Scheduler.No_Goroutine then
+                  Waiters.Append (G);
+               end if;
+         end case;
+      end Claim;
 
-   end Once;
+      procedure Finish (Wake : out Waiter_Lists.List) is
+      begin
+         State := Done;
+         Wake.Move (Source => Waiters);
+      end Finish;
+
+      entry Await_Blocking when State = Done is
+      begin
+         null;
+      end Await_Blocking;
+
+   end Once_Core;
+
+   procedure Do_K (O : in out Once; F : not null access procedure) is
+      Me     : constant Scheduler.Goroutine_Id := Scheduler.Current;
+      Result : Claim_Result;
+      Wake   : Waiter_Lists.List;
+   begin
+      loop
+         O.Core.Claim (Me, Result);
+         case Result is
+            when Finished =>
+               return;
+            when Run =>
+               begin
+                  F.all;   --  outside any protected action
+               exception
+                  when others =>
+                     --  Go marks done even when f panics.
+                     O.Core.Finish (Wake);
+                     Wake_All (Wake);
+                     raise;
+               end;
+               O.Core.Finish (Wake);
+               Wake_All (Wake);
+               return;
+            when Wait =>
+               if Me = Scheduler.No_Goroutine then
+                  O.Core.Await_Blocking;
+                  return;
+               end if;
+               Scheduler.Park;  --  Finish Unparks us; Claim sees Done
+         end case;
+      end loop;
+   end Do_K;
 
    ---------------------------------------------------------------
    --  Cond
@@ -189,9 +402,9 @@ package body Gada.Std.Sync is
       --  BEFORE releasing L so a Signal that fires between the Unlock
       --  and the park still leaves a token in the channel buffer.
       C.Waiters.Inc;
-      C.L.all.Unlock;
+      Unlock (C.L.all);
       Unit_Channels.Receive (C.Ch, V, OK);
-      C.L.all.Lock;
+      Lock (C.L.all);
       C.Waiters.Dec;
    end Wait;
 

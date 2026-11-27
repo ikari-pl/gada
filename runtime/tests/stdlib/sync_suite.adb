@@ -54,16 +54,24 @@ package body Sync_Suite is
       Register_Routine (T, Test_Cond_Signal'Access, "Cond Signal wakes one");
       Register_Routine
         (T, Test_Cond_Broadcast'Access, "Cond Broadcast wakes all");
+      Register_Routine (T, Test_Mutex_Parks'Access,
+                        "Mutex contender parks while holder parks (1 worker)");
+      Register_Routine (T, Test_RWMutex_Parks'Access,
+                        "RWMutex readers/writers park (1 worker)");
+      Register_Routine (T, Test_WaitGroup_Parks'Access,
+                        "WaitGroup.Wait parks: closer idiom (1 worker)");
+      Register_Routine (T, Test_Once_Waits_For_F'Access,
+                        "Once: f parks, concurrent Do waits (1 worker)");
+      Register_Routine (T, Test_Main_Task_Waits'Access,
+                        "main-task Lock/Do block on entries");
    end Register_Tests;
 
    --  Goroutine body: bump Shared_Counter under the mutex, spinning
    --  on Try_Lock (non-blocking) so a single worker cannot deadlock.
    procedure Bump_Body is
-      Ok : Boolean;
    begin
       loop
-         Shared_Mutex.Try_Lock (Ok);
-         exit when Ok;
+         exit when Shared_Mutex.Try_Lock;
          Scheduler.Yield;
       end loop;
       Shared_Counter := Shared_Counter + 1;
@@ -125,13 +133,10 @@ package body Sync_Suite is
    procedure Test_Mutex_Basic (T : in out
       AUnit.Test_Cases.Test_Case'Class) is
       M  : aliased Mutex;
-      Ok : Boolean;
    begin
       Assert (not M.Is_Locked, "fresh mutex is unlocked");
-      M.Try_Lock (Ok);
-      Assert (Ok and M.Is_Locked, "TryLock on free mutex succeeds");
-      M.Try_Lock (Ok);
-      Assert (not Ok, "TryLock on held mutex fails");
+      Assert (M.Try_Lock and M.Is_Locked, "TryLock on free mutex succeeds");
+      Assert (not M.Try_Lock, "TryLock on held mutex fails");
       M.Unlock;
       Assert (not M.Is_Locked, "Unlock releases");
       M.Lock;
@@ -166,24 +171,17 @@ package body Sync_Suite is
 
    procedure Test_RWMutex (T : in out AUnit.Test_Cases.Test_Case'Class) is
       Rw : aliased RW_Mutex;
-      Ok : Boolean;
    begin
       Rw.Lock;  --  write lock
-      Rw.Try_R_Lock (Ok);
-      Assert (not Ok, "no read lock while writer holds it");
-      Rw.Try_Lock (Ok);
-      Assert (not Ok, "no second write lock");
+      Assert (not Rw.Try_R_Lock, "no read lock while writer holds it");
+      Assert (not Rw.Try_Lock, "no second write lock");
       Rw.Unlock;
-      Rw.Try_R_Lock (Ok);
-      Assert (Ok, "read lock after write unlock");
-      Rw.Try_R_Lock (Ok);
-      Assert (Ok, "second reader ok");
-      Rw.Try_Lock (Ok);
-      Assert (not Ok, "writer blocked by readers");
+      Assert (Rw.Try_R_Lock, "read lock after write unlock");
+      Rw.R_Lock;  --  main-task blocking read path, uncontended
+      Assert (not Rw.Try_Lock, "writer blocked by readers");
       Rw.R_Unlock;
       Rw.R_Unlock;
-      Rw.Try_Lock (Ok);
-      Assert (Ok, "writer ok after all readers released");
+      Assert (Rw.Try_Lock, "writer ok after all readers released");
       Rw.Unlock;
       --  Go panics on Unlock with no write lock / RUnlock with none.
       begin
@@ -332,5 +330,252 @@ package body Sync_Suite is
       Assert (Once_Counter = 1, "4 racing Do_K ran f exactly once, got"
               & Integer'Image (Once_Counter));
    end Test_Once_Concurrent;
+
+   ---------------------------------------------------------------
+   --  Goroutine-aware blocking (regression #3, #7). Workers => 1
+   --  everywhere below: a sync wait that blocked the worker's OS
+   --  thread instead of parking the goroutine deadlocks here, because
+   --  the goroutine that would release it is pinned to that worker.
+   ---------------------------------------------------------------
+
+   Gate       : Unit_Channels.Channel;
+   Step       : Natural := 0;
+   pragma Volatile (Step);
+   Seen_At    : Natural := 0;
+   pragma Volatile (Seen_At);
+   Park_Mutex : aliased Mutex;
+   Park_RW    : aliased RW_Mutex;
+   Park_WG    : Wait_Group;
+   Park_Once  : aliased Once;
+   Main_Once  : aliased Once;
+
+   procedure Recv_Gate is
+      V, OK : Boolean;
+      pragma Unreferenced (V, OK);
+   begin
+      Unit_Channels.Receive (Gate, V, OK);
+   end Recv_Gate;
+
+   --  Wait (bounded) for Step >= N; True if reached.
+   function Reached (N : Natural) return Boolean is
+   begin
+      for I in 1 .. 5_000 loop
+         if Step >= N then
+            return True;
+         end if;
+         delay 0.001;
+      end loop;
+      return Step >= N;
+   end Reached;
+
+   --  Holder: takes the lock, then parks on Gate while holding it.
+   procedure Mutex_Holder is
+   begin
+      Park_Mutex.Lock;
+      Step := 1;
+      Recv_Gate;
+      Park_Mutex.Unlock;
+   end Mutex_Holder;
+
+   procedure Mutex_Contender is
+   begin
+      Step := 2;
+      Park_Mutex.Lock;   --  must park, freeing the single worker
+      Seen_At := Step;
+      Step := 4;
+      Park_Mutex.Unlock;
+   end Mutex_Contender;
+
+   procedure Test_Mutex_Parks (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Unused_G : Scheduler.Goroutine_Id;
+   begin
+      Step := 0;
+      Gate := Unit_Channels.Make;
+      Scheduler.Shutdown;
+      Scheduler.Init (Workers => 1);
+      Unused_G := Scheduler.Spawn (Mutex_Holder'Access);
+      Assert (Reached (1), "holder took the lock");
+      Unused_G := Scheduler.Spawn (Mutex_Contender'Access);
+      Assert (Reached (2), "contender started");
+      delay 0.02;   --  let the contender reach Lock and park
+      Step := 3;
+      Unit_Channels.Send (Gate, True);   --  holder resumes, unlocks
+      Assert (Reached (4), "contender got the lock after the holder");
+      Scheduler.Shutdown;
+      Assert (Seen_At = 3, "contender ran only after the release");
+      Assert (not Park_Mutex.Is_Locked, "lock released");
+   end Test_Mutex_Parks;
+
+   procedure RW_Writer is
+   begin
+      Park_RW.Lock;
+      Step := 1;
+      Recv_Gate;           --  park holding the write lock
+      Park_RW.Unlock;      --  wakes the parked reader
+   end RW_Writer;
+
+   procedure RW_Reader is
+   begin
+      Step := 2;
+      Park_RW.R_Lock;      --  parks: writer holds the lock
+      Step := 4;
+      Recv_Gate;           --  park holding a read lock
+      Park_RW.R_Unlock;    --  readers -> 0: wakes the parked writer
+   end RW_Reader;
+
+   procedure RW_Writer_2 is
+   begin
+      Step := 5;
+      Park_RW.Lock;        --  parks: a reader holds the lock
+      Step := 6;
+      Park_RW.Unlock;
+   end RW_Writer_2;
+
+   procedure Test_RWMutex_Parks (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Unused_G : Scheduler.Goroutine_Id;
+   begin
+      Step := 0;
+      Gate := Unit_Channels.Make;
+      Scheduler.Shutdown;
+      Scheduler.Init (Workers => 1);
+      Unused_G := Scheduler.Spawn (RW_Writer'Access);
+      Assert (Reached (1), "writer holds the lock");
+      Unused_G := Scheduler.Spawn (RW_Reader'Access);
+      Assert (Reached (2), "reader started");
+      delay 0.02;
+      Unit_Channels.Send (Gate, True);   --  writer unlocks
+      Assert (Reached (4), "reader got the read lock after the writer");
+      Unused_G := Scheduler.Spawn (RW_Writer_2'Access);
+      Assert (Reached (5), "second writer started");
+      delay 0.02;
+      Assert (Step = 5, "second writer parked behind the reader");
+      Unit_Channels.Send (Gate, True);   --  reader releases
+      Assert (Reached (6), "second writer got the lock");
+      Scheduler.Shutdown;
+   end Test_RWMutex_Parks;
+
+   --  The `go func(){ wg.Wait(); close(results) }()` closer idiom.
+   procedure WG_Closer is
+   begin
+      Park_WG.Wait;        --  must park, not block the worker
+      Step := 10;
+   end WG_Closer;
+
+   procedure WG_Worker is
+   begin
+      Recv_Gate;
+      Step := Step + 1;
+      Park_WG.Done;
+   end WG_Worker;
+
+   procedure Test_WaitGroup_Parks (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Unused_G : Scheduler.Goroutine_Id;
+   begin
+      Step := 0;
+      Gate := Unit_Channels.Make;
+      Park_WG.Add (2);
+      Scheduler.Shutdown;
+      Scheduler.Init (Workers => 1);
+      Unused_G := Scheduler.Spawn (WG_Closer'Access);
+      Unused_G := Scheduler.Spawn (WG_Worker'Access);
+      Unused_G := Scheduler.Spawn (WG_Worker'Access);
+      delay 0.02;
+      Assert (Step = 0, "closer waits for the workers");
+      Unit_Channels.Send (Gate, True);
+      Unit_Channels.Send (Gate, True);
+      Assert (Reached (10), "closer released when the counter hit 0");
+      Scheduler.Shutdown;
+      Assert (Park_WG.Value = 0, "counter back to 0");
+   end Test_WaitGroup_Parks;
+
+   --  f parks inside Once.Do (a channel receive): it must not run
+   --  inside a protected action, and a concurrent Do must wait for it.
+   procedure Once_Parking_F is
+   begin
+      Step := 1;
+      Recv_Gate;
+      Once_Counter := Once_Counter + 1;
+   end Once_Parking_F;
+
+   procedure Once_First is
+   begin
+      Park_Once.Do_K (Once_Parking_F'Access);
+   end Once_First;
+
+   procedure Once_Second is
+   begin
+      Step := 2;
+      Park_Once.Do_K (Once_Inc'Access);   --  parks until f returns
+      Seen_At := Once_Counter;
+      Step := 3;
+   end Once_Second;
+
+   procedure Test_Once_Waits_For_F (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Unused_G : Scheduler.Goroutine_Id;
+   begin
+      Step := 0;
+      Once_Counter := 0;
+      Seen_At := 99;
+      Gate := Unit_Channels.Make;
+      Scheduler.Shutdown;
+      Scheduler.Init (Workers => 1);
+      Unused_G := Scheduler.Spawn (Once_First'Access);
+      Assert (Reached (1), "f is running (parked)");
+      Unused_G := Scheduler.Spawn (Once_Second'Access);
+      Assert (Reached (2), "second Do called");
+      delay 0.02;
+      Assert (Step = 2, "second Do waits while f runs");
+      Unit_Channels.Send (Gate, True);
+      Assert (Reached (3), "second Do returned after f");
+      Scheduler.Shutdown;
+      Assert (Once_Counter = 1 and then Seen_At = 1,
+              "f ran once and had completed when the second Do returned");
+   end Test_Once_Waits_For_F;
+
+   --  Main-task (non-goroutine) waiters block on the protected entries.
+   procedure Slow_Holder is
+   begin
+      Park_Mutex.Lock;
+      Step := 1;
+      delay 0.03;          --  blocks the worker; main is its own task
+      Step := 2;
+      Park_Mutex.Unlock;
+   end Slow_Holder;
+
+   procedure Slow_F is
+   begin
+      Step := 5;
+      delay 0.03;
+      Once_Counter := Once_Counter + 1;
+   end Slow_F;
+
+   procedure Slow_Once is
+   begin
+      Main_Once.Do_K (Slow_F'Access);
+   end Slow_Once;
+
+   procedure Test_Main_Task_Waits (T : in out
+      AUnit.Test_Cases.Test_Case'Class) is
+      Unused_G : Scheduler.Goroutine_Id;
+   begin
+      Step := 0;
+      Once_Counter := 0;
+      Scheduler.Shutdown;
+      Scheduler.Init (Workers => 1);
+      Unused_G := Scheduler.Spawn (Slow_Holder'Access);
+      Assert (Reached (1), "goroutine holds the mutex");
+      Park_Mutex.Lock;     --  main blocks on the entry until released
+      Assert (Step = 2, "main got the mutex after the goroutine");
+      Park_Mutex.Unlock;
+      Unused_G := Scheduler.Spawn (Slow_Once'Access);
+      Assert (Reached (5), "goroutine is inside f");
+      Main_Once.Do_K (Once_Inc'Access);   --  main awaits f
+      Assert (Once_Counter = 1, "main's Do waited for the running f");
+      Scheduler.Shutdown;
+   end Test_Main_Task_Waits;
 
 end Sync_Suite;

@@ -154,6 +154,30 @@ section at the bottom with the resolution commit / PR reference.
 *What "fixed" looks like:* each missing function ported with a Go-parity test, and the strings item's "60+ functions" bar (35 subprograms today) met or re-scoped by the owner.
 *Tracker:* `roadmap/05-stdlib-wave1.md` (strings / io / bufio / bytes / fmt items).
 
+### `_ = expr` as a statement emits an illegal Ada `_` identifier
+*Where:* `compiler/internal/emit/emit.go` — assignment-statement lowering. Blank identifiers are handled in out-call positions only (a fresh `Discard_N` local, PR #45 commit fb3cb38); a plain `_ = expr` statement still lowers the LHS through `adaIdent("_")`, which is not a legal Ada name, so the emitted program does not compile.
+*Why not fixed yet:* the PR #45 review scope was out-call positions; the statement position needs its own path (evaluate the RHS for side effects, discard the value).
+*What "fixed" looks like:* `_ = expr` lowers to a block that evaluates `expr` and discards the result; a regression test compiles and runs such a program.
+*Tracker:* none yet — file an item on the next compiler phase.
+
+### Deadlock detection is conservative: with any goroutine alive, a true deadlock hangs
+*Where:* `runtime/src/gada-async-scheduler.adb` `Main_Block` poll loop (recorded in `roadmap/06-stdlib-wave2.md`, PR #46 finding #11). The `fatal error: all goroutines are asleep - deadlock!` report fires only when no goroutine is in flight and no timer is pending; a program whose goroutines are all parked forever still hangs instead of reporting.
+*Why not fixed yet:* distinguishing "parked forever" from "will be woken by an external event" needs liveness information the scheduler does not have; v1 errs toward hanging rather than false-reporting.
+*What "fixed" looks like:* the poll loop also reports when every in-flight goroutine is parked on a queue with no pending waker.
+*Tracker:* `roadmap/06-stdlib-wave2.md` post-review fixes.
+
+### Timer service's timed accept is not Ravenscar-compatible
+*Where:* `runtime/src/gada-std-time.adb` — the single timer service task blocks in a `select` with a timed `accept` entry call, which the Ravenscar profile forbids.
+*Why not fixed yet:* on hosted GNAT, `Ada.Real_Time.Timing_Events` fires at 100 ms granularity, which would coarsen timer deadlines; the timed accept keeps exact deadlines on the hosted profile. A Ravenscar build would drive the same deadline-ordered queue from `Timing_Events` (context in ADR-0009).
+*What "fixed" looks like:* a profile-conditional timer driver — `Timing_Events` under Ravenscar, timed accept elsewhere.
+*Tracker:* `roadmap/06-stdlib-wave2.md` timer-service item.
+
+### Coverage exclusions are pinned to line numbers (per-commit gate gap)
+*Where:* `tools/coverage_thresholds.toml` `[[exclude]]` entries pin `file:line` ranges, so mid-PR edits that shift lines silently un-exclude them. On PR #45, commits 653fa21–fe2e0ec sat at 98.4% runtime coverage until 619bedf restored the 100% gate; fixing each commit in place would have required a rebase, so the gap was left as history.
+*Why not fixed yet:* the gate evaluates only the PR head; there is no per-commit gate state.
+*What "fixed" looks like:* either CI fails a PR whose *any* commit drops below threshold, or exclusions anchor to symbols instead of line numbers so they survive shifts.
+*Tracker:* `tools/coverage_gate.sh`; PR #45.
+
 ## Resolved
 
 ### In-tree bench harness scaffolding pending

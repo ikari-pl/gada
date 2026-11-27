@@ -266,7 +266,7 @@ package body Json_Suite is
       Unmarshal (To_Bytes ("1e+"), I, Err);
       Assert (Err /= Errors.No_Error, "sign without digits must error");
       --  Fits int64 but not 32-bit Integer: range error on the target.
-      Unmarshal (To_Bytes ("99999999999999999999"), I, Err);
+      Unmarshal (To_Bytes ("3000000000"), I, Err);
       Assert (Err /= Errors.No_Error, "int range overflow must error");
       Unmarshal (To_Bytes (""), F, Err);
       Assert (Err /= Errors.No_Error, "empty into float must error");

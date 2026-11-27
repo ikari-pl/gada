@@ -147,3 +147,26 @@ historical record.
   whose goroutines are all parked forever still hangs instead of
   reporting.
   *Verify:* `make -C runtime test PKG=async.deadlock`.
+- **Timer service** (findings #8, #9, #12, #14, #15). One library-level
+  service task over a protected deadline-ordered queue replaces the
+  task-per-timer design; Tick drops ticks while one is pending (Go's
+  cap-1), `Tick (d <= 0)` returns `No_Channel`, After/NewTimer with
+  d <= 0 fire immediately, `Stop` returns Boolean. Timers are queued
+  synchronously (no register-after-start race). The service's timed
+  accept is not Ravenscar; a Ravenscar build would drive the same queue
+  from `Ada.Real_Time.Timing_Events`.
+  *Verify:* `make stdlib-test PKG=time`.
+- **Time zones** (finding #2). Wall is always the true instant;
+  UTC()/Local() only flip the display flag and every split passes the
+  zone offset explicitly. Tests pin TZ (setenv + tzset) to UTC,
+  Europe/Warsaw, Asia/Kolkata and America/New_York against Go output.
+  *Verify:* `make stdlib-test PKG=time` (passes under any host TZ).
+- **Smaller fixes.** `Duration.String (math.MinInt64)` no longer
+  overflows (#16); `os.ReadFile` reads 64 KiB chunks to EOF, so FIFOs
+  and size-0 procfs files work and Use_Error maps to an error value
+  (#13); `runtime.GOMAXPROCS` never joins live goroutines — it resizes
+  only with none in flight, otherwise records the value for the next
+  Init (#10); `make example` falls back to `gtimeout` or an unbounded
+  run and reports exit 124 as a timeout (#17).
+  *Verify:* `make stdlib-test PKG=os`, `PKG=runtime`, `PKG=time`;
+  `make example HELLO=timer_pool`.

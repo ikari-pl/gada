@@ -264,25 +264,6 @@ package body Gada.Std.Json is
       end;
    end Float_Image;
 
-   --  Parsed scalar token kinds.
-   type Scalar_Kind is (K_Null, K_Bool, K_Int, K_Float, K_String,
-                        K_Invalid);
-
-   type Scalar (Kind : Scalar_Kind := K_Invalid) is record
-      case Kind is
-         when K_Bool =>
-            B : Boolean;
-         when K_Int =>
-            I : Long_Long_Integer;
-         when K_Float =>
-            F : Long_Float;
-         when K_String =>
-            S : Unbounded_String;
-         when others =>
-            null;
-      end case;
-   end record;
-
    --  Only_Ws_From reports whether S (I .. S'Last) is all whitespace.
    function Only_Ws_From (S : String; I : Natural) return Boolean is
    begin
@@ -294,12 +275,12 @@ package body Gada.Std.Json is
       return True;
    end Only_Ws_From;
 
-   --  Parse_Scalar parses one JSON value from Text (leading/trailing
-   --  whitespace allowed) — v1 supports scalars only (objects/arrays
-   --  are item 2b). OK = False on any syntax error or trailing junk.
-   procedure Parse_Scalar (Text : String; V : out Scalar;
-                           OK : out Boolean) is
-      I : Natural := Text'First;
+   --  Parse_Scalar_At parses one JSON scalar starting at or after I
+   --  (leading whitespace skipped), leaving I just past the value.
+   --  v1 supports scalars only (objects/arrays are Parse_Object's job).
+   --  OK = False on any syntax error.
+   procedure Parse_Scalar_At (Text : String; I : in out Natural;
+                              V : out Scalar; OK : out Boolean) is
    begin
       OK := False;
       V := (Kind => K_Invalid);
@@ -464,6 +445,35 @@ package body Gada.Std.Json is
    end Encode_Value;
 
    ---------------------------------------------------------------
+   --  Typed scalar encoders
+   ---------------------------------------------------------------
+
+   function Encode_Int (X : Integer) return Unbounded_String is
+   begin
+      return To_Unbounded_String (Ada.Strings.Fixed.Trim
+        (X'Image, Ada.Strings.Left));
+   end Encode_Int;
+
+   function Encode_Float (X : Long_Float) return Unbounded_String is
+   begin
+      return To_Unbounded_String (Float_Image (X));
+   end Encode_Float;
+
+   function Encode_Bool (X : Boolean) return Unbounded_String is
+   begin
+      if X then
+         return To_Unbounded_String ("true");
+      else
+         return To_Unbounded_String ("false");
+      end if;
+   end Encode_Bool;
+
+   function Encode_String (S : String) return Unbounded_String is
+   begin
+      return To_Unbounded_String ('"' & Escape (S) & '"');
+   end Encode_String;
+
+   ---------------------------------------------------------------
    --  Marshal / Unmarshal
    ---------------------------------------------------------------
 
@@ -472,8 +482,7 @@ package body Gada.Std.Json is
                       Err  : out Error_Access) is
    begin
       Err  := No_Error;
-      Data := To_Bytes (Ada.Strings.Fixed.Trim (X'Image,
-                                                 Ada.Strings.Left));
+      Data := To_Bytes (To_String (Encode_Int (X)));
    end Marshal;
 
    procedure Marshal (X : Long_Float;
@@ -487,19 +496,15 @@ package body Gada.Std.Json is
          return;
       end if;
       Err  := No_Error;
-      Data := To_Bytes (Float_Image (X));
+      Data := To_Bytes (To_String (Encode_Float (X)));
    end Marshal;
 
    procedure Marshal (X : Boolean;
                       Data : out Byte_Slice;
                       Err  : out Error_Access) is
    begin
-      Err := No_Error;
-      if X then
-         Data := To_Bytes ("true");
-      else
-         Data := To_Bytes ("false");
-      end if;
+      Err  := No_Error;
+      Data := To_Bytes (To_String (Encode_Bool (X)));
    end Marshal;
 
    procedure Marshal (X : String;
@@ -507,7 +512,7 @@ package body Gada.Std.Json is
                       Err  : out Error_Access) is
    begin
       Err  := No_Error;
-      Data := To_Bytes ('"' & Escape (X) & '"');
+      Data := To_Bytes (To_String (Encode_String (X)));
    end Marshal;
 
    procedure Marshal (V : Gada.Reflect.Values.Value;

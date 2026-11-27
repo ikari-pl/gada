@@ -20,6 +20,7 @@
 --  no type-id plumbing for the common case; the Value overloads are
 --  the reflect-driven path.
 
+with Ada.Containers;
 with Ada.Strings.Unbounded;
 with Gada.Reflect.Types;
 with Gada.Reflect.Values;
@@ -53,6 +54,61 @@ package Gada.Std.Json is
    --  non-scalar kinds encode as null.
    function Encode_Value (V : Gada.Reflect.Values.Value)
                           return Ada.Strings.Unbounded.Unbounded_String;
+
+   --  Typed scalar encoders (the building blocks the compiler-generated
+   --  per-struct marshalers in item 2b compose).
+   function Encode_Int (X : Integer)
+                        return Ada.Strings.Unbounded.Unbounded_String;
+   function Encode_Float (X : Long_Float)
+                          return Ada.Strings.Unbounded.Unbounded_String;
+   function Encode_Bool (X : Boolean)
+                         return Ada.Strings.Unbounded.Unbounded_String;
+   --  Encode_String renders the quoted, escaped JSON string literal.
+   function Encode_String (S : String)
+                           return Ada.Strings.Unbounded.Unbounded_String;
+
+   ---------------------------------------------------------------
+   --  Object parsing (item 2b)
+   ---------------------------------------------------------------
+
+   --  Parsed scalar token kinds.
+   type Scalar_Kind is (K_Null, K_Bool, K_Int, K_Float, K_String,
+                        K_Invalid);
+
+   --  A parsed JSON scalar. Only the component matching Kind is
+   --  meaningful.
+   type Scalar (Kind : Scalar_Kind := K_Invalid) is record
+      case Kind is
+         when K_Bool =>
+            B : Boolean;
+         when K_Int =>
+            I : Long_Long_Integer;
+         when K_Float =>
+            F : Long_Float;
+         when K_String =>
+            S : Ada.Strings.Unbounded.Unbounded_String;
+         when others =>
+            null;
+      end case;
+   end record;
+
+   --  One object member: key plus parsed scalar value.
+   type Member is record
+      Key : Ada.Strings.Unbounded.Unbounded_String;
+      Val : Scalar;
+   end record;
+
+   package Member_Vectors is new
+     Ada.Containers.Vectors (Positive, Member);
+
+   --  Parse_Object parses a flat JSON object (`{"k": v, …}`) into
+   --  Members. v1 accepts scalar values only — nested objects/arrays
+   --  are rejected (OK = False), as are syntax errors and trailing
+   --  junk. Surrounding whitespace is allowed.
+   procedure Parse_Object
+     (Text    : String;
+      Members : out Member_Vectors.Vector;
+      OK      : out Boolean);
 
    ---------------------------------------------------------------
    --  Marshal / Unmarshal (two-value out-call shape)

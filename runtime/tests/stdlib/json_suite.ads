@@ -27,5 +27,7 @@ package Json_Suite is
    procedure Test_Unmarshal_Errors (T : in out
       AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Float_Image (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Parse_Object (T : in out
+      AUnit.Test_Cases.Test_Case'Class);
 
 end Json_Suite;

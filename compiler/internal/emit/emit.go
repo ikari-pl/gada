@@ -191,6 +191,8 @@ type emitter struct {
 	pendingHead          []pendingHeadInit   // per-subprogram queue of head-of-body defines whose *initialisation* must run at the top of the body in source order (2-LHS stdlib out-calls, and any := whose RHS references an out-call result — Go evaluates RHS at the := point, but Ada declarative initialisers run before the body, so these are declared bare and initialised in the body). Drained by emitPendingHead at body top. Reset per subprogram.
 	deferredDecls        map[string]bool     // names whose decl initialiser was deferred to the body (out-call targets and anything referencing them).
 	unboundedStrings     map[string]bool     // local string vars, declared as Unbounded_String (Ada String objects are bound-constrained; Go strings are variable-length).
+	jsonStructOrder      []string            // Phase 7 item 2b: struct types needing generated Json_Marshal_T/Json_Unmarshal_T, in discovery order
+	jsonStructSeen       map[string]bool     // dedup set for jsonStructOrder
 	pendingRecvs         []pendingChanRecv   // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
 	pendingAsserts       []pendingTypeAssert // per-subprogram queue of `v, ok := x.(T)` (comma-ok, item 6b) defines whose body-side membership-test + guarded-conversion block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order (same "RHS evaluates at the := point" rule). Reset at every emitSubprogram call.
 	err                  error
@@ -265,6 +267,8 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		stdlibImports:       map[string]string{},
 		deferredDecls:       map[string]bool{},
 		unboundedStrings:    map[string]bool{},
+		jsonStructOrder:     []string{},
+		jsonStructSeen:      map[string]bool{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
@@ -878,6 +882,10 @@ func (e *emitter) run() error {
 	for _, d := range e.file.Decls {
 		if fn, ok := d.(*ir.Function); ok {
 			e.populateLocals(fn)
+			// Phase 7 item 2b: rewrite struct-typed json.Marshal /
+			// json.Unmarshal calls to generated per-struct procedures
+			// (localTypes is populated for fn right above).
+			e.rewriteJSONStructCalls(fn)
 		}
 	}
 	withs := e.collectWiths()
@@ -1465,6 +1473,10 @@ func (e *emitter) emitMainUnits(withs []string) {
 			}
 			e.emitSubprogram(fn)
 		}
+		if len(e.jsonStructOrder) > 0 {
+			e.println("")
+			e.emitJSONMarshalers()
+		}
 		e.indent--
 		e.println("")
 		e.println("begin")
@@ -1577,6 +1589,13 @@ func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
 	}
 	if nestedTypes && (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
 		e.println("")
+	}
+	if len(e.jsonStructOrder) > 0 {
+		if nestedTypes && (hasTypes || hasInst || len(others) > 0 ||
+			len(mainDecls) > 0) {
+			e.println("")
+		}
+		e.emitJSONMarshalers()
 	}
 	if nestedTypes {
 		for i, fn := range others {
@@ -1816,8 +1835,14 @@ func (e *emitter) emitPackageBody() {
 	if hasPanic {
 		e.emitPanicInstantiation()
 	}
-	if (hasTypes || hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) && len(fns) > 0 {
+	if (hasTypes || hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(e.jsonStructOrder) > 0) && len(fns) > 0 {
 		e.println("")
+	}
+	if len(e.jsonStructOrder) > 0 {
+		e.emitJSONMarshalers()
+		if len(fns) > 0 {
+			e.println("")
+		}
 	}
 	for i, fn := range fns {
 		if i > 0 {
@@ -1951,6 +1976,9 @@ func inferRHSType(x ir.Expr) (ir.Type, bool) {
 		return &ir.SliceType{Elem: x.Elem}, true
 	case *ir.MapLit:
 		return &ir.MapType{Key: x.Key, Value: x.Value}, true
+	case *ir.StructLit:
+		// `p := Point{...}` binds p to the named struct type.
+		return &ir.NamedType{Name: x.TypeName}, true
 	case *ir.TypeAssert:
 		// `v := x.(T)` (single-value, item 6a) binds v to the asserted
 		// type T. The comma-ok form never lands here: populateLocals
@@ -3848,6 +3876,27 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 		e.emitFmtPrintln(c)
 		return
 	}
+	// Phase 7 item 2b: bare `json.Unmarshal(data, &v);` on a struct
+	// target (rewritten to Json_Unmarshal_T) — discard the error into
+	// a block-local and pass the target as the trailing out-arg.
+	if id, ok := c.Fun.(*ir.Ident); ok &&
+		strings.HasPrefix(id.Name, "Json_Unmarshal_") {
+		e.println("declare")
+		e.indent++
+		e.println("Err : Gada.Std.Errors.Error_Access;")
+		e.println("begin")
+		e.indent++
+		args := make([]string, 0, len(c.Args)+1)
+		for _, a := range c.Args {
+			args = append(args, e.emitExpr(a))
+		}
+		args = append(args, "Err")
+		e.println(e.emitExpr(c.Fun) + " (" + strings.Join(args, ", ") + ");")
+		e.indent--
+		e.println("end;")
+		e.indent--
+		return
+	}
 	// A selector-headed call whose prefix is a stdlib import name
 	// (`strings.ToUpper(s)`) is a qualified package call, not a method
 	// call: emit `Gada.Std.Strings.To_Upper (S);`.
@@ -5093,6 +5142,11 @@ func (e *emitter) emitUnaryOp(u *ir.UnaryOp) string {
 // so it lowers to a procedure call with the target appended after the
 // source args: `Gada.Std.Json.Unmarshal (Data, V, Err);`.
 func (e *emitter) isJSONUnmarshal(c *ir.Call) bool {
+	// Struct-typed calls were rewritten to Json_Unmarshal_T idents by
+	// the item-2b pre-pass; the out-arg shape is the same.
+	if id, ok := c.Fun.(*ir.Ident); ok {
+		return strings.HasPrefix(id.Name, "Json_Unmarshal_")
+	}
 	sel, ok := c.Fun.(*ir.Selector)
 	if !ok || sel.Sel != "Unmarshal" {
 		return false

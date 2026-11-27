@@ -178,10 +178,10 @@ package body Time_Suite is
    --  (the guard arm).
    procedure Test_Sleep (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
-      Start : constant Ada.Real_Time.Time := Ada.Real_Time.Clock;
+      Start : constant Time := Now;
    begin
       Sleep (20 * Millisecond);
-      Assert (Ada.Real_Time.Clock - Start >= Ada.Real_Time.Milliseconds (20),
+      Assert (Since (Start) >= 20 * Millisecond,
               "Sleep returned before the requested duration");
       Sleep (0);
       Sleep (-Second);

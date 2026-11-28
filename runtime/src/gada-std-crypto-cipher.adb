@@ -260,6 +260,19 @@ package body Gada.Std.Crypto.Cipher is
       return (B => B, H => Gada.Std.Crypto.Aes.Encrypt (B, Zero));
    end New_GCM;
 
+   procedure New_GCM (B   : Gada.Std.Crypto.Aes.Block;
+                      G   : out GCM;
+                      Err : out Gada.Std.Errors.Error_Access) is
+   begin
+      G := New_GCM (B);
+      Err := null;
+   exception
+      when others =>
+         G := (B => (Nr => 10, W => (others => 0)),
+               H => Byte_Vectors.Empty_Vector);
+         Err := Gada.Std.Errors.New_K ("crypto/cipher: NewGCM failed");
+   end New_GCM;
+
    function Nonce_Size (G : GCM) return Natural is
       pragma Unreferenced (G);
    begin
@@ -354,6 +367,21 @@ package body Gada.Std.Crypto.Cipher is
             return P;
          end;
       end;
+   end Open;
+
+   procedure Open (G          : GCM;
+                   Nonce      : Byte_Slice;
+                   Ciphertext : Byte_Slice;
+                   Additional : Byte_Slice;
+                   Plain      : out Byte_Slice;
+                   Err        : out Gada.Std.Errors.Error_Access) is
+   begin
+      Plain := Open (G, Nonce, Ciphertext, Additional);
+      Err := null;
+   exception
+      when Constraint_Error =>
+         Err := Gada.Std.Errors.New_K
+           ("crypto/cipher: message authentication failed");
    end Open;
 
 end Gada.Std.Crypto.Cipher;

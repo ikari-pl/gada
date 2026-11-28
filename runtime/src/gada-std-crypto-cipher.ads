@@ -13,6 +13,7 @@
 
 with Gada.Std.Bytes;
 with Gada.Std.Crypto.Aes;
+with Gada.Std.Errors;
 
 package Gada.Std.Crypto.Cipher is
 
@@ -54,6 +55,13 @@ package Gada.Std.Crypto.Cipher is
    type GCM is limited private;
 
    function New_GCM (B : Gada.Std.Crypto.Aes.Block) return GCM;
+
+   --  Go out-call form: `gcm, err := cipher.NewGCM(block)` lowers to
+   --  New_GCM (Block, Gcm, Err).
+   procedure New_GCM (B   : Gada.Std.Crypto.Aes.Block;
+                      G   : out GCM;
+                      Err : out Gada.Std.Errors.Error_Access);
+
    function Nonce_Size (G : GCM) return Natural;   --  12
    function Overhead (G : GCM) return Natural;     --  16
 
@@ -67,6 +75,16 @@ package Gada.Std.Crypto.Cipher is
    --  CONSTRAINT_ERROR on a tag mismatch (Go's error half).
    function Open (G : GCM; Nonce, Ciphertext, Additional : Byte_Slice)
       return Byte_Slice;
+
+   --  Go out-call form: `opened, err := gcm.Open(dst, nonce, ct, ad)`
+   --  lowers to Open (Gcm, Nonce, Ct, Ad, Opened, Err); the tag-mismatch
+   --  raise becomes the error half.
+   procedure Open (G         : GCM;
+                   Nonce     : Byte_Slice;
+                   Ciphertext : Byte_Slice;
+                   Additional : Byte_Slice;
+                   Plain     : out Byte_Slice;
+                   Err       : out Gada.Std.Errors.Error_Access);
 
 private
 

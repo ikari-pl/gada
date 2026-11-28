@@ -316,6 +316,17 @@ package body Gada.Std.Crypto.Aes is
       return B;
    end New_Cipher;
 
+   procedure New_Cipher (Key : Byte_Slice; B : out Block;
+                         Err : out Gada.Std.Errors.Error_Access) is
+   begin
+      B := New_Cipher (Key);
+      Err := null;
+   exception
+      when Constraint_Error =>
+         B := (Nr => 10, W => (others => 0));
+         Err := Gada.Std.Errors.New_K ("crypto/aes: invalid key size");
+   end New_Cipher;
+
    function Block_Size (B : Block) return Natural is
       pragma Unreferenced (B);
    begin

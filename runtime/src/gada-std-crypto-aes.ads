@@ -15,6 +15,7 @@
 --  be exactly one block (CONSTRAINT_ERROR otherwise).
 
 with Gada.Std.Bytes;
+with Gada.Std.Errors;
 with Interfaces;
 
 package Gada.Std.Crypto.Aes is
@@ -30,6 +31,12 @@ package Gada.Std.Crypto.Aes is
 
    --  Go: aes.NewCipher(key).
    function New_Cipher (Key : Gada.Std.Bytes.Byte_Slice) return Block;
+
+   --  Go out-call form: `block, err := aes.NewCipher(key)` lowers to
+   --  New_Cipher (Key, Block, Err); the raise becomes the error half.
+   procedure New_Cipher (Key : Gada.Std.Bytes.Byte_Slice;
+                         B   : out Block;
+                         Err : out Gada.Std.Errors.Error_Access);
 
    --  Go: Block.BlockSize() int — always 16.
    function Block_Size (B : Block) return Natural;

@@ -32,24 +32,24 @@ package body Std_Encoding_Text_Suite is
       Register_Routine (T, Test_Xml_Errors'Access, "xml malformed docs raise");
    end Register_Tests;
 
-   --  Record / Record_List builders (arity overloads).
-   function Rec (A : String) return Record is
-      R : Record;
+   --  Row / Record_List builders (arity overloads).
+   function Rec (A : String) return Row is
+      R : Row;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       return R;
    end Rec;
 
-   function Rec (A, B : String) return Record is
-      R : Record;
+   function Rec (A, B : String) return Row is
+      R : Row;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       String_Vectors.Append (R, To_Unbounded_String (B));
       return R;
    end Rec;
 
-   function Rec (A, B, C : String) return Record is
-      R : Record;
+   function Rec (A, B, C : String) return Row is
+      R : Row;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       String_Vectors.Append (R, To_Unbounded_String (B));
@@ -57,8 +57,8 @@ package body Std_Encoding_Text_Suite is
       return R;
    end Rec;
 
-   function Rec (A, B, C, D : String) return Record is
-      R : Record;
+   function Rec (A, B, C, D : String) return Row is
+      R : Row;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       String_Vectors.Append (R, To_Unbounded_String (B));
@@ -67,8 +67,8 @@ package body Std_Encoding_Text_Suite is
       return R;
    end Rec;
 
-   function Rec (A, B, C, D, E : String) return Record is
-      R : Record;
+   function Rec (A, B, C, D, E : String) return Row is
+      R : Row;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       String_Vectors.Append (R, To_Unbounded_String (B));
@@ -78,14 +78,14 @@ package body Std_Encoding_Text_Suite is
       return R;
    end Rec;
 
-   function Recs (R1 : Record) return Record_List is
+   function Recs (R1 : Row) return Record_List is
       L : Record_List;
    begin
       Row_Vectors.Append (L, R1);
       return L;
    end Recs;
 
-   function Recs (R1, R2 : Record) return Record_List is
+   function Recs (R1, R2 : Row) return Record_List is
       L : Record_List;
    begin
       Row_Vectors.Append (L, R1);
@@ -93,7 +93,7 @@ package body Std_Encoding_Text_Suite is
       return L;
    end Recs;
 
-   procedure Assert_Rec (Got, Want : Record; Msg : String) is
+   procedure Assert_Rec (Got, Want : Row; Msg : String) is
    begin
       Assert (String_Vectors.Length (Got) = String_Vectors.Length (Want),
               Msg & ": field count");

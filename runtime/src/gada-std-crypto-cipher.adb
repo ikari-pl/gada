@@ -92,9 +92,12 @@ package body Gada.Std.Crypto.Cipher is
       Dst := Byte_Vectors.Empty_Vector;
       for Off in 0 .. N / 16 - 1 loop
          declare
+            Raw : constant Byte_Slice :=
+              Sub_Slice (Src, 16 * Off + 1, 16 * Off + 16);
+            --  Encrypt chains the XORed block; decrypt consumes the
+            --  raw ciphertext block and XORs after the block decrypt.
             Blk : constant Byte_Slice :=
-              Xor_Blocks (M.Chain,
-                          Sub_Slice (Src, 16 * Off + 1, 16 * Off + 16));
+              (if M.Enc then Xor_Blocks (M.Chain, Raw) else Raw);
             C   : Byte_Slice;
          begin
             if M.Enc then
@@ -106,7 +109,7 @@ package body Gada.Std.Crypto.Cipher is
                     Gada.Std.Crypto.Aes.Decrypt (M.B, Blk);
                begin
                   C := Xor_Blocks (P, M.Chain);
-                  M.Chain := Blk;
+                  M.Chain := Raw;
                end;
             end if;
             for I in 1 .. Natural (Byte_Vectors.Length (C)) loop
@@ -243,8 +246,8 @@ package body Gada.Std.Crypto.Cipher is
          Len_Blk : Byte16 := (others => 0);
       begin
          for J in 0 .. 7 loop
-            Len_Blk (J) := Unsigned_8 (Shift_Right (LA, 8 * (7 - J)));
-            Len_Blk (8 + J) := Unsigned_8 (Shift_Right (LC, 8 * (7 - J)));
+            Len_Blk (J) := Unsigned_8 (Shift_Right (LA, 8 * (7 - J)) and 16#FF#);
+            Len_Blk (8 + J) := Unsigned_8 (Shift_Right (LC, 8 * (7 - J)) and 16#FF#);
          end loop;
          GHASH_Block (Y, H16, Len_Blk);
       end;

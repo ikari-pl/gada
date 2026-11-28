@@ -1,0 +1,11 @@
+# Jekyll config for the GADA project page (GitHub Pages, served from
+# /docs on main). See docs/index.md for the page itself.
+title: GADA — Go on Ada
+description: >-
+  GADA transpiles Go source to Ada and runs it on the GCC Ada toolchain:
+  goroutines, channels, slices, maps, GC, and a growing Go-stdlib subset —
+  on platforms stock Go cannot reach, with a SPARK verification path.
+theme: minima
+url: https://ikari-pl.github.io
+github:
+  repo: ikari-pl/gada

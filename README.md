@@ -11,8 +11,9 @@
 [![coverage](https://img.shields.io/badge/coverage-target%20100%25%20runtime%20%2F%20%E2%89%A590%25%20compiler-blue)]()
 [![license](https://img.shields.io/badge/license-TBD-lightgrey)]()
 
-**Status: design + early development.** No shippable artifact yet. See
-[`roadmap/`](./roadmap/) for phase-by-phase status.
+**Status: design + early development.** Phases 0–8 done, CI green. See
+[`roadmap/`](./roadmap/) for phase-by-phase status and the
+[project page](https://ikari-pl.github.io/gada/) for what works today.
 
 ---
 

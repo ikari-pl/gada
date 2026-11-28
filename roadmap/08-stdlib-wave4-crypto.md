@@ -33,10 +33,10 @@ HMAC-SHA-256 pass; AES-GCM round-trips; base64/hex round-trip.
       *Verify:* `make stdlib-test PKG=crypto.hmac`
       *Done when:* met — all 14 RFC 4231 (SHA-256/512) + RFC 2202 (MD5/SHA-1) cases pinned from Go 1.27 via `go run`, each MAC'd with all four algorithms, plus split-Write via Equal, Sum-append, Reset, Size/Block_Size; keys longer than the block size exercise the hash-the-key arm; v1 takes the algorithm as an explicit tag (New_K (Sha256, Key)) because the hash.Hash interface port is a later item; runtime/ 100% gate green (four Sum case-arm terminators excluded with rationale in runtime/COVERAGE.md).
 
-- [ ] **Stdlib packages: `crypto/aes`, `crypto/cipher`**
-      *Files:* `stdlib/crypto/aes/`, `stdlib/crypto/cipher/`
+- [x] **Stdlib packages: `crypto/aes`, `crypto/cipher`** (done 2026-11-28, CI green on 22ecefa, run 46096320783)
+      *Files:* `runtime/src/gada-std-crypto-aes.{ads,adb}`, `runtime/src/gada-std-crypto-cipher.{ads,adb}`, `runtime/tests/stdlib/std_crypto_aes_suite.{ads,adb}` (suite `stdlib.crypto.aes`), `compiler/internal/ir/stdlib.go`, `compiler/internal/emit/emit_test.go`
       *Verify:* `make stdlib-test PKG=crypto.aes`
-      *Done when:* AES-128/192/256, ECB/CBC/CTR/GCM all match NIST KAT; coverage 100%.
+      *Done when:* met — FIPS-197 ECB KAT for AES-128/192/256, SP 800-38A CBC+CTR 4-block KATs for all key sizes, 4 GCM cases (empty/1-block/64-byte+AAD/AES-256) with Seal/Open round-trips and a corrupted-tag raise, all pinned from Go 1.27 via `go run`; error halves (bad key size, bad IV, partial block, short nonce/ciphertext, tag mismatch) raise CONSTRAINT_ERROR; S-box tables generated from GF inverse+affine and verified exactly; AES and mode constructions cross-checked against the vectors in a Python transliteration; runtime/ 100% gate green (11 lcov terminator/continuation artifacts excluded with rationale in runtime/COVERAGE.md).
 
 - [ ] **Stdlib packages: `encoding/base64`, `encoding/hex`, `encoding/binary`**
       *Files:* `stdlib/encoding/...`

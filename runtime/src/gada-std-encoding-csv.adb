@@ -23,7 +23,7 @@ package body Gada.Std.Encoding.Csv is
       Done   : Boolean := False;
       Quoted : Boolean;
    begin
-      Row_Vectors.Clear (Rec);
+      Gada.Std.Strings.String_Vectors.Clear (Rec);
       loop
          --  One field.
          Buf := Null_Unbounded_String;
@@ -78,10 +78,11 @@ package body Gada.Std.Encoding.Csv is
          elsif S (Pos) = LF then
             Pos := Pos + 1;
             if not Quoted
-              and then Length (Buf) > 0
-              and then Element (Buf, Length (Buf)) = CR
+              and then Ada.Strings.Unbounded.Length (Buf) > 0
+              and then Ada.Strings.Unbounded.Element
+                (Buf, Ada.Strings.Unbounded.Length (Buf)) = CR
             then
-               Delete_Last (Buf);
+               Ada.Strings.Unbounded.Delete_Last (Buf);
                Gada.Std.Strings.String_Vectors.Replace_Element
                  (Rec,
                   Positive (Gada.Std.Strings.String_Vectors.Length (Rec)),
@@ -141,7 +142,9 @@ package body Gada.Std.Encoding.Csv is
       Out_S : Unbounded_String;
    begin
       for Rec of Records loop
-         for I in 1 .. Gada.Std.Strings.String_Vectors.Length (Rec) loop
+         for I in
+           1 .. Natural (Gada.Std.Strings.String_Vectors.Length (Rec))
+         loop
             if I > 1 then
                Append (Out_S, ',');
             end if;

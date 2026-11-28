@@ -5,7 +5,6 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 
 with AUnit.Assertions; use AUnit.Assertions;
 
-with Ada.Text_IO; use Ada.Text_IO;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 with Interfaces; use Interfaces;
 
@@ -154,25 +153,6 @@ package body Std_Crypto_Aes_Suite is
             Pt : constant Byte_Slice := From_Hex (To_String (V.Pt));
          begin
             Assert (Gada.Std.Crypto.Aes.Block_Size (B) = 16, "Block_Size");
-            Put_Line ("DBG " & To_String (V.Name) & " ct="
-                        & To_Hex (Gada.Std.Crypto.Aes.Encrypt (B, Pt)));
-            if To_String (V.Name) = "ecb128" then
-               declare
-                  Line : String (1 .. 44 * 11) := (others => ' ');
-                  P    : Positive := 1;
-               begin
-                  for I in 0 .. 43 loop
-                     declare
-                        Img : constant String := Unsigned_32'Image (B.W (I));
-                     begin
-                        Line (P .. P + Img'Length - 1) := Img;
-                        P := P + Img'Length + 1;
-                     end;
-                  end loop;
-                  Put_Line ("DBG W " & Line (1 .. P - 2)
-                              & " nr=" & Natural'Image (B.Nr));
-               end;
-            end if;
             Assert
               (To_Hex (Gada.Std.Crypto.Aes.Encrypt (B, Pt))
                  = To_String (V.Ct),

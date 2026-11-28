@@ -106,7 +106,7 @@ package body Gada.Std.Crypto.Aes is
 
    function Sub_Word (W : Unsigned_32) return Unsigned_32 is
    begin
-      return Unsigned_32 (Sbox (Natural (Shift_Right (W, 24))))
+      return Shift_Left (Unsigned_32 (Sbox (Natural (Shift_Right (W, 24)))), 24)
         or Shift_Left (Unsigned_32 (Sbox (Natural (Shift_Right (W, 16) and 16#FF#))), 16)
         or Shift_Left (Unsigned_32 (Sbox (Natural (Shift_Right (W, 8) and 16#FF#))), 8)
         or Unsigned_32 (Sbox (Natural (W and 16#FF#)));

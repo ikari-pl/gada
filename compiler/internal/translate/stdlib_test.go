@@ -755,3 +755,109 @@ func f() {
 		t.Fatalf("Post body arg still a call (NewReader not unwrapped): %#v", post.Args[2])
 	}
 }
+
+// parseSrcInfo parses and type-checks a one-file package, then
+// translates it with the real *types.Info (the driver path), so call
+// result types come from go/types rather than the fallback table.
+func parseSrcInfo(t *testing.T, src string) *ir.Package {
+	t.Helper()
+	fset := token.NewFileSet()
+	af, err := parser.ParseFile(fset, "x.go", src, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	conf := types.Config{Importer: importer.Default()}
+	info := &types.Info{
+		Types: map[ast.Expr]types.TypeAndValue{},
+		Defs:  map[*ast.Ident]types.Object{},
+		Uses:  map[*ast.Ident]types.Object{},
+	}
+	if _, err = conf.Check("p", fset, []*ast.File{af}, info); err != nil {
+		t.Fatalf("typecheck: %v", err)
+	}
+	pkg, err := File(af, info)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	return pkg
+}
+
+// TestHmacNewRewrite pins the wave-4 hmac.New(sha256.New, key) rewrite:
+// the hash-constructor func value becomes the enum-tag selector
+// `hmac.Sha256`, and the result type is pinned to the port's concrete
+// Hmac type (Go's hash.Hash interface has no v1 Ada counterpart).
+func TestHmacNewRewrite(t *testing.T) {
+	t.Parallel()
+	pkg := parseSrcInfo(t, `package p
+
+import (
+	"crypto/hmac"
+	"crypto/sha256"
+)
+
+func f(key []byte) {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(key)
+	_ = mac
+}
+`)
+	fn := pkg.Files[0].Decls[0].(*ir.Function)
+	a0 := fn.Body[0].(*ir.Assign)
+	c, ok := a0.RHS[0].(*ir.Call)
+	if !ok {
+		t.Fatalf("decl0 RHS = %T, want *ir.Call", a0.RHS[0])
+	}
+	sel, ok := c.Fun.(*ir.Selector)
+	if !ok || sel.Sel != "New" {
+		t.Fatalf("call fun = %#v, want hmac.New", c.Fun)
+	}
+	if len(c.Args) != 2 {
+		t.Fatalf("hmac.New args = %d, want 2", len(c.Args))
+	}
+	asel, ok := c.Args[0].(*ir.Selector)
+	if !ok || asel.Sel != "Sha256" {
+		t.Fatalf("args[0] = %#v, want selector hmac.Sha256", c.Args[0])
+	}
+	if xid, ok := asel.X.(*ir.Ident); !ok || xid.Name != "hmac" {
+		t.Fatalf("args[0] prefix = %#v, want ident hmac", asel.X)
+	}
+	if len(c.ResultTypes) != 1 || c.ResultTypes[0].NodeKind() != "NamedType" {
+		t.Fatalf("ResultTypes = %#v, want [NamedType Hmac]", c.ResultTypes)
+	}
+	if nt := c.ResultTypes[0].(*ir.NamedType); nt.Name != "Hmac" {
+		t.Fatalf("result type name = %q, want Hmac", nt.Name)
+	}
+}
+
+// TestByteArrayResultType pins that a [N]byte call result (sha256.Sum256)
+// maps to the []byte slice IR type, since the wave-4 hash ports return
+// Byte_Slice vectors.
+func TestByteArrayResultType(t *testing.T) {
+	t.Parallel()
+	pkg := parseSrcInfo(t, `package p
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+)
+
+func f(msg []byte) {
+	sum := sha256.Sum256(msg)
+	s := hex.EncodeToString(sum[:])
+	_ = s
+}
+`)
+	fn := pkg.Files[0].Decls[0].(*ir.Function)
+	a0 := fn.Body[0].(*ir.Assign)
+	c, ok := a0.RHS[0].(*ir.Call)
+	if !ok {
+		t.Fatalf("decl0 RHS = %T, want *ir.Call", a0.RHS[0])
+	}
+	if len(c.ResultTypes) != 1 || c.ResultTypes[0].NodeKind() != "SliceType" {
+		t.Fatalf("Sum256 ResultTypes = %#v, want [SliceType]", c.ResultTypes)
+	}
+	if st, ok := c.ResultTypes[0].(*ir.SliceType); !ok ||
+		st.Elem.NodeKind() != "ByteType" {
+		t.Fatalf("Sum256 result elem = %#v, want ByteType", c.ResultTypes[0])
+	}
+}

@@ -301,7 +301,8 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 			e.needsUnbounded = true
 		}
 		if imp == "os" || imp == "errors" || imp == "net" ||
-			imp == "encoding/json" || imp == "net/http" {
+			imp == "encoding/json" || imp == "net/http" ||
+			imp == "crypto/aes" || imp == "crypto/cipher" {
 			e.needsStdErrors = true
 		}
 		if imp == "os" || imp == "bytes" || imp == "net" ||
@@ -1255,7 +1256,97 @@ func (e *emitter) stdlibValueType(name string) (string, bool) {
 	if _, ok := e.stdlibImports["http"]; ok && httpTypeNames[name] {
 		return "Gada.Std.Http." + goNameToAdaMember(name), true
 	}
+	// Phase 8 wave 4: the crypto ports' concrete types stand in for
+	// the Go interface names (`mac := hmac.New(...)` has Go type
+	// hash.Hash; the port returns Gada.Std.Crypto.Hmac.Hmac).
+	if _, ok := e.stdlibImports["hmac"]; ok && name == "Hmac" {
+		return "Gada.Std.Crypto.Hmac.Hmac", true
+	}
+	if _, ok := e.stdlibImports["aes"]; ok && name == "Block" {
+		return "Gada.Std.Crypto.Aes.Block", true
+	}
+	if _, ok := e.stdlibImports["cipher"]; ok {
+		switch name {
+		case "Block":
+			return "Gada.Std.Crypto.Aes.Block", true
+		case "AEAD":
+			return "Gada.Std.Crypto.Cipher.GCM", true
+		}
+	}
 	return "", false
+}
+
+// cryptoReceiver maps a method-call selector `x.Member` to the Ada
+// package + receiver when x is a local whose Go type is one of the
+// wave-4 crypto interfaces (hash.Hash from hmac.New → Hmac, AEAD
+// from cipher.NewGCM → GCM). The call lowers to the prefix form
+// `Gada.Std.Crypto.Hmac.Write (Mac, Msg)` (the port types are plain
+// records, not tagged, so dot-call syntax would not compile).
+func (e *emitter) cryptoReceiver(s *ir.Selector) (recv, pkg string, ok bool) {
+	id, ok := s.X.(*ir.Ident)
+	if !ok {
+		return "", "", false
+	}
+	nt, ok := e.localTypes[id.Name].(*ir.NamedType)
+	if !ok {
+		return "", "", false
+	}
+	switch nt.Name {
+	case "Hmac":
+		if _, imported := e.stdlibImports["hmac"]; imported {
+			return id.Name, "Gada.Std.Crypto.Hmac", true
+		}
+	case "AEAD":
+		if _, imported := e.stdlibImports["cipher"]; imported {
+			return id.Name, "Gada.Std.Crypto.Cipher", true
+		}
+	}
+	return "", "", false
+}
+
+// cryptoMethodCall renders `mac.Write(msg)` / `gcm.Seal(...)` as the
+// prefix call on the port package. ok=false for any other shape.
+func (e *emitter) cryptoMethodCall(c *ir.Call) (string, bool) {
+	sel, ok := c.Fun.(*ir.Selector)
+	if !ok {
+		return "", false
+	}
+	recv, pkg, ok := e.cryptoReceiver(sel)
+	if !ok {
+		return "", false
+	}
+	args := make([]string, 0, len(c.Args)+1)
+	args = append(args, adaIdent(recv))
+	for _, a := range c.Args {
+		args = append(args, e.emitExpr(a))
+	}
+	return pkg + "." + goNameToAdaMember(sel.Sel) +
+		" (" + strings.Join(args, ", ") + ")", true
+}
+
+// emitOutCallStmt renders a 2-LHS out-call statement
+// `Pkg.Member (args…, L1, L2);`, routing method receivers on wave-4
+// crypto values through the prefix form
+// `Gada.Std.Crypto.Cipher.Open (Gcm, args…, L1, L2);`.
+func (e *emitter) emitOutCallStmt(c *ir.Call, lhs []string) {
+	args := make([]string, 0, len(c.Args)+1+len(lhs))
+	if sel, ok := c.Fun.(*ir.Selector); ok {
+		if recv, pkg, ok2 := e.cryptoReceiver(sel); ok2 {
+			args = append(args, adaIdent(recv))
+			for _, a := range c.Args {
+				args = append(args, e.emitExpr(a))
+			}
+			args = append(args, lhs...)
+			e.println(pkg + "." + goNameToAdaMember(sel.Sel) +
+				" (" + strings.Join(args, ", ") + ");")
+			return
+		}
+	}
+	for _, a := range c.Args {
+		args = append(args, e.emitExpr(a))
+	}
+	args = append(args, lhs...)
+	e.println(e.emitExpr(c.Fun) + " (" + strings.Join(args, ", ") + ");")
 }
 
 // httpTypeNames are the Gada.Std.Http types whose declarations lower to
@@ -2186,12 +2277,7 @@ func (e *emitter) emitPendingHead() {
 			if e.emitIOReadAllBody(po.call, po.lhs) {
 				continue
 			}
-			args := make([]string, 0, len(po.call.Args)+len(po.lhs))
-			for _, a := range po.call.Args {
-				args = append(args, e.emitExpr(a))
-			}
-			args = append(args, po.lhs...)
-			e.println(e.emitExpr(po.call.Fun) + " (" + strings.Join(args, ", ") + ");")
+			e.emitOutCallStmt(po.call, po.lhs)
 		} else {
 			rhs := e.emitExpr(ph.rhs)
 			if e.unboundedStrings[ph.name] {
@@ -3665,14 +3751,7 @@ func (e *emitter) emitAssign(a *ir.Assign) {
 			if e.emitIOReadAllBody(c, lhsNames) {
 				return
 			}
-			args := make([]string, 0, len(c.Args)+2)
-			for _, arg := range c.Args {
-				args = append(args, e.emitExpr(arg))
-			}
-			for _, l := range a.LHS {
-				args = append(args, e.emitExpr(l))
-			}
-			e.println(e.emitExpr(c.Fun) + " (" + strings.Join(args, ", ") + ");")
+			e.emitOutCallStmt(c, lhsNames)
 			return
 		}
 	}
@@ -4096,6 +4175,13 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 				return
 			}
 		}
+		// Phase 8 wave 4: a method call on a wave-4 crypto value in
+		// statement position (`mac.Write(msg)`) lowers to the prefix
+		// call `Gada.Std.Crypto.Hmac.Write (Mac, Msg);`.
+		if s, ok := e.cryptoMethodCall(c); ok {
+			e.println(s + ";")
+			return
+		}
 		// Phase 7: a method call on a Gada.Std.Net value
 		// (`conn.Write(b)`) lowers to the routed protected dot-call
 		// `Conn.all.Write (B);` — same shape as the sync branch above.
@@ -4277,6 +4363,12 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 	case *ir.BuiltinCall:
 		return e.emitBuiltinCall(x)
 	case *ir.Call:
+		// Phase 8 wave 4: method call on a wave-4 crypto value
+		// (`mac.Write(msg)`, `gcm.Seal(...)`) lowers to the prefix
+		// call on the port package.
+		if s, ok := e.cryptoMethodCall(x); ok {
+			return s
+		}
 		// Phase 5 wave 1: stdlib package call in expression position
 		// (`words := strings.Fields(s)`). emitSelector maps the
 		// pkg.Member prefix to the Gada.Std.* qualified name.
@@ -4603,6 +4695,14 @@ func (e *emitter) emitSliceExpr(s *ir.SliceExpr) string {
 		return ""
 	}
 	x := e.emitExpr(s.X)
+	// `s[:]` (both bounds omitted) on a vector-backed []byte / []string
+	// port is just the vector itself (a copy) — Ada.Containers.Vectors
+	// has no Slice_Of. The Slices_Of_* generic keeps its Slice_Of form.
+	if s.Low == nil && s.High == nil &&
+		(pkg == "Gada.Std.Bytes.Byte_Vectors" ||
+			pkg == "Gada.Std.Strings.String_Vectors") {
+		return x
+	}
 	var lo, hi string
 	if s.Low != nil {
 		lo = e.emitExpr(s.Low) + " + 1"

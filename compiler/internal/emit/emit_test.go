@@ -3714,3 +3714,104 @@ func TestWrapBreakPoint(t *testing.T) {
 		t.Errorf("wrapBreakPoint on comment = %d, want -1", got)
 	}
 }
+
+// TestWave4CryptoEmit covers the Phase 8 wave 4 emit paths: hmac.New's
+// enum-tag arg and Hmac result type, the (value, error) out-call form
+// for aes.NewCipher / cipher.NewGCM / gcm.Open, method calls on the
+// concrete crypto values lowering to prefix calls, the Gada.Std.Errors
+// with-clause, and a full-slice `sum[:]` on a []byte vector.
+func TestWave4CryptoEmit(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name: "main",
+		Body: []ir.Stmt{
+			&ir.Assign{Define: true,
+				LHS: []ir.Expr{idn("sum")},
+				RHS: []ir.Expr{&ir.Call{
+					Fun:         &ir.Selector{X: idn("sha256"), Sel: "Sum256"},
+					Args:        []ir.Expr{idn("msg")},
+					ResultTypes: []ir.Type{&ir.SliceType{Elem: &ir.ByteType{}}},
+				}}},
+			&ir.Assign{Define: true,
+				LHS: []ir.Expr{idn("mac")},
+				RHS: []ir.Expr{&ir.Call{
+					Fun: &ir.Selector{X: idn("hmac"), Sel: "New"},
+					Args: []ir.Expr{
+						&ir.Selector{X: idn("hmac"), Sel: "Sha256"},
+						idn("key"),
+					},
+					ResultTypes: []ir.Type{&ir.NamedType{Name: "Hmac"}},
+				}}},
+			&ir.Assign{Define: true,
+				LHS: []ir.Expr{idn("block"), idn("err")},
+				RHS: []ir.Expr{&ir.Call{
+					Fun:  &ir.Selector{X: idn("aes"), Sel: "NewCipher"},
+					Args: []ir.Expr{idn("key")},
+					ResultTypes: []ir.Type{
+						&ir.NamedType{Name: "Block"}, &ir.ErrorType{},
+					},
+				}}},
+			&ir.Assign{Define: true,
+				LHS: []ir.Expr{idn("gcm"), idn("err2")},
+				RHS: []ir.Expr{&ir.Call{
+					Fun:  &ir.Selector{X: idn("cipher"), Sel: "NewGCM"},
+					Args: []ir.Expr{idn("block")},
+					ResultTypes: []ir.Type{
+						&ir.NamedType{Name: "AEAD"}, &ir.ErrorType{},
+					},
+				}}},
+			&ir.Assign{Define: true,
+				LHS: []ir.Expr{idn("opened"), idn("err3")},
+				RHS: []ir.Expr{&ir.Call{
+					Fun: &ir.Selector{X: idn("gcm"), Sel: "Open"},
+					Args: []ir.Expr{idn("dst"), idn("nonce"),
+						idn("sealed"), idn("ad")},
+					ResultTypes: []ir.Type{
+						&ir.SliceType{Elem: &ir.ByteType{}}, &ir.ErrorType{},
+					},
+				}}},
+			&ir.Call{Fun: &ir.Selector{X: idn("mac"), Sel: "Write"},
+				Args: []ir.Expr{idn("msg")}},
+			&ir.Assign{
+				LHS: []ir.Expr{idn("sig")},
+				RHS: []ir.Expr{&ir.Call{
+					Fun:  &ir.Selector{X: idn("mac"), Sel: "Sum"},
+					Args: []ir.Expr{idn("empty")},
+					ResultTypes: []ir.Type{
+						&ir.SliceType{Elem: &ir.ByteType{}},
+					},
+				}}},
+			&ir.Call{Fun: &ir.Selector{X: idn("hex"), Sel: "EncodeToString"},
+				Args: []ir.Expr{&ir.SliceExpr{X: idn("sum")}},
+			},
+		},
+	})
+	pkg.Files[0].Imports = []string{
+		"crypto/aes", "crypto/cipher", "crypto/hmac", "crypto/sha256",
+		"encoding/hex",
+	}
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("Package: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"with Gada.Std.Errors;",
+		"with Gada.Std.Crypto.Hmac;",
+		"Sum : Gada.Std.Bytes.Byte_Slice := Gada.Std.Crypto.Sha256.Sum256 (Msg);",
+		"Mac : Gada.Std.Crypto.Hmac.Hmac := Gada.Std.Crypto.Hmac.New_K",
+		"(Gada.Std.Crypto.Hmac.Sha256, Key);",
+		"Block : Gada.Std.Crypto.Aes.Block;",
+		"Gcm : Gada.Std.Crypto.Cipher.GCM;",
+		"Gada.Std.Crypto.Aes.New_Cipher (Key, Block, Err);",
+		"Gada.Std.Crypto.Cipher.New_GCM (Block, Gcm, Err2);",
+		"Gada.Std.Crypto.Cipher.Open (Gcm, Dst, Nonce, Sealed, Ad, Opened, Err3);",
+		"Gada.Std.Crypto.Hmac.Write (Mac, Msg);",
+		"Sig := Gada.Std.Crypto.Hmac.Sum (Mac, Empty);",
+		"Gada.Std.Encoding.Hex.Encode_To_String (Sum)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q, got:\n%s", want, got)
+		}
+	}
+}

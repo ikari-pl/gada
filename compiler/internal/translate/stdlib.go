@@ -124,12 +124,41 @@ func (tr *translator) stdlibCall(c *ast.CallExpr) (*ir.Call, bool, error) {
 			}
 		}
 	}
+	// Phase 8 wave 4: `hmac.New(sha256.New, key)` — Go passes the hash
+	// constructor as a func value; the v1 port takes the algorithm as
+	// an explicit enum tag. Rewrite the first argument to the selector
+	// `hmac.Sha256` (emitted as Gada.Std.Crypto.Hmac.Sha256) and pin
+	// the result type to the port's concrete Hmac type (Go's
+	// hash.Hash interface has no Ada counterpart in v1).
+	hmacAlgo := ""
+	if path == "crypto/hmac" && sel.Sel.Name == "New" && len(args) == 2 {
+		if fsel, ok := args[0].(*ir.Selector); ok && fsel.Sel == "New" {
+			if xid, ok := fsel.X.(*ir.Ident); ok {
+				switch tr.imports[xid.Name] {
+				case "crypto/sha256":
+					hmacAlgo = "Sha256"
+				case "crypto/sha512":
+					hmacAlgo = "Sha512"
+				case "crypto/sha1":
+					hmacAlgo = "Sha1"
+				case "crypto/md5":
+					hmacAlgo = "Md5"
+				}
+			}
+		}
+		if hmacAlgo != "" {
+			args[0] = &ir.Selector{X: &ir.Ident{Name: id.Name}, Sel: hmacAlgo}
+		}
+	}
 	call := &ir.Call{
 		Fun:  &ir.Selector{X: &ir.Ident{Name: id.Name}, Sel: sel.Sel.Name},
 		Args: args,
 	}
 	if tr.info != nil {
 		call.ResultTypes = tr.goTypesToIR(tr.info.TypeOf(c))
+	}
+	if hmacAlgo != "" {
+		call.ResultTypes = []ir.Type{&ir.NamedType{Name: "Hmac"}}
 	}
 	if call.ResultTypes == nil {
 		// Corpus fixtures translate without *types.Info (parser only);
@@ -165,6 +194,11 @@ var fallbackResultTypes = map[string][]ir.Type{
 		&ir.PointerType{Elem: &ir.NamedType{Name: "Response"}},
 		&ir.ErrorType{},
 	},
+	// Phase 8 wave 4: [N]byte results (sha256.Sum256) arrive as byte
+	// arrays from go/types and map to the Byte_Slice the ports return.
+	"crypto/sha256.Sum256":        {&ir.SliceType{Elem: &ir.ByteType{}}},
+	"crypto/sha512.Sum512":        {&ir.SliceType{Elem: &ir.ByteType{}}},
+	"encoding/hex.EncodeToString": {&ir.StringType{}},
 }
 
 // goTypesToIR converts a go/types type to the IR type(s) it denotes.
@@ -203,6 +237,13 @@ func (tr *translator) goOneToIR(t types.Type) ir.Type {
 	case *types.Slice:
 		if elem := tr.goOneToIR(t.Elem()); elem != nil {
 			return &ir.SliceType{Elem: elem}
+		}
+	case *types.Array:
+		// Phase 8 wave 4: `sum := sha256.Sum256(msg)` has Go type
+		// [32]byte, but the wave-4 hash ports return Byte_Slice
+		// (vectors), so map a byte array to the []byte slice type.
+		if _, isByte := tr.goOneToIR(t.Elem()).(*ir.ByteType); isByte {
+			return &ir.SliceType{Elem: &ir.ByteType{}}
 		}
 	case *types.Interface:
 		if t.NumMethods() == 1 && t.Method(0).Name() == "Error" {

@@ -46,7 +46,7 @@ package body Std_Crypto_Hash_Suite is
 
    --  Byte_Slice sub-range copy (Ada.Containers.Vectors.Slice is not
    --  relied on; an explicit loop keeps the suite obvious).
-   function Sub (B : Byte_Slice; First, Last : Positive) return Byte_Slice is
+   function Sub (B : Byte_Slice; First, Last : Natural) return Byte_Slice is
       R : Byte_Slice := Byte_Vectors.Empty_Vector;
    begin
       for I in First .. Last loop

@@ -2,7 +2,7 @@
 
 [← Phase 8](08-stdlib-wave4-crypto.md) · [Index](README.md) · Next: [Phase 10 →](10-mixed-codebases.md)
 
-**Status:** `NOT_STARTED`
+**Status:** `IN_PROGRESS` (opened 2026-11-28)
 **Prerequisites:** [Phase 5](05-stdlib-wave1.md) `DONE`
 **Goal:** Add `gada build -mode=spark` that emits SPARK-compatible
 Ada for the Go subset that respects SPARK rules. Wire `gnatprove`.

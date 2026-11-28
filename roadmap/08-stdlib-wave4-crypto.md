@@ -2,7 +2,7 @@
 
 [← Phase 7](07-stdlib-wave3-network.md) · [Index](README.md) · Next: [Phase 9 →](09-verification-spark.md)
 
-**Status:** `IN_PROGRESS` (opened 2026-11-27)
+**Status:** `DONE` (closed 2026-11-28, CI green on 1d94826, run 46105858181)
 **Prerequisites:** [Phase 5](05-stdlib-wave1.md) `DONE`
 **Goal:** Port `crypto/*`, `hash/*`, the rest of `encoding/*`. These
 are pure-Go packages; the work is mostly about correctness against
@@ -43,12 +43,12 @@ HMAC-SHA-256 pass; AES-GCM round-trips; base64/hex round-trip.
       *Verify:* `make stdlib-test PKG=encoding`
       *Done when:* met — base64 std/URL/raw/raw-URL over lengths 0..8 + URL-alphabet bytes, hex round-trips incl. uppercase, uint16/32/64 boundary values both endians, uvarint/varint boundaries (0/127/128/300/2^32-1/2^64-1/negatives), all pinned from Go 1.27 via `go run`, plus every error path; base64 codec cross-checked in a Python transliteration; runtime/ 100% gate green (2 lcov terminators excluded; one dead uvarint arm removed rather than excluded).
 
-- [ ] **Stdlib packages: `encoding/csv`, `encoding/xml`**
-      *Files:* `stdlib/encoding/csv/`, `stdlib/encoding/xml/`
+- [x] **Stdlib packages: `encoding/csv`, `encoding/xml`** (done 2026-11-28, CI green on 1d94826, run 46105858181)
+      *Files:* `runtime/src/gada-std-encoding-csv.{ads,adb}`, `runtime/src/gada-std-encoding-xml.{ads,adb}`, `runtime/tests/stdlib/std_encoding_text_suite.{ads,adb}` (suite `stdlib.encoding.text`), `compiler/internal/ir/stdlib.go`
       *Verify:* `make stdlib-test PKG=encoding.text`
-      *Done when:* round-trip on representative documents; coverage ≥ 90%.
+      *Done when:* met — 112 assertions pinned from Go 1.27 via `go run`: CSV read/write round-trips incl. quoted fields, embedded commas/quotes/newlines, CRLF normalisation, blank-line skip, field-count/quoting errors; XML Escape_Text vectors, tree unmarshal, Go-canonical marshal, CDATA/comments/DOCTYPE/prolog, entity decoding, 17 malformed-doc raises. Algorithms cross-checked in a Python transliteration against every vector. runtime/ 100% gate green (New_GCM out-proc defensive handler excluded with rationale in runtime/COVERAGE.md). Divergences documented: Unmarshal is single-root (Go tolerates leading/trailing text); `Row` not `Record` (`record` is an Ada reserved word).
 
-- [ ] **Crypto-suite example**
-      *Files:* `examples/crypto_suite/main.go`
+- [x] **Crypto-suite example** (done 2026-11-28, CI green on 1d94826, run 46105858181)
+      *Files:* `examples/crypto_suite/{main.go,go.mod,expected_output.txt}`, `.github/workflows/ci.yml` (examples job), `compiler/internal/translate/stdlib.go`, `compiler/internal/emit/emit.go` (+ tests)
       *Verify:* `make example HELLO=crypto_suite`
-      *Done when:* example computes hashes, signs and verifies an HMAC, encrypts and decrypts an AES-GCM payload, prints expected output.
+      *Done when:* met — CI examples job runs it end-to-end: sha256.Sum256, hmac.New/Write/Sum/Equal, aes.NewCipher + cipher.NewGCM + Seal/Open, hex.EncodeToString; output pinned from Go and diffed byte-for-byte. New lowering: hmac.New(hash.New, key) → enum-tag New_K, [N]byte results → Byte_Slice, (value, error) out-call procedure overloads in the aes/cipher ports, AEAD dst-arg dropped, crypto method calls → prefix calls.

@@ -387,3 +387,29 @@ reason = "end Make_Table terminator — see runtime/COVERAGE.md"
 file = "runtime/src/gada-std-hash-crc64.adb"
 lines = [25]
 reason = "end Make_Table terminator — see runtime/COVERAGE.md"
+
+# lcov 2.4 no-return-block misattribution: Transform is a procedure with
+# no return statement, so its `end Transform;` terminator carries
+# hit-count 0 even though every contained line is hit (the suite hashes
+# multi-block messages, so the loop bodies and state adds all execute).
+# Same class as the end Make_Table terminators above.
+# Rationale: runtime/COVERAGE.md (gada-std-crypto-*).
+[[exclude]]
+file = "runtime/src/gada-std-crypto-sha256.adb"
+lines = [66]
+reason = "end Transform terminator — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-crypto-sha512.adb"
+lines = [98]
+reason = "end Transform terminator — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-crypto-sha1.adb"
+lines = [49]
+reason = "end Transform terminator — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-crypto-md5.adb"
+lines = [72]
+reason = "end Transform terminator — see runtime/COVERAGE.md"

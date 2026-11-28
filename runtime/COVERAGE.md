@@ -616,6 +616,22 @@ Std_Hash_Suite with Go-1.27-pinned vectors, not excluded.
 
 ---
 
+### `runtime/src/gada-std-crypto-sha256.adb` / `-sha512.adb` / `-sha1.adb` / `-md5.adb` (Phase 8 wave 4, item 2)
+
+66 / 98 / 49 / 72 respectively — the `end Transform;` terminators: lcov
+2.4 leaves hit-count 0 on a procedure's block terminator when the
+procedure has no return statement; every contained line (word load,
+schedule, all round arms, the state adds) is hit by
+Std_Crypto_Hash_Suite, which hashes inputs from 0 to 1000 bytes through
+both the one-shot and split-Write paths for all four algorithms. Same
+misattribution class as the `end Make_Table;` entries above. Everything
+else in the four crypto ports — Transform, Append_Byte (incl. the
+block-full arm), New_K, Write, Sum (incl. the padding while-loop and
+the SHA-512 zero high length half), Reset, Size, Block_Size, and the
+one-shot Sum256/Sum512/Sum — is covered, not excluded.
+
+---
+
 ### Adding a new exception
 
 1. Confirm the line is **genuinely** untestable in CI (not just

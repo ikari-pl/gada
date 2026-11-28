@@ -5,6 +5,7 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 
 with AUnit.Assertions; use AUnit.Assertions;
 
+with Ada.Text_IO; use Ada.Text_IO;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 with Interfaces; use Interfaces;
 
@@ -153,6 +154,8 @@ package body Std_Crypto_Aes_Suite is
             Pt : constant Byte_Slice := From_Hex (To_String (V.Pt));
          begin
             Assert (Gada.Std.Crypto.Aes.Block_Size (B) = 16, "Block_Size");
+            Put_Line ("DBG " & To_String (V.Name) & " ct="
+                        & To_Hex (Gada.Std.Crypto.Aes.Encrypt (B, Pt)));
             Assert
               (To_Hex (Gada.Std.Crypto.Aes.Encrypt (B, Pt))
                  = To_String (V.Ct),
@@ -294,64 +297,77 @@ package body Std_Crypto_Aes_Suite is
          end;
       end loop;
       --  Encrypt/Decrypt want exactly one block
-      declare
-         B : constant Gada.Std.Crypto.Aes.Block :=
-           Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
-         R : Byte_Slice := Gada.Std.Crypto.Aes.Encrypt (B, New_Bytes (15));
-         pragma Unreferenced (R);
       begin
-         Assert (False, "short block must raise");
+         declare
+            B : constant Gada.Std.Crypto.Aes.Block :=
+              Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
+            R : Byte_Slice := Gada.Std.Crypto.Aes.Encrypt (B, New_Bytes (15));
+            pragma Unreferenced (R);
+         begin
+            Assert (False, "short block must raise");
+         end;
       exception
          when Constraint_Error => null;  --  expected
       end;
-      --  bad IV length for CBC and CTR
-      declare
-         B : constant Gada.Std.Crypto.Aes.Block :=
-           Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
-         M : constant Gada.Std.Crypto.Cipher.Block_Mode :=
-           Gada.Std.Crypto.Cipher.New_CBC_Encrypter (B, New_Bytes (8));
-         pragma Unreferenced (M);
+      --  bad IV length for CBC
       begin
-         Assert (False, "short IV must raise");
+         declare
+            B : constant Gada.Std.Crypto.Aes.Block :=
+              Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
+            M : constant Gada.Std.Crypto.Cipher.Block_Mode :=
+              Gada.Std.Crypto.Cipher.New_CBC_Encrypter (B, New_Bytes (8));
+            pragma Unreferenced (M);
+         begin
+            Assert (False, "short IV must raise");
+         end;
       exception
          when Constraint_Error => null;  --  expected
       end;
-      declare
-         B : constant Gada.Std.Crypto.Aes.Block :=
-           Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
-         S : constant Gada.Std.Crypto.Cipher.Stream :=
-           Gada.Std.Crypto.Cipher.New_CTR (B, New_Bytes (8));
-         pragma Unreferenced (S);
+      --  bad IV length for CTR
       begin
-         Assert (False, "short CTR IV must raise");
+         declare
+            B : constant Gada.Std.Crypto.Aes.Block :=
+              Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
+            S : constant Gada.Std.Crypto.Cipher.Stream :=
+              Gada.Std.Crypto.Cipher.New_CTR (B, New_Bytes (8));
+            pragma Unreferenced (S);
+         begin
+            Assert (False, "short CTR IV must raise");
+         end;
       exception
          when Constraint_Error => null;  --  expected
       end;
       --  CBC src not a multiple of 16
-      declare
-         B : constant Gada.Std.Crypto.Aes.Block :=
-           Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
-         M : Gada.Std.Crypto.Cipher.Block_Mode :=
-           Gada.Std.Crypto.Cipher.New_CBC_Encrypter (B, New_Bytes (16));
-         D : Byte_Slice;
       begin
-         Gada.Std.Crypto.Cipher.Crypt_Blocks (M, D, New_Bytes (17));
-         pragma Unreferenced (D);
-         Assert (False, "partial CBC block must raise");
+         declare
+            B : constant Gada.Std.Crypto.Aes.Block :=
+              Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
+            M : Gada.Std.Crypto.Cipher.Block_Mode :=
+              Gada.Std.Crypto.Cipher.New_CBC_Encrypter (B, New_Bytes (16));
+            D : Byte_Slice;
+         begin
+            Gada.Std.Crypto.Cipher.Crypt_Blocks (M, D, New_Bytes (17));
+            pragma Unreferenced (D);
+            Assert (False, "partial CBC block must raise");
+         end;
       exception
          when Constraint_Error => null;  --  expected
       end;
       --  GCM bad nonce length
-      declare
-         B : constant Gada.Std.Crypto.Aes.Block :=
-           Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
-         G : constant Gada.Std.Crypto.Cipher.GCM :=
-           Gada.Std.Crypto.Cipher.New_GCM (B);
-         S : constant Byte_Slice :=
-           Gada.Std.Crypto.Cipher.Seal (G, New_Bytes (8), Byte_Vectors.Empty_Vector, Byte_Vectors.Empty_Vector);
-         pragma Unreferenced (S);
       begin
-         Assert (False, "short GCM nonce must raise");
+         declare
+            B : constant Gada.Std.Crypto.Aes.Block :=
+              Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
+            G : constant Gada.Std.Crypto.Cipher.GCM :=
+              Gada.Std.Crypto.Cipher.New_GCM (B);
+            S : constant Byte_Slice :=
+              Gada.Std.Crypto.Cipher.Seal
+                (G, New_Bytes (8), Byte_Vectors.Empty_Vector,
+                 Byte_Vectors.Empty_Vector);
+            pragma Unreferenced (S);
+         begin
+            Assert (False, "short GCM nonce must raise");
+         end;
       exception
          when Constraint_Error => null;  --  expected
       end;

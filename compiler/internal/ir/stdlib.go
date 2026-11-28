@@ -31,4 +31,6 @@ var StdlibPackages = map[string]string{
 	"crypto/sha1":   "Gada.Std.Crypto.Sha1",
 	"crypto/md5":    "Gada.Std.Crypto.Md5",
 	"crypto/hmac":   "Gada.Std.Crypto.Hmac",
+	"crypto/aes":    "Gada.Std.Crypto.Aes",
+	"crypto/cipher": "Gada.Std.Crypto.Cipher",
 }

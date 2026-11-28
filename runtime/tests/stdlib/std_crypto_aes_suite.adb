@@ -156,6 +156,12 @@ package body Std_Crypto_Aes_Suite is
             Assert (Gada.Std.Crypto.Aes.Block_Size (B) = 16, "Block_Size");
             Put_Line ("DBG " & To_String (V.Name) & " ct="
                         & To_Hex (Gada.Std.Crypto.Aes.Encrypt (B, Pt)));
+            if To_String (V.Name) = "ecb128" then
+               Put_Line ("DBG w0=" & Unsigned_32'Image (B.W (0))
+                           & " w4=" & Unsigned_32'Image (B.W (4))
+                           & " w40=" & Unsigned_32'Image (B.W (40))
+                           & " nr=" & Natural'Image (B.Nr));
+            end if;
             Assert
               (To_Hex (Gada.Std.Crypto.Aes.Encrypt (B, Pt))
                  = To_String (V.Ct),

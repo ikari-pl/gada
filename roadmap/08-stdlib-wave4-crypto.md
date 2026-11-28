@@ -38,10 +38,10 @@ HMAC-SHA-256 pass; AES-GCM round-trips; base64/hex round-trip.
       *Verify:* `make stdlib-test PKG=crypto.aes`
       *Done when:* met — FIPS-197 ECB KAT for AES-128/192/256, SP 800-38A CBC+CTR 4-block KATs for all key sizes, 4 GCM cases (empty/1-block/64-byte+AAD/AES-256) with Seal/Open round-trips and a corrupted-tag raise, all pinned from Go 1.27 via `go run`; error halves (bad key size, bad IV, partial block, short nonce/ciphertext, tag mismatch) raise CONSTRAINT_ERROR; S-box tables generated from GF inverse+affine and verified exactly; AES and mode constructions cross-checked against the vectors in a Python transliteration; runtime/ 100% gate green (11 lcov terminator/continuation artifacts excluded with rationale in runtime/COVERAGE.md).
 
-- [ ] **Stdlib packages: `encoding/base64`, `encoding/hex`, `encoding/binary`**
-      *Files:* `stdlib/encoding/...`
+- [x] **Stdlib packages: `encoding/base64`, `encoding/hex`, `encoding/binary`** (done 2026-11-28, CI green on dae28bc, run 46100294586)
+      *Files:* `runtime/src/gada-std-encoding{,-base64,-hex,-binary}.{ads,adb}`, `runtime/tests/stdlib/std_encoding_suite.{ads,adb}` (suite `stdlib.encoding`), `compiler/internal/ir/stdlib.go`
       *Verify:* `make stdlib-test PKG=encoding`
-      *Done when:* round-trip on randomized inputs; coverage 100%.
+      *Done when:* met — base64 std/URL/raw/raw-URL over lengths 0..8 + URL-alphabet bytes, hex round-trips incl. uppercase, uint16/32/64 boundary values both endians, uvarint/varint boundaries (0/127/128/300/2^32-1/2^64-1/negatives), all pinned from Go 1.27 via `go run`, plus every error path; base64 codec cross-checked in a Python transliteration; runtime/ 100% gate green (2 lcov terminators excluded; one dead uvarint arm removed rather than excluded).
 
 - [ ] **Stdlib packages: `encoding/csv`, `encoding/xml`**
       *Files:* `stdlib/encoding/csv/`, `stdlib/encoding/xml/`

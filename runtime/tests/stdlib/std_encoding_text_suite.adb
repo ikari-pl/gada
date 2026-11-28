@@ -31,24 +31,24 @@ package body Std_Encoding_Text_Suite is
       Register_Routine (T, Test_Xml_Errors'Access, "xml malformed docs raise");
    end Register_Tests;
 
-   --  Record / Record_List builders (arity overloads).
-   function Rec (A : String) return Record is
-      R : Record;
+   --  Row / Row_List builders (arity overloads).
+   function Rec (A : String) return Row is
+      R : Row;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       return R;
    end Rec;
 
-   function Rec (A, B : String) return Record is
-      R : Record;
+   function Rec (A, B : String) return Row is
+      R : Row;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       String_Vectors.Append (R, To_Unbounded_String (B));
       return R;
    end Rec;
 
-   function Rec (A, B, C : String) return Record is
-      R : Record;
+   function Rec (A, B, C : String) return Row is
+      R : Row;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       String_Vectors.Append (R, To_Unbounded_String (B));
@@ -56,8 +56,8 @@ package body Std_Encoding_Text_Suite is
       return R;
    end Rec;
 
-   function Rec (A, B, C, D : String) return Record is
-      R : Record;
+   function Rec (A, B, C, D : String) return Row is
+      R : Row;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       String_Vectors.Append (R, To_Unbounded_String (B));
@@ -66,8 +66,8 @@ package body Std_Encoding_Text_Suite is
       return R;
    end Rec;
 
-   function Rec (A, B, C, D, E : String) return Record is
-      R : Record;
+   function Rec (A, B, C, D, E : String) return Row is
+      R : Row;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       String_Vectors.Append (R, To_Unbounded_String (B));
@@ -77,22 +77,22 @@ package body Std_Encoding_Text_Suite is
       return R;
    end Rec;
 
-   function Recs (R1 : Record) return Record_List is
-      L : Record_List;
+   function Recs (R1 : Row) return Row_List is
+      L : Row_List;
    begin
-      Record_Vectors.Append (L, R1);
+      Row_Vectors.Append (L, R1);
       return L;
    end Recs;
 
-   function Recs (R1, R2 : Record) return Record_List is
-      L : Record_List;
+   function Recs (R1, R2 : Row) return Row_List is
+      L : Row_List;
    begin
-      Record_Vectors.Append (L, R1);
-      Record_Vectors.Append (L, R2);
+      Row_Vectors.Append (L, R1);
+      Row_Vectors.Append (L, R2);
       return L;
    end Recs;
 
-   procedure Assert_Rec (Got, Want : Record; Msg : String) is
+   procedure Assert_Rec (Got, Want : Row; Msg : String) is
    begin
       Assert (String_Vectors.Length (Got) = String_Vectors.Length (Want),
               Msg & ": field count");
@@ -109,58 +109,58 @@ package body Std_Encoding_Text_Suite is
 
       --  CSV doc 0
       declare
-         L : constant Record_List := Read_All ("a,b,c" & LF & "1,2,3" & LF & "");
+         L : constant Row_List := Read_All ("a,b,c" & LF & "1,2,3" & LF & "");
       begin
-         Assert (Natural (Record_Vectors.Length (L)) = 2, "csv0: record count");
-         Assert_Rec (Record_Vectors.Element (L, 1), Rec ("a", "b", "c"), "csv0 rec1");
-         Assert_Rec (Record_Vectors.Element (L, 2), Rec ("1", "2", "3"), "csv0 rec2");
+         Assert (Natural (Row_Vectors.Length (L)) = 2, "csv0: record count");
+         Assert_Rec (Row_Vectors.Element (L, 1), Rec ("a", "b", "c"), "csv0 rec1");
+         Assert_Rec (Row_Vectors.Element (L, 2), Rec ("1", "2", "3"), "csv0 rec2");
       end;
       --  CSV doc 1
       declare
-         L : constant Record_List := Read_All ("name,quote,note" & LF &
+         L : constant Row_List := Read_All ("name,quote,note" & LF &
          """Doe, John"",""say """"hi"""""",""li" & "ne1" & LF & "line2""" & LF & "");
       begin
-         Assert (Natural (Record_Vectors.Length (L)) = 2, "csv1: record count");
-         Assert_Rec (Record_Vectors.Element (L, 1), Rec ("name", "quote", "note"), "csv1 rec1");
-         Assert_Rec (Record_Vectors.Element (L, 2), Rec ("Doe, John", "say ""hi""", "line1" & LF &
+         Assert (Natural (Row_Vectors.Length (L)) = 2, "csv1: record count");
+         Assert_Rec (Row_Vectors.Element (L, 1), Rec ("name", "quote", "note"), "csv1 rec1");
+         Assert_Rec (Row_Vectors.Element (L, 2), Rec ("Doe, John", "say ""hi""", "line1" & LF &
          "line2"), "csv1 rec2");
       end;
       --  CSV doc 2
       declare
-         L : constant Record_List := Read_All ("a,,c" & LF & ",," & LF & "");
+         L : constant Row_List := Read_All ("a,,c" & LF & ",," & LF & "");
       begin
-         Assert (Natural (Record_Vectors.Length (L)) = 2, "csv2: record count");
-         Assert_Rec (Record_Vectors.Element (L, 1), Rec ("a", "", "c"), "csv2 rec1");
-         Assert_Rec (Record_Vectors.Element (L, 2), Rec ("", "", ""), "csv2 rec2");
+         Assert (Natural (Row_Vectors.Length (L)) = 2, "csv2: record count");
+         Assert_Rec (Row_Vectors.Element (L, 1), Rec ("a", "", "c"), "csv2 rec1");
+         Assert_Rec (Row_Vectors.Element (L, 2), Rec ("", "", ""), "csv2 rec2");
       end;
       --  CSV doc 3
       declare
-         L : constant Record_List := Read_All ("""""" & LF & "");
+         L : constant Row_List := Read_All ("""""" & LF & "");
       begin
-         Assert (Natural (Record_Vectors.Length (L)) = 1, "csv3: record count");
-         Assert_Rec (Record_Vectors.Element (L, 1), Rec (""), "csv3 rec1");
+         Assert (Natural (Row_Vectors.Length (L)) = 1, "csv3: record count");
+         Assert_Rec (Row_Vectors.Element (L, 1), Rec (""), "csv3 rec1");
       end;
       --  CSV doc 4
       declare
-         L : constant Record_List := Read_All ("single" & LF & "");
+         L : constant Row_List := Read_All ("single" & LF & "");
       begin
-         Assert (Natural (Record_Vectors.Length (L)) = 1, "csv4: record count");
-         Assert_Rec (Record_Vectors.Element (L, 1), Rec ("single"), "csv4 rec1");
+         Assert (Natural (Row_Vectors.Length (L)) = 1, "csv4: record count");
+         Assert_Rec (Row_Vectors.Element (L, 1), Rec ("single"), "csv4 rec1");
       end;
       --  CSV doc 5
       declare
-         L : constant Record_List := Read_All ("a,b" & CR & "" & LF & "c,d" & CR & "" & LF & "");
+         L : constant Row_List := Read_All ("a,b" & CR & "" & LF & "c,d" & CR & "" & LF & "");
       begin
-         Assert (Natural (Record_Vectors.Length (L)) = 2, "csv5: record count");
-         Assert_Rec (Record_Vectors.Element (L, 1), Rec ("a", "b"), "csv5 rec1");
-         Assert_Rec (Record_Vectors.Element (L, 2), Rec ("c", "d"), "csv5 rec2");
+         Assert (Natural (Row_Vectors.Length (L)) = 2, "csv5: record count");
+         Assert_Rec (Row_Vectors.Element (L, 1), Rec ("a", "b"), "csv5 rec1");
+         Assert_Rec (Row_Vectors.Element (L, 2), Rec ("c", "d"), "csv5 rec2");
       end;
       --  CSV doc 6
       declare
-         L : constant Record_List := Read_All ("""multi" & LF & "line"",x" & LF & "");
+         L : constant Row_List := Read_All ("""multi" & LF & "line"",x" & LF & "");
       begin
-         Assert (Natural (Record_Vectors.Length (L)) = 1, "csv6: record count");
-         Assert_Rec (Record_Vectors.Element (L, 1), Rec ("multi" & LF & "line", "x"), "csv6 rec1");
+         Assert (Natural (Row_Vectors.Length (L)) = 1, "csv6: record count");
+         Assert_Rec (Row_Vectors.Element (L, 1), Rec ("multi" & LF & "line", "x"), "csv6 rec1");
       end;
    end Test_Csv_Read;
 
@@ -202,9 +202,9 @@ package body Std_Encoding_Text_Suite is
       --  CSV doc 7: field-count mismatch must raise
       begin
          declare
-            L : constant Record_List := Read_All ("a,b" & LF & "1,2,extra" & LF & "");
+            L : constant Row_List := Read_All ("a,b" & LF & "1,2,extra" & LF & "");
          begin
-            Assert (Record_Vectors.Length (L) = 0, "csv7: must raise");
+            Assert (Row_Vectors.Length (L) = 0, "csv7: must raise");
          end;
       exception
          when Constraint_Error => null;  --  expected

@@ -11,19 +11,19 @@ package body Gada.Std.Encoding.Csv is
    --  record terminator (or S'Last + 1 at end of input). Raises
    --  Constraint_Error on malformed input.
    procedure Parse_Record
-     (S : String; Pos : in out Integer; Rec : in out Record);
+     (S : String; Pos : in out Integer; Rec : in out Row);
 
    function Needs_Quote (Field : String) return Boolean is
      (for some C of Field => C = ',' or C = '"' or C = LF or C = CR);
 
    procedure Parse_Record
-     (S : String; Pos : in out Integer; Rec : in out Record)
+     (S : String; Pos : in out Integer; Rec : in out Row)
    is
       Buf    : Unbounded_String;
       Done   : Boolean := False;
       Quoted : Boolean;
    begin
-      Record_Vectors.Clear (Rec);
+      Row_Vectors.Clear (Rec);
       loop
          --  One field.
          Buf := Null_Unbounded_String;
@@ -100,10 +100,10 @@ package body Gada.Std.Encoding.Csv is
       end loop;
    end Parse_Record;
 
-   function Read_All (S : String) return Record_List is
-      Result  : Record_List;
+   function Read_All (S : String) return Row_List is
+      Result  : Row_List;
       Pos     : Integer := S'First;
-      Rec     : Record;
+      Rec     : Row;
       N_Fields : Natural := 0;
    begin
       if S'Length = 0 then
@@ -130,14 +130,14 @@ package body Gada.Std.Encoding.Csv is
                     with "csv: record field count mismatch";
                end if;
             end;
-            Record_Vectors.Append (Result, Rec);
+            Row_Vectors.Append (Result, Rec);
          end if;
          exit when Pos > S'Last;
       end loop;
       return Result;
    end Read_All;
 
-   function Write_All (Records : Record_List) return String is
+   function Write_All (Records : Row_List) return String is
       Out_S : Unbounded_String;
    begin
       for Rec of Records loop

@@ -6,6 +6,7 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 with AUnit.Assertions; use AUnit.Assertions;
 
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
+with Interfaces; use Interfaces;
 
 with Gada.Std.Bytes; use Gada.Std.Bytes;
 with Gada.Std.Crypto.Aes;
@@ -260,7 +261,8 @@ package body Std_Crypto_Aes_Suite is
          Byte_Vectors.Replace_Element
            (Bad, Last,
             Character'Val
-              (Character'Pos (Byte_Vectors.Element (Bad, Last)) xor 1));
+              (Unsigned_32 (Character'Pos (Byte_Vectors.Element (Bad, Last)))
+               xor 1));
          declare
             P : Byte_Slice := Gada.Std.Crypto.Cipher.Open (G, N, Bad, Byte_Vectors.Empty_Vector);
             pragma Unreferenced (P);

@@ -632,6 +632,22 @@ one-shot Sum256/Sum512/Sum — is covered, not excluded.
 
 ---
 
+### `runtime/src/gada-std-crypto-hmac.adb` (Phase 8 wave 4, item 3)
+
+98 / 110 / 122 / 134 — the `end;` terminators of the four Sum case
+arms: lcov 2.4 leaves hit-count 0 on a block terminator when the
+block returns via `return ...;` on its own line; every contained line
+(pad writes, inner/outer digest writes, final Sum) is hit by
+Std_Crypto_Hmac_Suite, which MACs all four algorithms over all 14
+RFC 2202/4231 vectors plus the split-Write and Reset paths. Same
+misattribution class as the `end Transform;` entries above.
+Everything else in the Hmac port — Pad_Key (incl. the longer-than-
+block key-hash arm and the zero-pad loop), Xor_Pad, New_K, Write,
+Sum, Reset, Size, Block_Size, Equal (incl. the length-mismatch arm)
+— is covered, not excluded.
+
+---
+
 ### Adding a new exception
 
 1. Confirm the line is **genuinely** untestable in CI (not just

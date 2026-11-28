@@ -413,3 +413,14 @@ reason = "end Transform terminator — see runtime/COVERAGE.md"
 file = "runtime/src/gada-std-crypto-md5.adb"
 lines = [72]
 reason = "end Transform terminator — see runtime/COVERAGE.md"
+
+# lcov 2.4 no-return-block misattribution: each Sum case arm returns
+# via `return ...;` on its own line, so the arm's `end;` terminator
+# carries hit-count 0 even though every contained line is hit (the
+# suite MACs all four algorithms over all 14 RFC vectors). Same class
+# as the end Transform / end Make_Table terminators above.
+# Rationale: runtime/COVERAGE.md (gada-std-crypto-hmac.adb).
+[[exclude]]
+file = "runtime/src/gada-std-crypto-hmac.adb"
+lines = [98, 110, 122, 134]
+reason = "end of Sum case-arm blocks — see runtime/COVERAGE.md"

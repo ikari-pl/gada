@@ -28,6 +28,8 @@ with AUnit.Reporter.Text;
 with AUnit.Test_Suites; use AUnit.Test_Suites;
 
 with IO_Suite;
+with Bufio_Suite;
+with Fmt_Suite;
 with Memory_Suite;
 with Slices_Suite;
 with Defer_Suite;
@@ -47,6 +49,14 @@ with Reflect_Types_Suite;
 with Reflect_Suite;
 with Reflect_Values_Suite;
 with Reflect_Interfaces_Suite;
+with Errors_Suite;
+with Strings_Suite;
+with Strconv_Suite;
+with Bytes_Suite;
+with Std_IO_Suite;
+with Bufio_Suite;
+with Fmt_Suite;
+with OS_Suite;
 
 procedure Test_Runner is
 
@@ -81,6 +91,14 @@ procedure Test_Runner is
       or else Pkg = "reflect"
       or else Pkg = "reflect.values"
       or else Pkg = "reflect.interfaces"
+      or else Pkg = "stdlib.errors"
+      or else Pkg = "stdlib.strings"
+      or else Pkg = "stdlib.strconv"
+      or else Pkg = "stdlib.bytes"
+      or else Pkg = "stdlib.io"
+      or else Pkg = "stdlib.bufio"
+      or else Pkg = "stdlib.fmt"
+      or else Pkg = "stdlib.os"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -159,6 +177,30 @@ procedure Test_Runner is
          Add_Test
            (Result,
             new Reflect_Interfaces_Suite.Reflect_Interfaces_Test);
+      end if;
+      if Should_Register ("stdlib.errors") then
+         Add_Test (Result, new Errors_Suite.Errors_Test);
+      end if;
+      if Should_Register ("stdlib.strings") then
+         Add_Test (Result, new Strings_Suite.Strings_Test);
+      end if;
+      if Should_Register ("stdlib.strconv") then
+         Add_Test (Result, new Strconv_Suite.Strconv_Test);
+      end if;
+      if Should_Register ("stdlib.bytes") then
+         Add_Test (Result, new Bytes_Suite.Bytes_Test);
+      end if;
+      if Should_Register ("stdlib.io") then
+         Add_Test (Result, new Std_IO_Suite.Std_IO_Test);
+      end if;
+      if Should_Register ("stdlib.bufio") then
+         Add_Test (Result, new Bufio_Suite.Bufio_Test);
+      end if;
+      if Should_Register ("stdlib.fmt") then
+         Add_Test (Result, new Fmt_Suite.Fmt_Test);
+      end if;
+      if Should_Register ("stdlib.os") then
+         Add_Test (Result, new OS_Suite.OS_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

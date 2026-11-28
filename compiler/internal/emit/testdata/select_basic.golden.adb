@@ -3,20 +3,24 @@ with Gada.Async.Selector;
 
 package body P is
 
-   package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);
+   package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type
+         => Integer);
 
    package Selectors_Of_Integer is new Gada.Async.Selector
      (Element_Type    => Integer,
       Default_Element => 0,
       Bnd             => Channels_Of_Integer);
 
-   procedure SelectAll (C1 : Channels_Of_Integer.Channel; C2 : Channels_Of_Integer.Channel) is
+   procedure SelectAll (C1 : Channels_Of_Integer.Channel; C2 :
+         Channels_Of_Integer.Channel) is
    begin
       declare
          V_1_1 : constant Selectors_Of_Integer.Element_Ptr := new Integer'(0);
          V_1_2 : constant Selectors_Of_Integer.Element_Ptr := new Integer'(0);
-         OK_1_2 : constant Selectors_Of_Integer.Boolean_Ptr := new Boolean'(False);
-         OK_1_3 : constant Selectors_Of_Integer.Boolean_Ptr := new Boolean'(False);
+         OK_1_2 : constant Selectors_Of_Integer.Boolean_Ptr := new
+               Boolean'(False);
+         OK_1_3 : constant Selectors_Of_Integer.Boolean_Ptr := new
+               Boolean'(False);
          Sel_Cases_1 : Selectors_Of_Integer.Case_Array (1 .. 6);
          Sel_Idx_1 : Positive;
       begin
@@ -50,7 +54,8 @@ package body P is
                          Recv_V_Out       => null,
                          Recv_OK_Out      => null,
                          Timeout_Duration => 0.0);
-         Sel_Cases_1 (6) := (Kind             => Selectors_Of_Integer.Default_Op,
+         Sel_Cases_1 (6) := (Kind             =>
+               Selectors_Of_Integer.Default_Op,
                          Chan             => Channels_Of_Integer.No_Channel,
                          Send_V           => 0,
                          Recv_V_Out       => null,

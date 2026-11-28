@@ -1,0 +1,48 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "stdlib_import.go",
+      "imports": [
+        "strings"
+      ],
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "f",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "s",
+              "type": {
+                "kind": "StringType"
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "Call",
+              "fun": {
+                "kind": "Selector",
+                "x": {
+                  "kind": "Ident",
+                  "name": "strings"
+                },
+                "sel": "ToUpper"
+              },
+              "args": [
+                {
+                  "kind": "Ident",
+                  "name": "s"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

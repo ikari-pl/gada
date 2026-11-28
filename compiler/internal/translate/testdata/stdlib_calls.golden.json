@@ -1,0 +1,316 @@
+{
+  "kind": "Package",
+  "name": "p",
+  "files": [
+    {
+      "kind": "File",
+      "name": "stdlib_calls.go",
+      "imports": [
+        "os",
+        "strings"
+      ],
+      "decls": [
+        {
+          "kind": "Function",
+          "name": "f",
+          "params": [
+            {
+              "kind": "Param",
+              "name": "path",
+              "type": {
+                "kind": "StringType"
+              }
+            }
+          ],
+          "results": null,
+          "body": [
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "data"
+                },
+                {
+                  "kind": "Ident",
+                  "name": "err"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "Call",
+                  "fun": {
+                    "kind": "Selector",
+                    "x": {
+                      "kind": "Ident",
+                      "name": "os"
+                    },
+                    "sel": "ReadFile"
+                  },
+                  "args": [
+                    {
+                      "kind": "Ident",
+                      "name": "path"
+                    }
+                  ],
+                  "resultTypes": [
+                    {
+                      "kind": "SliceType",
+                      "elem": {
+                        "kind": "ByteType"
+                      }
+                    },
+                    {
+                      "kind": "ErrorType"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "text"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "BuiltinCall",
+                  "name": "string",
+                  "args": [
+                    {
+                      "kind": "Ident",
+                      "name": "data"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "words"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "Call",
+                  "fun": {
+                    "kind": "Selector",
+                    "x": {
+                      "kind": "Ident",
+                      "name": "strings"
+                    },
+                    "sel": "Fields"
+                  },
+                  "args": [
+                    {
+                      "kind": "Ident",
+                      "name": "text"
+                    }
+                  ],
+                  "resultTypes": [
+                    {
+                      "kind": "SliceType",
+                      "elem": {
+                        "kind": "StringType"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "n"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "BuiltinCall",
+                  "name": "len",
+                  "args": [
+                    {
+                      "kind": "Ident",
+                      "name": "words"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "w"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "IndexExpr",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "words"
+                  },
+                  "index": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "0"
+                  }
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "Ident",
+                  "name": "w2"
+                }
+              ],
+              "define": true,
+              "rhs": [
+                {
+                  "kind": "Call",
+                  "fun": {
+                    "kind": "Selector",
+                    "x": {
+                      "kind": "Ident",
+                      "name": "strings"
+                    },
+                    "sel": "TrimSpace"
+                  },
+                  "args": [
+                    {
+                      "kind": "Ident",
+                      "name": "w"
+                    }
+                  ],
+                  "resultTypes": [
+                    {
+                      "kind": "StringType"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "kind": "Assign",
+              "lhs": [
+                {
+                  "kind": "IndexExpr",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "words"
+                  },
+                  "index": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "0"
+                  }
+                }
+              ],
+              "define": false,
+              "rhs": [
+                {
+                  "kind": "Ident",
+                  "name": "w2"
+                }
+              ]
+            },
+            {
+              "kind": "If",
+              "cond": {
+                "kind": "BinOp",
+                "op": "!=",
+                "x": {
+                  "kind": "Ident",
+                  "name": "err"
+                },
+                "y": {
+                  "kind": "Lit",
+                  "litKind": "nil",
+                  "value": "nil"
+                }
+              },
+              "then": [
+                {
+                  "kind": "BuiltinCall",
+                  "name": "panic",
+                  "args": [
+                    {
+                      "kind": "Lit",
+                      "litKind": "string",
+                      "value": "\"read failed\""
+                    }
+                  ]
+                }
+              ],
+              "else": null
+            },
+            {
+              "kind": "If",
+              "cond": {
+                "kind": "BinOp",
+                "op": "\u0026\u0026",
+                "x": {
+                  "kind": "BinOp",
+                  "op": "\u003e",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "n"
+                  },
+                  "y": {
+                    "kind": "Lit",
+                    "litKind": "int",
+                    "value": "0"
+                  }
+                },
+                "y": {
+                  "kind": "BinOp",
+                  "op": "!=",
+                  "x": {
+                    "kind": "Ident",
+                    "name": "w2"
+                  },
+                  "y": {
+                    "kind": "Lit",
+                    "litKind": "string",
+                    "value": "\"\""
+                  }
+                }
+              },
+              "then": [
+                {
+                  "kind": "BuiltinCall",
+                  "name": "panic",
+                  "args": [
+                    {
+                      "kind": "Lit",
+                      "litKind": "string",
+                      "value": "\"nonempty\""
+                    }
+                  ]
+                }
+              ],
+              "else": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

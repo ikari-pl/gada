@@ -27,7 +27,8 @@ begin
       begin
          Rescue;
       end Defer_Closure_1;
-      Defer_1 : Gada.Core.Defer.Defer_Block (Op => Defer_Closure_1'Unrestricted_Access);
+      Defer_1 : Gada.Core.Defer.Defer_Block (Op =>
+            Defer_Closure_1'Unrestricted_Access);
    begin
       Panic_Of_Integer.Do_Panic (42);
    end;

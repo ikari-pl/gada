@@ -2,8 +2,10 @@ with Gada.Async.Channels.Bounded;
 
 package body P is
 
-   package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);
-   package Channels_Of_String is new Gada.Async.Channels.Bounded (Element_Type => String);
+   package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type
+         => Integer);
+   package Channels_Of_String is new Gada.Async.Channels.Bounded (Element_Type
+         => String);
 
    procedure Produce (C : Channels_Of_Integer.Channel) is
    begin

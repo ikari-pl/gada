@@ -11,10 +11,12 @@ package body P is
 
    function Tail (S : Slices_Of_Integer.Slice) return Slices_Of_Integer.Slice is
    begin
-      return Slices_Of_Integer.Slice_Of (S, 1 + 1, Slices_Of_Integer.Len (S) + 1);
+      return Slices_Of_Integer.Slice_Of (S, 1 + 1, Slices_Of_Integer.Len (S) +
+            1);
    end Tail;
 
-   function Head_n (S : Slices_Of_Integer.Slice; N : Integer) return Slices_Of_Integer.Slice is
+   function Head_n (S : Slices_Of_Integer.Slice; N : Integer) return
+         Slices_Of_Integer.Slice is
    begin
       return Slices_Of_Integer.Slice_Of (S, 1, N + 1);
    end Head_n;

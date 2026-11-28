@@ -393,6 +393,82 @@ terminator block, or a switch to `gnatcoverage`).
 
 ---
 
+### `runtime/src/gada-std-strconv.adb` (Phase 5)
+
+Excluded lines (see `tools/coverage_thresholds.toml`; remapped after the
+PR #45 review fixes moved code):
+
+  * **612-613** — the post-loop `Keep_All;` of `Shortest` plus its
+    terminator. Unreachable by construction: the loop runs over d's
+    trimmed digits, and lower < d. If lower agreed with d on every digit
+    up to d's last one, lower would be >= d; so at some position
+    `L /= M`, which makes `Ok_Down` true and the loop returns there.
+    (The structure mirrors Go's roundShortest, which has the same dead
+    fallthrough.) A 62,768-value differential run against Go never
+    reached it either.
+  * **683, 852, 853, 855, 898, 903, 1062, 1085, 1107, 1119** —
+    `end X;` fall-through terminators and `declare`/`end;` block
+    markers (`end Normalize;`, `end Format_Float;`, `end Message;`,
+    inner block ends in the 'g' branch, Parse_Float, Quote_Core and
+    Unquote). lcov 2.x instruments the implicit basic block at 0 even
+    when the enclosing routine is fully covered — the same fixed
+    toolchain property documented for `gada-async-race.adb:80`.
+  * **909, 911, 913, 914** — `Parse_Float`'s `when Constraint_Error`
+    arm. The Alire FSF GNAT 15.1 runtime *returns* ±Inf on decimal
+    overflow instead of raising, so this arm cannot fire on the CI
+    toolchain; the `Value > Long_Float'Last` post-check right below it
+    handles the overflow and is covered by the `1e999`/`-1e999`
+    Err_Range tests. The arm is kept for GNAT modes/configurations
+    that do raise.
+
+The previous `Shortest_K` `return 17` exclusion is gone with Shortest_K,
+and the Fmt_F pad-loop bodies are now credited by lcov, so they are no
+longer excluded.
+
+### `runtime/src/gada-std-strings.adb` (Phase 5)
+
+Excluded lines: 150, 257, 385, 394, 403, 525 — `end loop;` /
+`return Acc;` in Split_N / `end To_Upper;` / `end To_Lower;` /
+`end Map;` terminators and the `declare` marker in `Replacer.Replace`.
+All executed — the Split, Case and Replacer tests are green in the same
+run — but lcov 2.4 leaves hit-count 0 on in-loop returns and block
+markers. Same misattribution class as `gada-async-race.adb:80`.
+
+### `runtime/src/gada-std-fmt.adb` (Phase 5)
+
+Excluded lines: 54, 55, 100, 157, 189, 298, 359, 459, 469, 509, 578.
+Line 54 (`when others => null;` in `Parse_Spec`) is unreachable by
+construction: the `while` guard already restricts `F (I)` to
+`'-' | '+' | ' ' | '#' | '0'`, so the `others` arm can never fire —
+defensive exhaustiveness. The rest are `end;`/`declare` block markers
+and the `end Float_Text;` / `end Errorf;` terminators of always-
+returning functions, misattributed by lcov 2.4 (same class as above).
+
+### `runtime/src/gada-std-os.adb` (Phase 5)
+
+Excluded lines: 44-50, 52, 53 — the `when E : Device_Error | End_Error
+| Data_Error` arm of Read_File's read (lines 44-49) needs a failing
+device to trigger, which no portable AUnit test can arrange (the
+missing-file path is covered via the open arm above); lines 50, 52,
+53 are the inner `end;`, declare-block `end;`, and `end Read_File;`
+terminators. Both reachable branches of Read_File are covered by
+OS_Suite (ok/empty/missing-file tests are green in the same run); lcov
+2.4 leaves hit-count 0 on the block terminators, same misattribution
+class as `gada-async-race.adb:80`.
+
+### `runtime/src/gada-std-bytes.adb`, `gada-std-bufio.adb`, `gada-std-io.adb` (Phase 5)
+
+bytes: 28, 122, 166 — `end To_String;` terminators and an `end loop;`
+marker. bufio: 51, 111, 194, 314 — `end Fill;`, two `declare` markers
+in the Read_Line/Read_String search loops, and Scanner's final-token
+`return True;` (executed by the "final token w/o LF" assert). The stored-error branches of Read/Read_Line/
+Read_String are covered by the readErr tests, not excluded. io: 44,
+57, 81 — the inner `end;`, `end Copy;`, `end Read_All;` markers (the
+ErrShortWrite arm itself is covered by the short-write test). All in
+the lcov 2.4 misattribution class documented above.
+
+---
+
 ### Adding a new exception
 
 1. Confirm the line is **genuinely** untestable in CI (not just

@@ -11,6 +11,7 @@ with Interfaces; use Interfaces;
 with Gada.Std.Bytes; use Gada.Std.Bytes;
 with Gada.Std.Crypto.Aes;
 with Gada.Std.Errors; use type Gada.Std.Errors.Error_Access;
+use type Gada.Std.Bytes.Byte_Slice;
 with Gada.Std.Crypto.Cipher;
 
 package body Std_Crypto_Aes_Suite is

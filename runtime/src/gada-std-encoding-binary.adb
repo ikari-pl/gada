@@ -204,7 +204,7 @@ package body Gada.Std.Encoding.Binary is
    end Uvarint;
 
    procedure Append_Varint (Buf : in out Byte_Slice; V : Integer_64) is
-      X : Unsigned_64 := Unsigned_64 (V) * 2;
+      X : Unsigned_64 := Shift_Left (Unsigned_64 (V), 1);
    begin
       if V < 0 then
          X := not X;

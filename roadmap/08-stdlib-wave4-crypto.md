@@ -28,10 +28,10 @@ HMAC-SHA-256 pass; AES-GCM round-trips; base64/hex round-trip.
       *Verify:* `make stdlib-test PKG=crypto.hash`
       *Done when:* met — FIPS/RFC check values plus 0/3/55/56/63/64/65/1000-byte inputs pinned from Go 1.27 via `go run`, each through one-shot AND split-Write paths, plus Size/Block_Size/Sum-append/Reset per algorithm; constructors are `New_K` (Go `New` lowers through goNameToAdaMember to `New_K`, `new` being reserved); K/H/S constant tables verified exactly against integer floor(frac(root p)*2^bits) computations and the full algorithm cross-checked against hashlib in a Python transliteration; runtime/ 100% gate green (four `end Transform;` terminators excluded with rationale in runtime/COVERAGE.md).
 
-- [ ] **Stdlib package: `crypto/hmac`**
-      *Files:* `stdlib/crypto/hmac/`
+- [x] **Stdlib package: `crypto/hmac`** (done 2026-11-28, CI green on 7df5fb1, run 46089911465)
+      *Files:* `runtime/src/gada-std-crypto-hmac.{ads,adb}`, `runtime/tests/stdlib/std_crypto_hmac_suite.{ads,adb}` (suite `stdlib.crypto.hmac`), `compiler/internal/ir/stdlib.go`
       *Verify:* `make stdlib-test PKG=crypto.hmac`
-      *Done when:* RFC 2202 + RFC 4231 test vectors pass.
+      *Done when:* met — all 14 RFC 4231 (SHA-256/512) + RFC 2202 (MD5/SHA-1) cases pinned from Go 1.27 via `go run`, each MAC'd with all four algorithms, plus split-Write via Equal, Sum-append, Reset, Size/Block_Size; keys longer than the block size exercise the hash-the-key arm; v1 takes the algorithm as an explicit tag (New_K (Sha256, Key)) because the hash.Hash interface port is a later item; runtime/ 100% gate green (four Sum case-arm terminators excluded with rationale in runtime/COVERAGE.md).
 
 - [ ] **Stdlib packages: `crypto/aes`, `crypto/cipher`**
       *Files:* `stdlib/crypto/aes/`, `stdlib/crypto/cipher/`

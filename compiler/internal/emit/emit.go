@@ -1315,9 +1315,16 @@ func (e *emitter) cryptoMethodCall(c *ir.Call) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	args := make([]string, 0, len(c.Args)+1)
+	callArgs := c.Args
+	// Go's AEAD methods take a dst slice to append to; the port's
+	// Seal/Open return/assign the result instead, so drop dst.
+	if pkg == "Gada.Std.Crypto.Cipher" &&
+		(sel.Sel == "Seal" || sel.Sel == "Open") && len(callArgs) == 4 {
+		callArgs = callArgs[1:]
+	}
+	args := make([]string, 0, len(callArgs)+1)
 	args = append(args, adaIdent(recv))
-	for _, a := range c.Args {
+	for _, a := range callArgs {
 		args = append(args, e.emitExpr(a))
 	}
 	return pkg + "." + goNameToAdaMember(sel.Sel) +
@@ -1332,8 +1339,14 @@ func (e *emitter) emitOutCallStmt(c *ir.Call, lhs []string) {
 	args := make([]string, 0, len(c.Args)+1+len(lhs))
 	if sel, ok := c.Fun.(*ir.Selector); ok {
 		if recv, pkg, ok2 := e.cryptoReceiver(sel); ok2 {
+			callArgs := c.Args
+			if pkg == "Gada.Std.Crypto.Cipher" &&
+				(sel.Sel == "Seal" || sel.Sel == "Open") &&
+				len(callArgs) == 4 {
+				callArgs = callArgs[1:] // drop Go's dst append target
+			}
 			args = append(args, adaIdent(recv))
-			for _, a := range c.Args {
+			for _, a := range callArgs {
 				args = append(args, e.emitExpr(a))
 			}
 			args = append(args, lhs...)

@@ -3805,7 +3805,7 @@ func TestWave4CryptoEmit(t *testing.T) {
 		"Gcm : Gada.Std.Crypto.Cipher.GCM;",
 		"Gada.Std.Crypto.Aes.New_Cipher (Key, Block, Err);",
 		"Gada.Std.Crypto.Cipher.New_GCM (Block, Gcm, Err2);",
-		"Gada.Std.Crypto.Cipher.Open (Gcm, Dst, Nonce, Sealed, Ad, Opened, Err3);",
+		"Gada.Std.Crypto.Cipher.Open (Gcm, Nonce, Sealed, Ad, Opened, Err3);", // Go dst arg dropped
 		"Gada.Std.Crypto.Hmac.Write (Mac, Msg);",
 		"Sig := Gada.Std.Crypto.Hmac.Sum (Mac, Empty);",
 		"Gada.Std.Encoding.Hex.Encode_To_String (Sum)",

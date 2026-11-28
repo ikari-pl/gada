@@ -23,10 +23,10 @@ HMAC-SHA-256 pass; AES-GCM round-trips; base64/hex round-trip.
       `end Make_Table;` terminators excluded with rationale in
       runtime/COVERAGE.md).
 
-- [ ] **Stdlib packages: `crypto/sha256`, `crypto/sha512`, `crypto/sha1`, `crypto/md5`**
-      *Files:* `stdlib/crypto/...`
+- [x] **Stdlib packages: `crypto/sha256`, `crypto/sha512`, `crypto/sha1`, `crypto/md5`** (done 2026-11-28, CI green on 064b776, run 46088235309)
+      *Files:* `runtime/src/gada-std-crypto{,-sha256,-sha512,-sha1,-md5}.{ads,adb}`, `runtime/tests/stdlib/std_crypto_hash_suite.{ads,adb}` (suite `stdlib.crypto.hash`), `compiler/internal/ir/stdlib.go`, `compiler/internal/emit/emit_test.go`
       *Verify:* `make stdlib-test PKG=crypto.hash`
-      *Done when:* CAVS vectors pass; coverage 100%.
+      *Done when:* met — FIPS/RFC check values plus 0/3/55/56/63/64/65/1000-byte inputs pinned from Go 1.27 via `go run`, each through one-shot AND split-Write paths, plus Size/Block_Size/Sum-append/Reset per algorithm; constructors are `New_K` (Go `New` lowers through goNameToAdaMember to `New_K`, `new` being reserved); K/H/S constant tables verified exactly against integer floor(frac(root p)*2^bits) computations and the full algorithm cross-checked against hashlib in a Python transliteration; runtime/ 100% gate green (four `end Transform;` terminators excluded with rationale in runtime/COVERAGE.md).
 
 - [ ] **Stdlib package: `crypto/hmac`**
       *Files:* `stdlib/crypto/hmac/`

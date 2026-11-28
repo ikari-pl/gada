@@ -82,7 +82,9 @@ package body Gada.Std.Encoding.Csv is
               and then Ada.Strings.Unbounded.Element
                 (Buf, Ada.Strings.Unbounded.Length (Buf)) = CR
             then
-               Ada.Strings.Unbounded.Delete_Last (Buf);
+               Buf := Ada.Strings.Unbounded.To_Unbounded_String
+                 (Ada.Strings.Unbounded.Slice
+                    (Buf, 1, Ada.Strings.Unbounded.Length (Buf) - 1));
                Gada.Std.Strings.String_Vectors.Replace_Element
                  (Rec,
                   Positive (Gada.Std.Strings.String_Vectors.Length (Rec)),

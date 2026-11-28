@@ -342,6 +342,18 @@ jobs:
           export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
           make example HELLO=ping_pong
 
+      - name: Run make example HELLO=crypto_suite
+        # The Phase-8 wave-4 exit-criterion target (roadmap/08-stdlib-
+        # wave4-crypto item 7). Exercises the crypto ports end-to-end
+        # through the transpiler: sha256.Sum256, hmac.New/Write/Sum/
+        # Equal, aes.NewCipher + cipher.NewGCM + Seal/Open, and
+        # hex.EncodeToString; output (pinned from Go) is diffed against
+        # expected_output.txt like the other examples.
+        run: |
+          set -euo pipefail
+          export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
+          make example HELLO=crypto_suite
+
       - name: Run make example HELLO=iface_dispatch
         # The Phase-4 exit-criterion target (roadmap/04-interfaces-
         # reflection item 7). Exercises 3+ types implementing 2

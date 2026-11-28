@@ -7,6 +7,7 @@ pragma Warnings (Off, "use of an anonymous access type allocator");
 with AUnit.Assertions; use AUnit.Assertions;
 
 with Ada.Characters.Latin_1; use Ada.Characters.Latin_1;
+with Ada.Containers; use type Ada.Containers.Count_Type;
 with Ada.Strings.Unbounded; use Ada.Strings.Unbounded;
 
 with Gada.Std.Strings; use Gada.Std.Strings;

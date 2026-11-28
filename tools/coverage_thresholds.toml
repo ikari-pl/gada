@@ -437,8 +437,19 @@ reason = "lcov terminator artifacts — see runtime/COVERAGE.md"
 
 [[exclude]]
 file = "runtime/src/gada-std-crypto-cipher.adb"
-lines = [24, 165, 203, 212, 235, 253]
+lines = [24, 165, 203, 212, 235, 253, 270, 271, 273, 274]
 reason = "lcov terminator/continuation artifacts — see runtime/COVERAGE.md"
+
+# New_GCM's out-procedure overload wraps the infallible function form for
+# the Go (value, error) out-call shape; its `when others` handler can only
+# fire if New_GCM itself raises, which no valid Aes.Block triggers (the
+# AES key expansion already ran in New_Cipher). Defensive only.
+# Rationale: runtime/COVERAGE.md (gada-std-crypto-cipher, Phase 8 item 7).
+[[exclude]]
+file = "runtime/src/gada-std-crypto-cipher.adb"
+lines = [270, 271, 273, 274]
+reason = "New_GCM out-proc defensive when-others — see runtime/COVERAGE.md"
+
 
 # lcov 2.4 terminator artifacts (functions returning on their own
 # line). Rationale: runtime/COVERAGE.md (gada-std-encoding-*).

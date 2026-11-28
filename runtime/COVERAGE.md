@@ -664,6 +664,14 @@ GCM Seal/Open incl. GF128_Mul, GHASH (AAD, ciphertext, length block),
 tag compare and all three Open error raises, IV/block-size checks —
 is covered by Std_Crypto_Aes_Suite, not excluded.
 
+cipher.adb 270-274 (Phase 8 item 7) — the `when others` handler of the
+New_GCM *out-procedure overload* (the Go `gcm, err := cipher.NewGCM(b)`
+shape). The wrapped function New_GCM cannot raise for a Block that
+already passed aes.New_Cipher's key expansion, so the handler is
+defensive-only and unreachable in CI. The success path and the
+Open-procedure error half are covered by
+Std_Crypto_Aes_Suite.Test_Out_Call_Forms.
+
 ---
 
 ### `runtime/src/gada-std-encoding-base64.adb` / `-hex.adb` / `-binary.adb` (Phase 8 wave 4, item 5)

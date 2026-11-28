@@ -73,24 +73,15 @@ package body Std_Crypto_Hash_Suite is
    type Hexes is array (Positive range <>) of Unbounded_String;
 
    Sha256_Expect : constant Hexes (Inputs'Range) :=
-     (To_Unbounded_String
-        ("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
-      To_Unbounded_String
-        ("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
-      To_Unbounded_String
-        ("248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"),
-      To_Unbounded_String
-        ("9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318"),
-      To_Unbounded_String
-        ("b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a"),
-      To_Unbounded_String
-        ("7d3e74a05d7db15bce4ad9ec0658ea98e3f06eeecf16b4c6fff2da457ddc2f34"),
-      To_Unbounded_String
-        ("ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb"),
-      To_Unbounded_String
-        ("635361c48bb9eab14198e76ea8ab7f1a41685d6ad62aa9146d301d4f17eb0ae0"),
-      To_Unbounded_String
-        ("41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5a5d134645adb5db1b9737ea3"));
+     (To_Unbounded_String ("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+      To_Unbounded_String ("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+      To_Unbounded_String ("248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"),
+      To_Unbounded_String ("9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318"),
+      To_Unbounded_String ("b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a"),
+      To_Unbounded_String ("7d3e74a05d7db15bce4ad9ec0658ea98e3f06eeecf16b4c6fff2da457ddc2f34"),
+      To_Unbounded_String ("ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb"),
+      To_Unbounded_String ("635361c48bb9eab14198e76ea8ab7f1a41685d6ad62aa9146d301d4f17eb0ae0"),
+      To_Unbounded_String ("41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3"));
 
    Sha512_Expect : constant Hexes (Inputs'Range) :=
      (To_Unbounded_String
@@ -104,7 +95,7 @@ package body Std_Crypto_Hash_Suite is
          & "96fd15c13b1b07f9aa1d3bea57789ca031ad85c7a71dd70354ec631238ca3445"),
       To_Unbounded_String
         ("b0220c772cbf6c1822e2cb38a437d0e1d58772417a4bbb21c961364f8b6143e0"
-         & "5aa6316dca8d0d7b19e16448419076395f6086cb55101fbd6d5497b148e1745f"),
+         & "5aa6316dca8d1d7b19e16448419076395f6086cb55101fbd6d5497b148e1745f"),
       To_Unbounded_String
         ("962b64aae357d2a4fee3ded8b539bdc9d325081822b0bfc55583133aab44f18b"
          & "afe11d72a7ae16c79ce2ba620ae2242d5144809161945f1367f41b3972e26e04"),
@@ -112,8 +103,8 @@ package body Std_Crypto_Hash_Suite is
         ("c1b0f5c6d3b03dfe4a2602e67242f54e344090b66e01100a469b129f583f016c"
          & "7e27dddeaa438393dcc7ec54b0b57c9ba7af007f9b56db5f6fb677d972a31362"),
       To_Unbounded_String
-        ("01d35c10c6c38c2dcf48f7eebb3235fb5ad74a65ec4cd016e2354c637a8fb49"
-         & "b695ef3c1d6f7ae4cd74d78cc9c9bcac9d4f23a73019998a7f73038a5c9b2dbde"),
+        ("01d35c10c6c38c2dcf48f7eebb3235fb5ad74a65ec4cd016e2354c637a8fb49b"
+         & "695ef3c1d6f7ae4cd74d78cc9c9bcac9d4f23a73019998a7f73038a5c9b2dbde"),
       To_Unbounded_String
         ("b83086cd8494e55708ad7ecd82dfb4bca1bda61ecbb7caf0c68967902e709345"
          & "e5d8305eb7ac0d588afc6cbb75161aa9c8c7e0ea986bd833dafe5e1ccd37345a"),
@@ -129,8 +120,8 @@ package body Std_Crypto_Hash_Suite is
       To_Unbounded_String ("c2db330f6083854c99d4b5bfb6e8f29f201be699"),
       To_Unbounded_String ("03f09f5b158a7a8cdad920bddc29b81c18a551f5"),
       To_Unbounded_String ("0098ba824b5c16427bd7a1122a5a442a25ec644d"),
-      To_Unbounded_String ("11655326c708d70319be2610e8a57d9a5b959b3b"),
-      To_Unbounded_String ("291e9a6c66994949b57ba5e650361e98fc36b8a9"));
+      To_Unbounded_String ("11655326c708d70319be2610e8a57d9a5b959d3b"),
+      To_Unbounded_String ("291e9a6c66994949b57ba5e650361e98fc36b1ba"));
 
    Md5_Expect : constant Hexes (Inputs'Range) :=
      (To_Unbounded_String ("d41d8cd98f00b204e9800998ecf8427e"),

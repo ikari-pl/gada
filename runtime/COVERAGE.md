@@ -666,6 +666,20 @@ is covered by Std_Crypto_Aes_Suite, not excluded.
 
 ---
 
+### `runtime/src/gada-std-encoding-base64.adb` / `-hex.adb` / `-binary.adb` (Phase 8 wave 4, item 5)
+
+base64.adb 72 and hex.adb 34 — `end` terminators of functions that
+return on their own line (lcov 2.4 no-return-block misattribution).
+Everything else in the three encoding ports — base64 Encode/Decode
+incl. all four alphabets/padding modes and every raise (illegal char,
+illegal/misplaced padding, bad padded length, raw length mod 4 = 1),
+hex encode/decode incl. uppercase digits and both raises, binary
+fixed-width both endians, Append_* buffer forms, uvarint/varint
+incl. empty/overflow/truncated/short-buffer arms — is covered by
+Std_Encoding_Suite, not excluded.
+
+---
+
 ### Adding a new exception
 
 1. Confirm the line is **genuinely** untestable in CI (not just

@@ -183,9 +183,9 @@ package body Gada.Std.Encoding.Binary is
             Byte : constant Unsigned_64 :=
               Unsigned_64 (Character'Pos (Byte_Vectors.Element (B, I)));
          begin
-            if I > 10 then
-               raise Constraint_Error with "binary: uvarint overflow";
-            end if;
+            --  the 10th byte carries the top bit: values > 1 (incl.
+            --  any continuation bit) overflow — so >10 bytes always
+            --  raise here first and no separate arm is needed
             if I = 10 and then Byte > 1 then
                raise Constraint_Error with "binary: uvarint overflow";
             end if;

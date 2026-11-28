@@ -109,10 +109,10 @@ package body Gada.Std.Crypto.Sha512 is
       end if;
    end Append_Byte;
 
-   function New return Digest is
+   function New_K return Digest is
    begin
       return (H => Init, others => <>);
-   end New;
+   end New_K;
 
    procedure Write (H : in out Digest; Data : Byte_Slice) is
       N : constant Natural := Natural (Byte_Vectors.Length (Data));
@@ -171,7 +171,7 @@ package body Gada.Std.Crypto.Sha512 is
    end Block_Size;
 
    function Sum512 (Data : Byte_Slice) return Byte_Slice is
-      H : Digest := New;
+      H : Digest  := New_K;
    begin
       Write (H, Data);
       return Sum (H, Byte_Vectors.Empty_Vector);

@@ -3,7 +3,7 @@
 --  64-bit words, 80 rounds.
 --
 --  Go's sha512.New() returns a hash.Hash; v1 returns the concrete
---  Digest record (same shape as the Gada.Std.Hash.Fnv ports): New /
+--  Digest record (same shape as the Gada.Std.Hash.Fnv ports): New_K /
 --  Write / Sum / Reset / Size / Block_Size are primitive operations.
 --  Go's Sum512(data) [64]byte maps to a 64-byte Byte_Slice here.
 --
@@ -20,8 +20,8 @@ package Gada.Std.Crypto.Sha512 is
 
    type Digest is limited private;
 
-   --  Go: sha512.New() hash.Hash.
-   function New return Digest;
+   --  Go: sha512.New() -> New_K (new is reserved) hash.Hash.
+   function New_K return Digest;
 
    --  Go: h.Write(p) (io.Writer) — returns (len p, nil error); v1 is a
    --  procedure, the error half is always nil.

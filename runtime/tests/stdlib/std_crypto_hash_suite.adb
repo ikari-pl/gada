@@ -150,7 +150,7 @@ package body Std_Crypto_Hash_Suite is
          declare
             B : constant Byte_Slice := To_Bytes (To_String (Inputs (I)));
             N : constant Natural := Natural (Byte_Vectors.Length (B));
-            H : Gada.Std.Crypto.Sha256.Digest := Gada.Std.Crypto.Sha256.New;
+            H : Gada.Std.Crypto.Sha256.Digest := Gada.Std.Crypto.Sha256.New_K;
          begin
             Assert
               (To_Hex (Gada.Std.Crypto.Sha256.Sum256 (B))
@@ -168,7 +168,7 @@ package body Std_Crypto_Hash_Suite is
       end loop;
       --  API shape: Size / Block_Size / Sum appends to B / Reset
       declare
-         H : Gada.Std.Crypto.Sha256.Digest := Gada.Std.Crypto.Sha256.New;
+         H : Gada.Std.Crypto.Sha256.Digest := Gada.Std.Crypto.Sha256.New_K;
          S : Byte_Slice;
       begin
          Assert (Gada.Std.Crypto.Sha256.Size (H) = 32, "sha256 Size");
@@ -198,7 +198,7 @@ package body Std_Crypto_Hash_Suite is
          declare
             B : constant Byte_Slice := To_Bytes (To_String (Inputs (I)));
             N : constant Natural := Natural (Byte_Vectors.Length (B));
-            H : Gada.Std.Crypto.Sha512.Digest := Gada.Std.Crypto.Sha512.New;
+            H : Gada.Std.Crypto.Sha512.Digest := Gada.Std.Crypto.Sha512.New_K;
          begin
             Assert
               (To_Hex (Gada.Std.Crypto.Sha512.Sum512 (B))
@@ -214,7 +214,7 @@ package body Std_Crypto_Hash_Suite is
          end;
       end loop;
       declare
-         H : Gada.Std.Crypto.Sha512.Digest := Gada.Std.Crypto.Sha512.New;
+         H : Gada.Std.Crypto.Sha512.Digest := Gada.Std.Crypto.Sha512.New_K;
          S : Byte_Slice;
       begin
          Assert (Gada.Std.Crypto.Sha512.Size (H) = 64, "sha512 Size");
@@ -239,7 +239,7 @@ package body Std_Crypto_Hash_Suite is
          declare
             B : constant Byte_Slice := To_Bytes (To_String (Inputs (I)));
             N : constant Natural := Natural (Byte_Vectors.Length (B));
-            H : Gada.Std.Crypto.Sha1.Digest := Gada.Std.Crypto.Sha1.New;
+            H : Gada.Std.Crypto.Sha1.Digest := Gada.Std.Crypto.Sha1.New_K;
          begin
             Assert
               (To_Hex (Gada.Std.Crypto.Sha1.Sum (B))
@@ -255,7 +255,7 @@ package body Std_Crypto_Hash_Suite is
          end;
       end loop;
       declare
-         H : Gada.Std.Crypto.Sha1.Digest := Gada.Std.Crypto.Sha1.New;
+         H : Gada.Std.Crypto.Sha1.Digest := Gada.Std.Crypto.Sha1.New_K;
          S : Byte_Slice;
       begin
          Assert (Gada.Std.Crypto.Sha1.Size (H) = 20, "sha1 Size");
@@ -279,7 +279,7 @@ package body Std_Crypto_Hash_Suite is
          declare
             B : constant Byte_Slice := To_Bytes (To_String (Inputs (I)));
             N : constant Natural := Natural (Byte_Vectors.Length (B));
-            H : Gada.Std.Crypto.Md5.Digest := Gada.Std.Crypto.Md5.New;
+            H : Gada.Std.Crypto.Md5.Digest := Gada.Std.Crypto.Md5.New_K;
          begin
             Assert
               (To_Hex (Gada.Std.Crypto.Md5.Sum (B))
@@ -295,7 +295,7 @@ package body Std_Crypto_Hash_Suite is
          end;
       end loop;
       declare
-         H : Gada.Std.Crypto.Md5.Digest := Gada.Std.Crypto.Md5.New;
+         H : Gada.Std.Crypto.Md5.Digest := Gada.Std.Crypto.Md5.New_K;
          S : Byte_Slice;
       begin
          Assert (Gada.Std.Crypto.Md5.Size (H) = 16, "md5 Size");

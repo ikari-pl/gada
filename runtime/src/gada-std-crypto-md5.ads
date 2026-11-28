@@ -17,8 +17,8 @@ package Gada.Std.Crypto.Md5 is
 
    type Digest is limited private;
 
-   --  Go: md5.New() hash.Hash.
-   function New return Digest;
+   --  Go: md5.New() -> New_K (new is reserved) hash.Hash.
+   function New_K return Digest;
 
    --  Go: h.Write(p) (io.Writer) — returns (len p, nil error); v1 is a
    --  procedure, the error half is always nil.

@@ -46,10 +46,11 @@ private
    Init : constant State_Array :=
      (16#67452301#, 16#EFCDAB89#, 16#98BADCFE#, 16#10325476#);
 
+   type Byte_Buf is array (Natural range 0 .. Block_Len - 1) of Character;
+
    type Digest is record
       S       : State_Array := Init;
-      Buf     : array (Natural range 0 .. Block_Len - 1) of Character :=
-                  (others => Character'Val (0));
+      Buf     : Byte_Buf := (others => Character'Val (0));
       Buf_Len : Natural := 0;
       Len     : Unsigned_64 := 0;  --  total bytes written
    end record;

@@ -52,10 +52,11 @@ private
       16#510E527FADE682D1#, 16#9B05688C2B3E6C1F#,
       16#1F83D9ABFB41BD6B#, 16#5BE0CD19137E2179#);
 
+   type Byte_Buf is array (Natural range 0 .. Block_Len - 1) of Character;
+
    type Digest is record
       H       : State_Array := Init;
-      Buf     : array (Natural range 0 .. Block_Len - 1) of Character :=
-                  (others => Character'Val (0));
+      Buf     : Byte_Buf := (others => Character'Val (0));
       Buf_Len : Natural := 0;
       Len     : Unsigned_64 := 0;  --  total bytes written
    end record;

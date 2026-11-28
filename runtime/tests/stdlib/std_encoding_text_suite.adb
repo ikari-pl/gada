@@ -32,24 +32,24 @@ package body Std_Encoding_Text_Suite is
       Register_Routine (T, Test_Xml_Errors'Access, "xml malformed docs raise");
    end Register_Tests;
 
-   --  Row / Row_List builders (arity overloads).
-   function Rec (A : String) return Row is
-      R : Row;
+   --  Record / Record_List builders (arity overloads).
+   function Rec (A : String) return Record is
+      R : Record;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       return R;
    end Rec;
 
-   function Rec (A, B : String) return Row is
-      R : Row;
+   function Rec (A, B : String) return Record is
+      R : Record;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       String_Vectors.Append (R, To_Unbounded_String (B));
       return R;
    end Rec;
 
-   function Rec (A, B, C : String) return Row is
-      R : Row;
+   function Rec (A, B, C : String) return Record is
+      R : Record;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       String_Vectors.Append (R, To_Unbounded_String (B));
@@ -57,8 +57,8 @@ package body Std_Encoding_Text_Suite is
       return R;
    end Rec;
 
-   function Rec (A, B, C, D : String) return Row is
-      R : Row;
+   function Rec (A, B, C, D : String) return Record is
+      R : Record;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       String_Vectors.Append (R, To_Unbounded_String (B));
@@ -67,8 +67,8 @@ package body Std_Encoding_Text_Suite is
       return R;
    end Rec;
 
-   function Rec (A, B, C, D, E : String) return Row is
-      R : Row;
+   function Rec (A, B, C, D, E : String) return Record is
+      R : Record;
    begin
       String_Vectors.Append (R, To_Unbounded_String (A));
       String_Vectors.Append (R, To_Unbounded_String (B));
@@ -78,22 +78,22 @@ package body Std_Encoding_Text_Suite is
       return R;
    end Rec;
 
-   function Recs (R1 : Row) return Row_List is
-      L : Row_List;
+   function Recs (R1 : Record) return Record_List is
+      L : Record_List;
    begin
       Row_Vectors.Append (L, R1);
       return L;
    end Recs;
 
-   function Recs (R1, R2 : Row) return Row_List is
-      L : Row_List;
+   function Recs (R1, R2 : Record) return Record_List is
+      L : Record_List;
    begin
       Row_Vectors.Append (L, R1);
       Row_Vectors.Append (L, R2);
       return L;
    end Recs;
 
-   procedure Assert_Rec (Got, Want : Row; Msg : String) is
+   procedure Assert_Rec (Got, Want : Record; Msg : String) is
    begin
       Assert (String_Vectors.Length (Got) = String_Vectors.Length (Want),
               Msg & ": field count");
@@ -110,7 +110,7 @@ package body Std_Encoding_Text_Suite is
 
       --  CSV doc 0
       declare
-         L : constant Row_List := Read_All ("a,b,c" & LF & "1,2,3" & LF & "");
+         L : constant Record_List := Read_All ("a,b,c" & LF & "1,2,3" & LF & "");
       begin
          Assert (Natural (Row_Vectors.Length (L)) = 2, "csv0: record count");
          Assert_Rec (Row_Vectors.Element (L, 1), Rec ("a", "b", "c"), "csv0 rec1");
@@ -118,7 +118,7 @@ package body Std_Encoding_Text_Suite is
       end;
       --  CSV doc 1
       declare
-         L : constant Row_List := Read_All ("name,quote,note" & LF &
+         L : constant Record_List := Read_All ("name,quote,note" & LF &
          """Doe, John"",""say """"hi"""""",""li" & "ne1" & LF & "line2""" & LF & "");
       begin
          Assert (Natural (Row_Vectors.Length (L)) = 2, "csv1: record count");
@@ -128,7 +128,7 @@ package body Std_Encoding_Text_Suite is
       end;
       --  CSV doc 2
       declare
-         L : constant Row_List := Read_All ("a,,c" & LF & ",," & LF & "");
+         L : constant Record_List := Read_All ("a,,c" & LF & ",," & LF & "");
       begin
          Assert (Natural (Row_Vectors.Length (L)) = 2, "csv2: record count");
          Assert_Rec (Row_Vectors.Element (L, 1), Rec ("a", "", "c"), "csv2 rec1");
@@ -136,21 +136,21 @@ package body Std_Encoding_Text_Suite is
       end;
       --  CSV doc 3
       declare
-         L : constant Row_List := Read_All ("""""" & LF & "");
+         L : constant Record_List := Read_All ("""""" & LF & "");
       begin
          Assert (Natural (Row_Vectors.Length (L)) = 1, "csv3: record count");
          Assert_Rec (Row_Vectors.Element (L, 1), Rec (""), "csv3 rec1");
       end;
       --  CSV doc 4
       declare
-         L : constant Row_List := Read_All ("single" & LF & "");
+         L : constant Record_List := Read_All ("single" & LF & "");
       begin
          Assert (Natural (Row_Vectors.Length (L)) = 1, "csv4: record count");
          Assert_Rec (Row_Vectors.Element (L, 1), Rec ("single"), "csv4 rec1");
       end;
       --  CSV doc 5
       declare
-         L : constant Row_List := Read_All ("a,b" & CR & "" & LF & "c,d" & CR & "" & LF & "");
+         L : constant Record_List := Read_All ("a,b" & CR & "" & LF & "c,d" & CR & "" & LF & "");
       begin
          Assert (Natural (Row_Vectors.Length (L)) = 2, "csv5: record count");
          Assert_Rec (Row_Vectors.Element (L, 1), Rec ("a", "b"), "csv5 rec1");
@@ -158,10 +158,53 @@ package body Std_Encoding_Text_Suite is
       end;
       --  CSV doc 6
       declare
-         L : constant Row_List := Read_All ("""multi" & LF & "line"",x" & LF & "");
+         L : constant Record_List := Read_All ("""multi" & LF & "line"",x" & LF & "");
       begin
          Assert (Natural (Row_Vectors.Length (L)) = 1, "csv6: record count");
          Assert_Rec (Row_Vectors.Element (L, 1), Rec ("multi" & LF & "line", "x"), "csv6 rec1");
+      end;
+      --  CSV doc 8
+      declare
+         L : constant Record_List := Read_All ("");
+      begin
+         Assert (Natural (Row_Vectors.Length (L)) = 0, "csv8: record count");
+      end;
+      --  CSV doc 9
+      declare
+         L : constant Record_List := Read_All ("a,b");
+      begin
+         Assert (Natural (Row_Vectors.Length (L)) = 1, "csv9: record count");
+         Assert_Rec (Row_Vectors.Element (L, 1), Rec ("a", "b"), "csv9 rec1");
+      end;
+      --  CSV doc 10
+      declare
+         L : constant Record_List := Read_All ("a,b" & LF & "" & LF & "c,d" & LF & "");
+      begin
+         Assert (Natural (Row_Vectors.Length (L)) = 2, "csv10: record count");
+         Assert_Rec (Row_Vectors.Element (L, 1), Rec ("a", "b"), "csv10 rec1");
+         Assert_Rec (Row_Vectors.Element (L, 2), Rec ("c", "d"), "csv10 rec2");
+      end;
+      --  CSV doc 11
+      declare
+         L : constant Record_List := Read_All ("" & CR & "" & LF & "");
+      begin
+         Assert (Natural (Row_Vectors.Length (L)) = 0, "csv11: record count");
+      end;
+      --  CSV doc 14
+      declare
+         L : constant Record_List := Read_All ("""q"",x" & CR & "" & LF & "z,w" & LF & "");
+      begin
+         Assert (Natural (Row_Vectors.Length (L)) = 2, "csv14: record count");
+         Assert_Rec (Row_Vectors.Element (L, 1), Rec ("q", "x"), "csv14 rec1");
+         Assert_Rec (Row_Vectors.Element (L, 2), Rec ("z", "w"), "csv14 rec2");
+      end;
+      --  CSV doc 15
+      declare
+         L : constant Record_List := Read_All ("""a""" & CR & "" & LF & "b" & LF & "");
+      begin
+         Assert (Natural (Row_Vectors.Length (L)) = 2, "csv15: record count");
+         Assert_Rec (Row_Vectors.Element (L, 1), Rec ("a"), "csv15 rec1");
+         Assert_Rec (Row_Vectors.Element (L, 2), Rec ("b"), "csv15 rec2");
       end;
    end Test_Csv_Read;
 
@@ -185,6 +228,15 @@ package body Std_Encoding_Text_Suite is
          "c,d" & LF & "", "csv5: write round-trip");
       Assert (Write_All (Read_All ("""multi" & LF & "line"",x" & LF & "")) = """multi" & LF &
          "line"",x" & LF & "", "csv6: write round-trip");
+      Assert (Write_All (Read_All ("")) = "", "csv8: write round-trip");
+      Assert (Write_All (Read_All ("a,b")) = "a,b" & LF & "", "csv9: write round-trip");
+      Assert (Write_All (Read_All ("a,b" & LF & "" & LF & "c,d" & LF & "")) = "a,b" & LF & "c,d" &
+         LF & "", "csv10: write round-trip");
+      Assert (Write_All (Read_All ("" & CR & "" & LF & "")) = "", "csv11: write round-trip");
+      Assert (Write_All (Read_All ("""q"",x" & CR & "" & LF & "z,w" & LF & "")) = "q,x" & LF & "z,w"
+         & LF & "", "csv14: write round-trip");
+      Assert (Write_All (Read_All ("""a""" & CR & "" & LF & "b" & LF & "")) = "a" & LF & "b" & LF &
+         "", "csv15: write round-trip");
 
       --  Tricky fields (comma, quote, newline, empty) pinned from Go.
       Assert (Write_All (Recs (Rec ("plain", "with,comma", "with""quote",
@@ -203,9 +255,29 @@ package body Std_Encoding_Text_Suite is
       --  CSV doc 7: field-count mismatch must raise
       begin
          declare
-            L : constant Row_List := Read_All ("a,b" & LF & "1,2,extra" & LF & "");
+            L : constant Record_List := Read_All ("a,b" & LF & "1,2,extra" & LF & "");
          begin
             Assert (Row_Vectors.Length (L) = 0, "csv7: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  CSV doc 12: field-count mismatch must raise
+      begin
+         declare
+            L : constant Record_List := Read_All ("""a""x" & LF & "");
+         begin
+            Assert (Row_Vectors.Length (L) = 0, "csv12: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  CSV doc 13: field-count mismatch must raise
+      begin
+         declare
+            L : constant Record_List := Read_All ("""abc");
+         begin
+            Assert (Row_Vectors.Length (L) = 0, "csv13: must raise");
          end;
       exception
          when Constraint_Error => null;  --  expected
@@ -306,6 +378,11 @@ package body Std_Encoding_Text_Suite is
       Assert (Marshal (Unmarshal ("<a>1<b>2</b>3</a>")) = "<a>1<b>2</b>3</a>", "xml4: marshal");
       Assert (Marshal (Unmarshal ("<a>&lt;&gt;&amp;&quot;&apos;&#65;&#x42;</a>")) =
          "<a>&lt;&gt;&amp;&#34;&#39;AB</a>", "xml5: marshal");
+      Assert (Marshal (Unmarshal ("<a><![CDATA[x<y & z]]></a>")) = "<a>x&lt;y &amp; z</a>",
+         "xml6: marshal");
+      Assert (Marshal (Unmarshal ("<a><!-- c --><b/></a>")) = "<a><b></b></a>", "xml7: marshal");
+      Assert (Marshal (Unmarshal ("<a x=""1"" y='two'>t</a>")) = "<a x=""1"" y=""two"">t</a>",
+         "xml8: marshal");
    end Test_Xml_Marshal;
 
 
@@ -349,6 +426,86 @@ package body Std_Encoding_Text_Suite is
             N : constant Node := Unmarshal ("<a>&bad;</a>");
          begin
             Assert (N.Kind = Text_Node, "bad3: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 4
+      begin
+         declare
+            N : constant Node := Unmarshal ("<a>text");
+         begin
+            Assert (N.Kind = Text_Node, "bad4: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 5
+      begin
+         declare
+            N : constant Node := Unmarshal ("<a x=1></a>");
+         begin
+            Assert (N.Kind = Text_Node, "bad5: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 6
+      begin
+         declare
+            N : constant Node := Unmarshal ("</a>");
+         begin
+            Assert (N.Kind = Text_Node, "bad6: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 7
+      begin
+         declare
+            N : constant Node := Unmarshal ("<a><?pi");
+         begin
+            Assert (N.Kind = Text_Node, "bad7: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 8
+      begin
+         declare
+            N : constant Node := Unmarshal ("<a><!-- c");
+         begin
+            Assert (N.Kind = Text_Node, "bad8: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 10
+      begin
+         declare
+            N : constant Node := Unmarshal ("<a>&#xZZ;</a>");
+         begin
+            Assert (N.Kind = Text_Node, "bad10: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 11
+      begin
+         declare
+            N : constant Node := Unmarshal ("<a>&#;</a>");
+         begin
+            Assert (N.Kind = Text_Node, "bad11: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 13
+      begin
+         declare
+            N : constant Node := Unmarshal ("<a>&");
+         begin
+            Assert (N.Kind = Text_Node, "bad13: must raise");
          end;
       exception
          when Constraint_Error => null;  --  expected

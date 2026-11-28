@@ -132,6 +132,7 @@ package body Gada.Std.Encoding.Xml is
       J : Integer := P.Pos + 1;
       V : Natural := 0;
       Hex : Boolean := False;
+      Nd : Natural := 0;
    begin
       if J <= T'Last and then T (J) = '#' then
          J := J + 1;
@@ -140,6 +141,7 @@ package body Gada.Std.Encoding.Xml is
             J := J + 1;
          end if;
          while J <= T'Last and then T (J) /= ';' loop
+            Nd := Nd + 1;
             if T (J) in '0' .. '9' then
                V := V * (if Hex then 16 else 10) + (Character'Pos (T (J)) - 48);
             elsif Hex and T (J) in 'a' .. 'f' then
@@ -153,6 +155,9 @@ package body Gada.Std.Encoding.Xml is
          end loop;
          if J > T'Last then
             raise Constraint_Error with "xml: unterminated reference";
+         end if;
+         if Nd = 0 then
+            raise Constraint_Error with "xml: empty character reference";
          end if;
          P.Pos := J + 1;
          Append (Out_S, Character'Val (V));
@@ -326,7 +331,15 @@ package body Gada.Std.Encoding.Xml is
             elsif P.Pos + 1 <= T'Last
               and then T (P.Pos .. P.Pos + 1) = "<!"
             then
-               raise Constraint_Error with "xml: markup not allowed inside element";
+               --  Other <!...> markup (e.g. DOCTYPE) inside an element
+               --  is skipped, matching Go's decoder.
+               while P.Pos <= T'Last and then Peek (P) /= '>' loop
+                  P.Pos := P.Pos + 1;
+               end loop;
+               if P.Pos > T'Last then
+                  raise Constraint_Error with "xml: unterminated <!...>";
+               end if;
+               P.Pos := P.Pos + 1;
             else
                declare
                   Child : Node_Access := new Node;

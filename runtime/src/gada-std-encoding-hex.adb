@@ -4,7 +4,7 @@ with Gada.Std.Bytes; use Gada.Std.Bytes;
 
 package body Gada.Std.Encoding.Hex is
 
-   Digits : constant String := "0123456789abcdef";
+   Hex_Digits : constant String := "0123456789abcdef";
 
    function Nibble (C : Character) return Natural is
    begin
@@ -26,8 +26,8 @@ package body Gada.Std.Encoding.Hex is
             V : constant Natural :=
               Character'Pos (Byte_Vectors.Element (Data, I));
          begin
-            R (2 * I - 1) := Digits (V / 16 + 1);
-            R (2 * I)     := Digits (V mod 16 + 1);
+            R (2 * I - 1) := Hex_Digits (V / 16 + 1);
+            R (2 * I)     := Hex_Digits (V mod 16 + 1);
          end;
       end loop;
       return R;

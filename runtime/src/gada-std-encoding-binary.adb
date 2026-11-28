@@ -221,9 +221,13 @@ package body Gada.Std.Encoding.Binary is
       X : Unsigned_64;
    begin
       Uvarint (B, X, N);
-      --  zigzag decode; xor is only defined for modular types in Ada
-      V := Integer_64
-        (Shift_Right (X, 1) xor (if (X and 1) /= 0 then 1 else 0));
+      --  zigzag decode: even X -> X/2, odd X -> -(X/2) - 1. Both
+      --  Integer_64 conversions stay in range (<= 2^63 - 1).
+      if (X and 1) = 0 then
+         V := Integer_64 (Shift_Right (X, 1));
+      else
+         V := -1 - Integer_64 (Shift_Right (X, 1));
+      end if;
    end Varint;
 
 end Gada.Std.Encoding.Binary;

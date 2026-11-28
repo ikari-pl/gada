@@ -157,10 +157,21 @@ package body Std_Crypto_Aes_Suite is
             Put_Line ("DBG " & To_String (V.Name) & " ct="
                         & To_Hex (Gada.Std.Crypto.Aes.Encrypt (B, Pt)));
             if To_String (V.Name) = "ecb128" then
-               Put_Line ("DBG w0=" & Unsigned_32'Image (B.W (0))
-                           & " w4=" & Unsigned_32'Image (B.W (4))
-                           & " w40=" & Unsigned_32'Image (B.W (40))
-                           & " nr=" & Natural'Image (B.Nr));
+               declare
+                  Line : String (1 .. 44 * 11) := (others => ' ');
+                  P    : Positive := 1;
+               begin
+                  for I in 0 .. 43 loop
+                     declare
+                        Img : constant String := Unsigned_32'Image (B.W (I));
+                     begin
+                        Line (P .. P + Img'Length - 1) := Img;
+                        P := P + Img'Length + 1;
+                     end;
+                  end loop;
+                  Put_Line ("DBG W " & Line (1 .. P - 2)
+                              & " nr=" & Natural'Image (B.Nr));
+               end;
             end if;
             Assert
               (To_Hex (Gada.Std.Crypto.Aes.Encrypt (B, Pt))

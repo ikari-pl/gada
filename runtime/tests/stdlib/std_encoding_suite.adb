@@ -412,6 +412,21 @@ package body Std_Encoding_Suite is
       exception
          when Constraint_Error => null;
       end;
+      --  base64: raw length mod 4 = 1
+      begin
+         declare
+            R : constant Byte_Slice :=
+              Gada.Std.Encoding.Base64.Decode_Raw_Std ("Q");
+            pragma Unreferenced (R);
+         begin
+            Assert (False, "raw length mod 4 = 1 must raise");
+         end;
+      exception
+         when Constraint_Error => null;
+      end;
+      --  hex: uppercase digits are accepted
+      Assert (To_Hex (Gada.Std.Encoding.Hex.Decode_String ("ABcD"))
+                = "abcd", "uppercase hex");
       --  hex: odd length and illegal char
       begin
          declare
@@ -457,6 +472,20 @@ package body Std_Encoding_Suite is
               (From_Hex ("80808080808080808002"), V, N);
             pragma Unreferenced (V, N);
             Assert (False, "overflowing uvarint must raise");
+         end;
+      exception
+         when Constraint_Error => null;
+      end;
+      --  uvarint: 11 bytes always overflows
+      begin
+         declare
+            V : Unsigned_64;
+            N : Natural;
+         begin
+            Gada.Std.Encoding.Binary.Uvarint
+              (From_Hex ("8080808080808080808002"), V, N);
+            pragma Unreferenced (V, N);
+            Assert (False, "11-byte uvarint must raise");
          end;
       exception
          when Constraint_Error => null;

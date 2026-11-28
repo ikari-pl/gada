@@ -44,8 +44,10 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/gada-lang/gada/compiler/internal/ir"
 )
@@ -168,20 +170,34 @@ type emitter struct {
 	// `Selectors_Of_<T>` instantiation list emitted alongside
 	// Channels_Of_<T>. Subset-of (not equal-to) chanElems because a
 	// chan type used only outside select doesn't need a Selector.
-	selectorElems       map[string]ir.Type
-	selectorElemOrder   []string
-	localTypes          map[string]ir.Type
-	rangeCounter        int
-	selectCounter       int                       // file-wide 1..N numbering for each emitted select site; suffixes Sel_Cases_<n> / Sel_Idx_<n> / V_<n>_<i> / OK_<n>_<i> to keep nested selects from shadowing each other's locals (Ada would shadow legally, but unique names keep gprbuild diagnostics actionable).
-	goIndex             map[*ir.GoStmt]int        // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
-	funcByName          map[string]*ir.Function   // file-wide name → top-level Function decl, so a `go f(x, y)` site can resolve f's parameter names + declared types to build the matching Go_Closure_<n> record and unpack it into correctly-named locals. Populated alongside collectSliceElems.
-	structByName        map[string]*ir.StructType // file-wide type name → its struct definition, so emitStructLit can consult the declared field set: an Ada record aggregate must supply a value for every component (RM 4.3.1), so a literal that omits fields, names a non-struct type, or has a single positional field needs the declared fields to lower correctly (or to be rejected loudly). Populated alongside funcByName.
-	interfaceNames      map[string]bool           // file-wide set of interface type names, so typeName renders a NamedType referring to an interface as the class-wide `Name'Class` view (which dispatches) rather than a plain type name. Populated alongside structByName.
-	dispatchMethodNames map[string]bool           // file-wide set of interface method names — the only methods with an emitted subprogram (5b-i abstract op + 5c overriding body) and hence the only callable ones. A method-call selector whose name is absent would emit a dangling `X.M`, so emitCallStmt rejects it. Populated alongside interfaceNames.
-	emptyInterfaceNames map[string]bool           // file-wide set of method-less interface names (Go's `any`, or a named `interface{}`). No concrete type derives an empty interface (5b), so a type assertion `x.(T)` whose operand is one has no legal Ada view conversion; emitTypeAssert rejects it. Populated alongside interfaceNames.
-	pendingRecvs        []pendingChanRecv         // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
-	pendingAsserts      []pendingTypeAssert       // per-subprogram queue of `v, ok := x.(T)` (comma-ok, item 6b) defines whose body-side membership-test + guarded-conversion block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order (same "RHS evaluates at the := point" rule). Reset at every emitSubprogram call.
-	err                 error
+	selectorElems        map[string]ir.Type
+	selectorElemOrder    []string
+	localTypes           map[string]ir.Type
+	rangeCounter         int
+	selectCounter        int                     // file-wide 1..N numbering for each emitted select site; suffixes Sel_Cases_<n> / Sel_Idx_<n> / V_<n>_<i> / OK_<n>_<i> to keep nested selects from shadowing each other's locals (Ada would shadow legally, but unique names keep gprbuild diagnostics actionable).
+	goIndex              map[*ir.GoStmt]int      // file-wide 1..N numbering of every GoStmt; populated once before any subprogram emits and consulted by both `emitGoClosuresAndDecl` (closure name) and `emitStmt`'s GoStmt arm (Spawn target). Storing the index on the AST-node identity rather than on a per-subprogram counter is the only design that survives future function literals — a nested anonymous closure that itself contains go-stmts cannot corrupt an enclosing subprogram's numbering because each *ir.GoStmt pointer carries its own pre-assigned index.
+	funcByName           map[string]*ir.Function // file-wide name → top-level Function decl, so a `go f(x, y)` site can resolve f's parameter names + declared types to build the matching Go_Closure_<n> record and unpack it into correctly-named locals. Populated alongside collectSliceElems.
+	structByName         map[string]*ir.StructType
+	localTypeNames       map[string]bool     // file-wide type name → its struct definition, so emitStructLit can consult the declared field set: an Ada record aggregate must supply a value for every component (RM 4.3.1), so a literal that omits fields, names a non-struct type, or has a single positional field needs the declared fields to lower correctly (or to be rejected loudly). Populated alongside funcByName.
+	interfaceNames       map[string]bool     // file-wide set of interface type names, so typeName renders a NamedType referring to an interface as the class-wide `Name'Class` view (which dispatches) rather than a plain type name. Populated alongside structByName.
+	dispatchMethodNames  map[string]bool     // file-wide set of interface method names — the only methods with an emitted subprogram (5b-i abstract op + 5c overriding body) and hence the only callable ones. A method-call selector whose name is absent would emit a dangling `X.M`, so emitCallStmt rejects it. Populated alongside interfaceNames.
+	emptyInterfaceNames  map[string]bool     // file-wide set of method-less interface names (Go's `any`, or a named `interface{}`). No concrete type derives an empty interface (5b), so a type assertion `x.(T)` whose operand is one has no legal Ada view conversion; emitTypeAssert rejects it. Populated alongside interfaceNames.
+	needsHandlerAccess   bool                // a http.HandleFunc(p, fn) call takes fn'Address as a library-level access value, so package main must use the three-unit Main_Types layout (siblings at library level), not nest them in procedure Main
+	needsHTTPServerStop  bool                // a http.ListenAndServe call is live at exit; emit Gada.Std.Http.Stop_Server before Scheduler.Shutdown so the blocked accept loop can finish and Drain cannot hang
+	stdlibImports        map[string]string   // Go local import name → Ada package (e.g. "strings" → "Gada.Std.Strings"), from StdlibPackages. Drives the `with Gada.Std.*;` clauses and the qualified-call lowering of `strings.ToUpper(x)` → `Gada.Std.Strings.To_Upper (X)`.
+	needsUnbounded       bool                // a []string ([]string → String_Vectors of Unbounded_String) is used → `with Ada.Strings.Unbounded;`
+	needsStdErrors       bool                // an error-typed value (e.g. os.ReadFile's err) is used → `with Gada.Std.Errors;`
+	needsStdBytes        bool                // a []byte value (os.ReadFile result, string([]byte)) is used → `with Gada.Std.Bytes;`
+	needsStdStrings      bool                // len(os.Args) lowers through Gada.Std.Strings.String_Vectors
+	needsTimeDurationOps bool                // Duration arithmetic/unit constant used → `use type Gada.Std.Time.Duration;`
+	pendingHead          []pendingHeadInit   // per-subprogram queue of head-of-body defines whose *initialisation* must run at the top of the body in source order (2-LHS stdlib out-calls, and any := whose RHS references an out-call result — Go evaluates RHS at the := point, but Ada declarative initialisers run before the body, so these are declared bare and initialised in the body). Drained by emitPendingHead at body top. Reset per subprogram.
+	deferredDecls        map[string]bool     // names whose decl initialiser was deferred to the body (out-call targets and anything referencing them).
+	unboundedStrings     map[string]bool     // local string vars, declared as Unbounded_String (Ada String objects are bound-constrained; Go strings are variable-length).
+	jsonStructOrder      []string            // Phase 7 item 2b: struct types needing generated Json_Marshal_T/Json_Unmarshal_T, in discovery order
+	jsonStructSeen       map[string]bool     // dedup set for jsonStructOrder
+	pendingRecvs         []pendingChanRecv   // per-subprogram queue of `v := <-c` defines whose body-side `Channels_Of_T.Receive (C, V, Discard_OK)` block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order so the receive happens before any subsequent body statement (matching Go's "RHS evaluates at the := point" semantics). Reset at every emitSubprogram call.
+	pendingAsserts       []pendingTypeAssert // per-subprogram queue of `v, ok := x.(T)` (comma-ok, item 6b) defines whose body-side membership-test + guarded-conversion block has not yet been emitted. Filled by emitVarDecl, drained at the top of the body by emitSubprogram in source order (same "RHS evaluates at the := point" rule). Reset at every emitSubprogram call.
+	err                  error
 }
 
 // pendingChanRecv pairs a `v := <-c` (sub-item d) or `v, ok := <-c`
@@ -193,6 +209,25 @@ type emitter struct {
 // region (visible to the rest of the body) and Receive emits as a
 // single statement at body level — no inner scope, because the OK
 // flag IS the user's `ok` variable.
+// pendingOutCall pairs a 2-LHS stdlib out-call define
+// (`data, err := os.ReadFile(p)`) with its declared LHS names; the
+// body-side `Gada.Std.OS.Read_File (P, Data, Err);` statement is
+// emitted when the queue drains at the top of the subprogram body.
+type pendingOutCall struct {
+	call *ir.Call
+	lhs  []string
+}
+
+// pendingHeadInit is one head-of-body define whose initialisation is
+// deferred to the body (outCall != nil) or a plain `v := rhs` whose
+// RHS references a deferred name (outCall == nil).
+type pendingHeadInit struct {
+	outCall *pendingOutCall
+	lhs     string
+	name    string // Go spelling of lhs, for unboundedStrings lookups
+	rhs     ir.Expr
+}
+
 type pendingChanRecv struct {
 	LHSName string
 	OKName  string
@@ -227,17 +262,108 @@ func newEmitter(pkg string, f *ir.File) *emitter {
 		goIndex:             map[*ir.GoStmt]int{},
 		funcByName:          map[string]*ir.Function{},
 		structByName:        map[string]*ir.StructType{},
+		localTypeNames:      map[string]bool{},
 		interfaceNames:      map[string]bool{},
 		dispatchMethodNames: map[string]bool{},
 		emptyInterfaceNames: map[string]bool{},
+		stdlibImports:       map[string]string{},
+		deferredDecls:       map[string]bool{},
+		unboundedStrings:    map[string]bool{},
+		jsonStructOrder:     []string{},
+		jsonStructSeen:      map[string]bool{},
 	}
 	for _, imp := range f.Imports {
 		if imp == "fmt" {
+			// `fmt` keeps its Phase 1 special case (Gada.Core.IO.Print
+			// family) until Gada.Std.Fmt lands and supersedes it.
 			e.needsCoreIO = true
+			continue
+		}
+		ada, ok := StdlibPackages[imp]
+		if !ok {
+			e.err = fmt.Errorf("emit: unsupported import %q (Phase 5 stdlib wave 1: %s)", imp, strings.Join(StdlibWave1, ", "))
+			return e
+		}
+		// The local name of an unaliased import is the last path
+		// segment ("strings" for "strings"); aliased imports ride a
+		// later item.
+		base := imp
+		if i := strings.LastIndex(base, "/"); i >= 0 {
+			base = base[i+1:]
+		}
+		e.stdlibImports[base] = ada
+		// Side with-clauses the ports need: strings pulls in
+		// Ada.Strings.Unbounded ([]string → String_Vectors of
+		// Unbounded_String, with To_String/To_Unbounded_String at
+		// the element boundary), os/errors pull in Gada.Std.Errors
+		// for the Error_Access error values.
+		if imp == "strings" {
+			e.needsUnbounded = true
+		}
+		if imp == "os" || imp == "errors" || imp == "net" ||
+			imp == "encoding/json" || imp == "net/http" ||
+			imp == "crypto/aes" || imp == "crypto/cipher" {
+			e.needsStdErrors = true
+		}
+		if imp == "os" || imp == "bytes" || imp == "net" ||
+			imp == "encoding/json" || imp == "net/http" {
+			e.needsStdBytes = true
 		}
 	}
 	e.collectSliceElems()
 	return e
+}
+
+// StdlibPackages maps a Go standard-library import path to the Ada
+// package that ports it (Phase 5, stdlib wave 1). "fmt" is deliberately
+// absent: it keeps the Phase 1 Gada.Core.IO special case until
+// Gada.Std.Fmt lands. The map itself lives in ir (shared with the
+// translator); StdlibWave1 is the sorted path list, used for the
+// unknown-import error message.
+var StdlibPackages = ir.StdlibPackages
+
+// StdlibWave1 is StdlibPackages' keys, sorted — used in the
+// unknown-import error message.
+var StdlibWave1 = func() []string {
+	out := make([]string, 0, len(StdlibPackages))
+	for k := range StdlibPackages {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}()
+
+// goNameToAdaMember converts an exported Go identifier to the Ada
+// member name the Gada.Std ports use: CamelCase splits at each
+// lower→upper boundary ("ToUpper" → "To_Upper", "ReadAll" →
+// "Read_All"), while all-caps initialisms stay together ("EOF" →
+// "EOF", "Atoi" → "Atoi"). The first rune is capitalised to match the
+// runtime's Ada style, and a name that would collide with an Ada
+// reserved word gets the `_K` suffix (same rule as adaIdent).
+func goNameToAdaMember(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	var b strings.Builder
+	for i, c := range r {
+		if i > 0 && unicode.IsUpper(c) {
+			prev := r[i-1]
+			if unicode.IsLower(prev) ||
+				(unicode.IsUpper(prev) && i+1 < len(r) && unicode.IsLower(r[i+1])) {
+				b.WriteByte('_')
+			}
+		}
+		if i == 0 {
+			c = unicode.ToUpper(c)
+		}
+		b.WriteRune(c)
+	}
+	out := b.String()
+	if isAdaReserved(out) {
+		return out + "_K"
+	}
+	return out
 }
 
 // collectSliceElems walks the file's IR to surface every element type
@@ -253,6 +379,7 @@ func (e *emitter) collectSliceElems() {
 	e.needsIfaceReg = len(satisfiedPairs(e.file.Decls)) > 0
 	for _, d := range e.file.Decls {
 		if td, ok := d.(*ir.TypeDecl); ok {
+			e.localTypeNames[td.Name] = true
 			// A defined type means the file carries reflect metadata to
 			// register at module init (Phase 4 item 2c).
 			e.needsReflect = true
@@ -379,6 +506,13 @@ func (e *emitter) recordMapPair(m *ir.MapType) {
 // base names so the emitted instantiation list compiles without
 // further mangling.
 func (e *emitter) recordChanElem(elem ir.Type) {
+	if nt, ok := elem.(*ir.NamedType); ok && nt.Name == "Time" {
+		if _, imported := e.stdlibImports["time"]; imported {
+			if !e.localTypeNames["Time"] {
+				return // rides Gada.Std.Time.Time_Channels
+			}
+		}
+	}
 	name, err := elemBaseName(elem)
 	if err != nil {
 		e.fail(err)
@@ -391,6 +525,16 @@ func (e *emitter) recordChanElem(elem ir.Type) {
 }
 
 func (e *emitter) recordSliceElem(elem ir.Type) {
+	// []string / []byte do not get a Slices_Of_* instantiation: their
+	// element types are uncontrolled/controlled, so they map to the
+	// Gada.Std.Strings.String_Vectors / Gada.Std.Bytes.Byte_Vectors
+	// packages instead (see slicePkgFor).
+	if _, ok := elem.(*ir.StringType); ok {
+		return
+	}
+	if _, ok := elem.(*ir.ByteType); ok {
+		return
+	}
 	name, err := elemBaseName(elem)
 	if err != nil {
 		// Surface the typed error at the pre-scan point so unsupported
@@ -405,6 +549,38 @@ func (e *emitter) recordSliceElem(elem ir.Type) {
 	if _, present := e.sliceElems[name]; !present {
 		e.sliceElems[name] = elem
 		e.sliceElemOrder = append(e.sliceElemOrder, name)
+	}
+}
+
+// detectHandlerAccess implements the Phase 7 needsHandlerAccess
+// pre-scan: `http.HandleFunc(p, fn)` lowers to `Handle_Func (p,
+// fn'Access)`; fn'Access to the library-level Handler_Func is only
+// legal when fn is a library-level subprogram, so a package main file
+// with such a call must use the Main_Types layout (siblings at library
+// level) rather than nesting them in procedure Main.
+func (e *emitter) detectHandlerAccess(c *ir.Call) {
+	sel, ok := c.Fun.(*ir.Selector)
+	if !ok {
+		return
+	}
+	if id, ok := sel.X.(*ir.Ident); ok {
+		if pkg, ok := e.stdlibImports[id.Name]; ok && pkg == "Gada.Std.Http" &&
+			sel.Sel == "ListenAndServe" {
+			e.needsHTTPServerStop = true
+		}
+	}
+	if sel.Sel != "HandleFunc" || len(c.Args) != 2 {
+		return
+	}
+	id, ok := sel.X.(*ir.Ident)
+	if !ok {
+		return
+	}
+	if pkg, ok := e.stdlibImports[id.Name]; !ok || pkg != "Gada.Std.Http" {
+		return
+	}
+	if _, ok := c.Args[1].(*ir.Ident); ok {
+		e.needsHandlerAccess = true
 	}
 }
 
@@ -437,6 +613,7 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 			e.walkExpr(x)
 		}
 	case *ir.Call:
+		e.detectHandlerAccess(s)
 		e.walkExpr(s.Fun)
 		for _, x := range s.Args {
 			e.walkExpr(x)
@@ -446,6 +623,19 @@ func (e *emitter) walkStmt(s ir.Stmt) {
 	case *ir.BuiltinCall:
 		if s.Name == "panic" || s.Name == "recover" {
 			e.needsCorePanic = true
+		}
+		// len(os.Args) lowers through Gada.Std.Strings from ANY
+		// expression position (if-cond, binop, ...), not just head
+		// defines — the pre-scan sees every expression.
+		if s.Name == "len" && len(s.Args) == 1 {
+			if sel, ok := s.Args[0].(*ir.Selector); ok {
+				if xid, ok := sel.X.(*ir.Ident); ok && xid.Name == "os" &&
+					sel.Sel == "Args" {
+					if _, ok := e.stdlibImports["os"]; ok {
+						e.needsStdStrings = true
+					}
+				}
+			}
 		}
 		for _, x := range s.Args {
 			e.walkExpr(x)
@@ -537,12 +727,45 @@ func (e *emitter) walkExpr(x ir.Expr) {
 		if x.Capacity != nil {
 			e.walkExpr(x.Capacity)
 		}
+	case *ir.MakeSlice:
+		// Phase 7: `make ([]byte, N)` rides Gada.Std.Bytes.Byte_Slice
+		// (needsStdBytes); other element types record their slice
+		// instantiation seam like a slice literal.
+		if _, isByte := x.Elem.(*ir.ByteType); isByte {
+			e.needsStdBytes = true
+		} else {
+			e.recordSliceElem(x.Elem)
+			e.recordTypeInTree(x.Elem)
+		}
+		if x.Len != nil {
+			e.walkExpr(x.Len)
+		}
 	case *ir.ChanRecv:
 		// `<-c` doesn't itself declare an element type — its operand
 		// (a chan-typed Ident) was registered when the chan was
 		// declared (param type or `make` literal). Just walk the
 		// operand so any nested expressions inside are visited.
 		e.walkExpr(x.Chan)
+	case *ir.ZeroVal:
+		// `var x T` — named types need no per-file instantiation.
+		if nt, ok := x.Type.(*ir.NamedType); ok {
+			if nt.Name == "Duration" {
+				if _, ok := e.stdlibImports["time"]; ok {
+					e.needsTimeDurationOps = true
+				}
+			}
+		} else {
+			e.recordTypeInTree(x.Type)
+		}
+	case *ir.Call:
+		// Call args are expressions too — the pre-scan must see them
+		// (e.g. `time.After(200 * time.Millisecond)` sets the Duration
+		// use-type flag from inside the arg list).
+		e.detectHandlerAccess(x)
+		e.walkExpr(x.Fun)
+		for _, a := range x.Args {
+			e.walkExpr(a)
+		}
 	case *ir.MapLit:
 		e.recordMapPair(&ir.MapType{Key: x.Key, Value: x.Value})
 		e.recordTypeInTree(x.Key)
@@ -559,6 +782,20 @@ func (e *emitter) walkExpr(x ir.Expr) {
 		e.walkExpr(x.Low)
 		e.walkExpr(x.High)
 	case *ir.BuiltinCall:
+		if x.Name == "bytes" {
+			// Phase 7: []byte(s) conversion needs the Bytes package.
+			e.needsStdBytes = true
+		}
+		if x.Name == "len" && len(x.Args) == 1 {
+			if sel, ok := x.Args[0].(*ir.Selector); ok {
+				if xid, ok := sel.X.(*ir.Ident); ok && xid.Name == "os" &&
+					sel.Sel == "Args" {
+					if _, ok := e.stdlibImports["os"]; ok {
+						e.needsStdStrings = true
+					}
+				}
+			}
+		}
 		if x.Name == "panic" || x.Name == "recover" {
 			e.needsCorePanic = true
 		}
@@ -571,6 +808,17 @@ func (e *emitter) walkExpr(x ir.Expr) {
 	case *ir.UnaryOp:
 		e.walkExpr(x.X)
 	case *ir.Selector:
+		// A `time.<Unit>` constant or Duration-typed reference means
+		// emitted code will need Duration's predefined operators.
+		if id, ok := x.X.(*ir.Ident); ok && id.Name == "time" {
+			switch x.Sel {
+			case "Nanosecond", "Microsecond", "Millisecond", "Second",
+				"Minute", "Hour", "Duration":
+				if _, ok := e.stdlibImports["time"]; ok {
+					e.needsTimeDurationOps = true
+				}
+			}
+		}
 		e.walkExpr(x.X)
 	}
 }
@@ -622,10 +870,61 @@ func (e *emitter) collectWiths() []string {
 		add("with Ada.Unchecked_Deallocation;")
 		add("with System;")
 	}
+	if e.needsUnbounded {
+		add("with Ada.Strings.Unbounded;")
+	}
+	if e.needsStdErrors {
+		// use type makes the access type's = / /= directly visible
+		// for `err /= null` comparisons in emitted code.
+		add("with Gada.Std.Errors; use type Gada.Std.Errors.Error_Access;")
+	}
+	if e.needsStdBytes {
+		add("with Gada.Std.Bytes;")
+	}
+	if e.needsStdStrings {
+		add("with Gada.Std.Strings;")
+	}
+	// Stdlib imports, sorted by Ada package name for deterministic
+	// output regardless of Go import declaration order.
+	if len(e.stdlibImports) > 0 {
+		pkgs := make([]string, 0, len(e.stdlibImports))
+		for _, p := range e.stdlibImports {
+			pkgs = append(pkgs, p)
+		}
+		sort.Strings(pkgs)
+		for _, p := range pkgs {
+			if p == "Gada.Std.Time" {
+				if e.needsTimeDurationOps {
+					// Duration arithmetic (`200 * time.Millisecond`)
+					// needs the derived type's predefined operators
+					// directly visible.
+					add("with Gada.Std.Time; use type Gada.Std.Time.Duration;")
+				} else {
+					add("with Gada.Std.Time;")
+				}
+			} else {
+				add("with " + p + ";")
+			}
+		}
+	}
 	return withs
 }
 
 func (e *emitter) run() error {
+	// Pre-pass over every subprogram so with-driving flags that
+	// populateLocals sets (needsUnbounded for local string vars,
+	// 2-LHS string out-call results) are known before the with-clause
+	// is printed. emitSubprogram / emitMainProc re-run populateLocals
+	// per subprogram, which resets the per-subprogram maps.
+	for _, d := range e.file.Decls {
+		if fn, ok := d.(*ir.Function); ok {
+			e.populateLocals(fn)
+			// Phase 7 item 2b: rewrite struct-typed json.Marshal /
+			// json.Unmarshal calls to generated per-struct procedures
+			// (localTypes is populated for fn right above).
+			e.rewriteJSONStructCalls(fn)
+		}
+	}
 	withs := e.collectWiths()
 	// A `package main` file that declares interface types cannot nest
 	// them in `procedure Main` — Ada only allows abstract/dispatching
@@ -633,7 +932,7 @@ func (e *emitter) run() error {
 	// emit three units: a spec (types + abstract op specs + overriding
 	// specs + plain-function specs), a body (subprogram bodies +
 	// metadata elaboration), and the Main procedure itself.
-	if e.pkgName == "main" && e.fileHasInterfaces() {
+	if e.pkgName == "main" && (e.fileHasInterfaces() || e.needsHandlerAccess) {
 		e.emitMainUnits(withs)
 		return e.err
 	}
@@ -863,6 +1162,16 @@ func elemBaseName(t ir.Type) (string, error) {
 // Used by every slice-dispatching emit site (SliceLit / IndexExpr /
 // SliceExpr / append / len / cap).
 func slicePkgFor(elem ir.Type) (string, error) {
+	// []string and []byte map to the Gada.Std vector packages (their
+	// element types — String, Character — are not valid
+	// Gada.Core.Slices element types, which must be definite and
+	// uncontrolled).
+	switch elem.(type) {
+	case *ir.StringType:
+		return "Gada.Std.Strings.String_Vectors", nil
+	case *ir.ByteType:
+		return "Gada.Std.Bytes.Byte_Vectors", nil
+	}
 	t, err := elemBaseName(elem)
 	if err != nil {
 		return "", err
@@ -882,6 +1191,214 @@ func chanPkgFor(elem ir.Type) (string, error) {
 	return "Channels_Of_" + t, nil
 }
 
+// chanPkgForT is the emitter-aware variant: `chan time.Time` is not
+// instantiated per-file — time.After/Tick hand out
+// Gada.Std.Time.Time_Channels.Channel (a Boolean-element unbounded
+// channel), so receives lower through that package. The special case
+// fires only when the `time` import is present AND no local type named
+// Time shadows it (bare-name IR types otherwise misroute).
+func (e *emitter) chanPkgForT(elem ir.Type) (string, error) {
+	if nt, ok := elem.(*ir.NamedType); ok && nt.Name == "Time" {
+		if _, imported := e.stdlibImports["time"]; imported {
+			if !e.localTypeNames["Time"] {
+				return "Gada.Std.Time.Time_Channels", nil
+			}
+		}
+	}
+	return chanPkgFor(elem)
+}
+
+// nt2Name extracts the name of a NamedType (empty for other types).
+func nt2Name(t ir.Type) string {
+	if nt, ok := t.(*ir.NamedType); ok {
+		return nt.Name
+	}
+	return ""
+}
+
+// syncTypeNames are the Gada.Std.Sync value types whose methods lower
+// to protected dot-calls (`mu.Lock()` -> `Mu.Lock;`).
+var syncTypeNames = map[string]bool{
+	"Mutex": true, "RWMutex": true, "WaitGroup": true, "Once": true,
+	"Cond": true,
+}
+
+// netTypeNames are the Gada.Std.Net types whose methods lower to
+// dot-calls on the value (`ip.String()` -> `Ip.To_String`). The
+// access-to-protected ones (Conn, Listener, Packet_Conn) get an
+// explicit `.all` in the emitted call; IP is a plain record.
+var netTypeNames = map[string]bool{
+	"Conn": true, "Listener": true, "PacketConn": true, "IP": true,
+}
+
+var netAccessTypeNames = map[string]bool{
+	"Conn": true, "Listener": true, "PacketConn": true,
+}
+
+// stdlibValueType maps a translated named type to its qualified Ada
+// type when the corresponding stdlib import is present, so
+// `var mu sync.Mutex` declares `Mu : Gada.Std.Sync.Mutex;`.
+func (e *emitter) stdlibValueType(name string) (string, bool) {
+	if _, ok := e.stdlibImports["sync"]; ok && syncTypeNames[name] {
+		return "Gada.Std.Sync." + goNameToAdaMember(name), true
+	}
+	if _, ok := e.stdlibImports["time"]; ok {
+		switch name {
+		case "Duration":
+			return "Gada.Std.Time.Duration", true
+		case "Time":
+			return "Gada.Std.Time.Time", true
+		}
+	}
+	if _, ok := e.stdlibImports["net"]; ok && netTypeNames[name] {
+		return "Gada.Std.Net." + goNameToAdaMember(name), true
+	}
+	if _, ok := e.stdlibImports["http"]; ok && httpTypeNames[name] {
+		return "Gada.Std.Http." + goNameToAdaMember(name), true
+	}
+	// Phase 8 wave 4: the crypto ports' concrete types stand in for
+	// the Go interface names (`mac := hmac.New(...)` has Go type
+	// hash.Hash; the port returns Gada.Std.Crypto.Hmac.Hmac).
+	if _, ok := e.stdlibImports["hmac"]; ok && name == "Hmac" {
+		return "Gada.Std.Crypto.Hmac.Hmac", true
+	}
+	if _, ok := e.stdlibImports["aes"]; ok && name == "Block" {
+		return "Gada.Std.Crypto.Aes.Block", true
+	}
+	if _, ok := e.stdlibImports["cipher"]; ok {
+		switch name {
+		case "Block":
+			return "Gada.Std.Crypto.Aes.Block", true
+		case "AEAD":
+			return "Gada.Std.Crypto.Cipher.GCM", true
+		}
+	}
+	return "", false
+}
+
+// cryptoReceiver maps a method-call selector `x.Member` to the Ada
+// package + receiver when x is a local whose Go type is one of the
+// wave-4 crypto interfaces (hash.Hash from hmac.New → Hmac, AEAD
+// from cipher.NewGCM → GCM). The call lowers to the prefix form
+// `Gada.Std.Crypto.Hmac.Write (Mac, Msg)` (the port types are plain
+// records, not tagged, so dot-call syntax would not compile).
+func (e *emitter) cryptoReceiver(s *ir.Selector) (recv, pkg string, ok bool) {
+	id, ok := s.X.(*ir.Ident)
+	if !ok {
+		return "", "", false
+	}
+	nt, ok := e.localTypes[id.Name].(*ir.NamedType)
+	if !ok {
+		return "", "", false
+	}
+	switch nt.Name {
+	case "Hmac":
+		if _, imported := e.stdlibImports["hmac"]; imported {
+			return id.Name, "Gada.Std.Crypto.Hmac", true
+		}
+	case "AEAD":
+		if _, imported := e.stdlibImports["cipher"]; imported {
+			return id.Name, "Gada.Std.Crypto.Cipher", true
+		}
+	}
+	return "", "", false
+}
+
+// cryptoMethodCall renders `mac.Write(msg)` / `gcm.Seal(...)` as the
+// prefix call on the port package. ok=false for any other shape.
+func (e *emitter) cryptoMethodCall(c *ir.Call) (string, bool) {
+	sel, ok := c.Fun.(*ir.Selector)
+	if !ok {
+		return "", false
+	}
+	recv, pkg, ok := e.cryptoReceiver(sel)
+	if !ok {
+		return "", false
+	}
+	callArgs := c.Args
+	// Go's AEAD methods take a dst slice to append to; the port's
+	// Seal/Open return/assign the result instead, so drop dst.
+	if pkg == "Gada.Std.Crypto.Cipher" &&
+		(sel.Sel == "Seal" || sel.Sel == "Open") && len(callArgs) == 4 {
+		callArgs = callArgs[1:]
+	}
+	args := make([]string, 0, len(callArgs)+1)
+	args = append(args, adaIdent(recv))
+	for _, a := range callArgs {
+		args = append(args, e.emitExpr(a))
+	}
+	return pkg + "." + goNameToAdaMember(sel.Sel) +
+		" (" + strings.Join(args, ", ") + ")", true
+}
+
+// emitOutCallStmt renders a 2-LHS out-call statement
+// `Pkg.Member (args…, L1, L2);`, routing method receivers on wave-4
+// crypto values through the prefix form
+// `Gada.Std.Crypto.Cipher.Open (Gcm, args…, L1, L2);`.
+func (e *emitter) emitOutCallStmt(c *ir.Call, lhs []string) {
+	args := make([]string, 0, len(c.Args)+1+len(lhs))
+	if sel, ok := c.Fun.(*ir.Selector); ok {
+		if recv, pkg, ok2 := e.cryptoReceiver(sel); ok2 {
+			callArgs := c.Args
+			if pkg == "Gada.Std.Crypto.Cipher" &&
+				(sel.Sel == "Seal" || sel.Sel == "Open") &&
+				len(callArgs) == 4 {
+				callArgs = callArgs[1:] // drop Go's dst append target
+			}
+			args = append(args, adaIdent(recv))
+			for _, a := range callArgs {
+				args = append(args, e.emitExpr(a))
+			}
+			args = append(args, lhs...)
+			e.println(pkg + "." + goNameToAdaMember(sel.Sel) +
+				" (" + strings.Join(args, ", ") + ");")
+			return
+		}
+	}
+	for _, a := range c.Args {
+		args = append(args, e.emitExpr(a))
+	}
+	args = append(args, lhs...)
+	e.println(e.emitExpr(c.Fun) + " (" + strings.Join(args, ", ") + ");")
+}
+
+// httpTypeNames are the Gada.Std.Http types whose declarations lower to
+// the port's Ada types when the net/http import is present.
+var httpTypeNames = map[string]bool{
+	"ResponseWriter": true, "Request": true,
+	"Response": true, "Client": true,
+}
+
+// httpAccessTypeNames are the http types that are access-to-protected
+// (methods lower with an explicit `.all`).
+var httpAccessTypeNames = map[string]bool{
+	"ResponseWriter": true,
+}
+
+// httpMethodCall renders a method call on a Gada.Std.Http-typed local:
+// `w.Write(b)` -> `W.all.Write`. Same misroute guards as netMethodCall.
+func (e *emitter) httpMethodCall(s *ir.Selector) (string, bool) {
+	id, ok := s.X.(*ir.Ident)
+	if !ok {
+		return "", false
+	}
+	if _, httpImported := e.stdlibImports["http"]; !httpImported {
+		return "", false
+	}
+	nt, ok := e.localTypes[id.Name].(*ir.NamedType)
+	if !ok || !httpTypeNames[nt.Name] {
+		return "", false
+	}
+	if e.localTypeNames[nt.Name] {
+		return "", false
+	}
+	member := adaIdent(s.Sel)
+	if netAccessTypeNames[nt.Name] || httpAccessTypeNames[nt.Name] {
+		return e.emitExpr(s.X) + ".all." + member, true
+	}
+	return e.emitExpr(s.X) + "." + member, true
+}
+
 // println writes a single line, prefixed with the current indent
 // (three spaces per level — matches the runtime style). An empty
 // string emits a bare newline with no indentation, used for the
@@ -891,11 +1408,76 @@ func (e *emitter) println(s string) {
 		e.buf.WriteByte('\n')
 		return
 	}
-	for i := 0; i < e.indent; i++ {
-		e.buf.WriteString("   ")
+	prefix := strings.Repeat("   ", e.indent)
+	line := prefix + s
+	// The runtime gpr compiles with -gnatyy, whose style checks include
+	// the 80-column limit — emitted lines must wrap. Ada is free-format,
+	// so breaking at any space outside a string/char literal is always
+	// legal; continuation lines get two extra indent levels.
+	if len(line) <= maxLineCol {
+		e.buf.WriteString(line)
+		e.buf.WriteByte('\n')
+		return
 	}
-	e.buf.WriteString(s)
+	cont := prefix + "      "
+	for len(line) > maxLineCol {
+		brk := wrapBreakPoint(line)
+		if brk <= 0 {
+			break // no legal break found; emit as-is and let gnat complain
+		}
+		e.buf.WriteString(line[:brk])
+		e.buf.WriteByte('\n')
+		line = cont + line[brk+1:]
+	}
+	e.buf.WriteString(line)
 	e.buf.WriteByte('\n')
+}
+
+// maxLineCol is the -gnatyy 80-column style limit the runtime gpr
+// enforces on emitted Ada.
+const maxLineCol = 80
+
+// wrapBreakPoint returns the index of the last space at or before
+// maxLineCol that is outside any string literal (with "" escapes) or
+// character literal ('x' / doubled ”), or -1 if there is none
+// (including comment lines, which must never break). Callers must
+// not break inside a literal, and a space is always a legal token
+// boundary in Ada.
+func wrapBreakPoint(line string) int {
+	// A comment line (`-- …`) must never be wrapped: the continuation
+	// would fall outside the comment and be invalid Ada. Report no
+	// break so println emits the line as-is.
+	if strings.HasPrefix(strings.TrimLeft(line, " "), "--") {
+		return -1
+	}
+	inStr := false
+	best := -1
+	for i := 0; i < len(line) && i <= maxLineCol; i++ {
+		c := line[i]
+		switch {
+		case inStr:
+			if c == '"' {
+				if i+1 < len(line) && line[i+1] == '"' {
+					i++ // escaped quote inside a string literal
+				} else {
+					inStr = false
+				}
+			}
+		case c == '"':
+			inStr = true
+		case c == '\'':
+			// Character literal ('x') if a closing quote follows the
+			// next char; otherwise an attribute prefix (X'Image) —
+			// only spaces matter, and neither contains a breakable
+			// space before the literal closes.
+			if i+2 < len(line) && line[i+2] == '\'' {
+				i += 2
+			}
+		case c == ' ':
+			best = i
+		}
+	}
+	return best
 }
 
 func (e *emitter) fail(err error) {
@@ -1065,6 +1647,14 @@ func (e *emitter) emitMainUnits(withs []string) {
 		e.println("package body " + typesPkg + " is")
 		e.println("")
 		e.indent++
+		// JSON marshalers must precede the subprogram bodies that call
+		// them: Ada has no forward references within a declarative
+		// part, so a Json_Marshal_T emitted after the handler body
+		// that references it would not compile.
+		if len(e.jsonStructOrder) > 0 {
+			e.emitJSONMarshalers()
+			e.println("")
+		}
 		for i, fn := range l.others {
 			if i > 0 {
 				e.println("")
@@ -1184,6 +1774,13 @@ func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
 	if nestedTypes && (hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) && (len(others) > 0 || len(mainDecls) > 0) {
 		e.println("")
 	}
+	if len(e.jsonStructOrder) > 0 {
+		if nestedTypes && (hasTypes || hasInst || len(others) > 0 ||
+			len(mainDecls) > 0) {
+			e.println("")
+		}
+		e.emitJSONMarshalers()
+	}
 	if nestedTypes {
 		for i, fn := range others {
 			if i > 0 {
@@ -1200,6 +1797,9 @@ func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
 		// subprogram never bleed in (mirrors emitSubprogram).
 		e.pendingRecvs = nil
 		e.pendingAsserts = nil
+		e.pendingHead = nil
+		e.deferredDecls = map[string]bool{}
+		e.unboundedStrings = map[string]bool{}
 		e.populateLocals(main)
 	}
 	for _, a := range mainDecls {
@@ -1260,7 +1860,9 @@ func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
 	// source order (all receives, then all assertions — same queues and
 	// order as emitSubprogram) before any main body statement, matching
 	// Go's "RHS evaluates at the := point" semantics.
-	emittedAny := len(e.pendingRecvs) > 0 || len(e.pendingAsserts) > 0
+	emittedAny := len(e.pendingRecvs) > 0 || len(e.pendingAsserts) > 0 ||
+		len(e.pendingHead) > 0
+	e.emitPendingHead()
 	for _, pr := range e.pendingRecvs {
 		e.emitChanRecvBlock(pr)
 	}
@@ -1293,6 +1895,20 @@ func (e *emitter) emitMainProc(l mainLayout, nestedTypes bool) {
 	// Shutdown is skipped in that case, which is fine because the OS
 	// reaps the process.
 	if e.needsAsyncScheduler {
+		// Stop any live time.After/Tick timers first: Ada waits for
+		// dependent tasks at finalization, so a pending timer task
+		// would otherwise hang process exit (Go exits immediately).
+		if _, ok := e.stdlibImports["time"]; ok {
+			e.println("Gada.Std.Time.Stop_All;")
+		}
+		// Same finalization-hang class as the timers: a live
+		// Listen_And_Serve blocks its worker in Accept forever, and
+		// Scheduler.Shutdown's Drain waits for every worker — stop the
+		// server first so the accept loop can return (Go exits without
+		// waiting; the Ada port must tear down explicitly).
+		if e.needsHTTPServerStop {
+			e.println("Gada.Std.Http.Stop_Server;")
+		}
 		e.println("Gada.Async.Scheduler.Shutdown;")
 	}
 
@@ -1411,8 +2027,14 @@ func (e *emitter) emitPackageBody() {
 	if hasPanic {
 		e.emitPanicInstantiation()
 	}
-	if (hasTypes || hasSlices || hasMaps || hasChans || hasSelectors || hasPanic) && len(fns) > 0 {
+	if (hasTypes || hasSlices || hasMaps || hasChans || hasSelectors || hasPanic || len(e.jsonStructOrder) > 0) && len(fns) > 0 {
 		e.println("")
+	}
+	if len(e.jsonStructOrder) > 0 {
+		e.emitJSONMarshalers()
+		if len(fns) > 0 {
+			e.println("")
+		}
 	}
 	for i, fn := range fns {
 		if i > 0 {
@@ -1464,6 +2086,20 @@ func (e *emitter) populateLocals(fn *ir.Function) {
 				if id, ok := a.LHS[1].(*ir.Ident); ok {
 					e.localTypes[id.Name] = &ir.BoolType{}
 				}
+				continue
+			}
+			// 2-LHS stdlib out-call `data, err := os.ReadFile(p)`:
+			// each LHS binds the corresponding result type.
+			if c, ok := a.RHS[0].(*ir.Call); ok && len(c.ResultTypes) == 2 {
+				for i, lhs := range a.LHS {
+					if id, ok := lhs.(*ir.Ident); ok && c.ResultTypes[i] != nil {
+						e.localTypes[id.Name] = c.ResultTypes[i]
+						if _, isStr := c.ResultTypes[i].(*ir.StringType); isStr {
+							e.unboundedStrings[id.Name] = true
+							e.needsUnbounded = true
+						}
+					}
+				}
 			}
 			continue
 		}
@@ -1474,8 +2110,35 @@ func (e *emitter) populateLocals(fn *ir.Function) {
 		if !ok {
 			continue
 		}
+		// `argc := len(os.Args)` lowers through Gada.Std.Strings.
+		if bc, ok := a.RHS[0].(*ir.BuiltinCall); ok && bc.Name == "len" &&
+			len(bc.Args) == 1 {
+			if sel, ok := bc.Args[0].(*ir.Selector); ok {
+				if xid, ok := sel.X.(*ir.Ident); ok && xid.Name == "os" &&
+					sel.Sel == "Args" {
+					if _, ok := e.stdlibImports["os"]; ok {
+						e.needsStdStrings = true
+					}
+				}
+			}
+		}
 		if t, ok := inferRHSType(a.RHS[0]); ok {
 			e.localTypes[id.Name] = t
+		} else if ix, ok := a.RHS[0].(*ir.IndexExpr); ok {
+			// `v := s[i]` binds the element type.
+			if elem, ok := e.sliceElemForExpr(ix.X); ok {
+				e.localTypes[id.Name] = elem
+			}
+		}
+		// Local Go string vars are declared as Unbounded_String on
+		// the Ada side: a `String` object is bound-constrained by its
+		// initializer, so `s := ""` would reject any later non-empty
+		// assignment with a length check.
+		if t := e.rhsIRType(a.RHS[0]); t != nil {
+			if _, isStr := t.(*ir.StringType); isStr {
+				e.unboundedStrings[id.Name] = true
+				e.needsUnbounded = true
+			}
 		}
 	}
 }
@@ -1501,8 +2164,13 @@ func inferRHSType(x ir.Expr) (ir.Type, bool) {
 		}
 	case *ir.SliceLit:
 		return &ir.SliceType{Elem: x.Elem}, true
+	case *ir.MakeSlice:
+		return &ir.SliceType{Elem: x.Elem}, true
 	case *ir.MapLit:
 		return &ir.MapType{Key: x.Key, Value: x.Value}, true
+	case *ir.StructLit:
+		// `p := Point{...}` binds p to the named struct type.
+		return &ir.NamedType{Name: x.TypeName}, true
 	case *ir.TypeAssert:
 		// `v := x.(T)` (single-value, item 6a) binds v to the asserted
 		// type T. The comma-ok form never lands here: populateLocals
@@ -1510,8 +2178,199 @@ func inferRHSType(x ir.Expr) (ir.Type, bool) {
 		if !x.CommaOK && x.Type != nil {
 			return x.Type, true
 		}
+	case *ir.Call:
+		// Stdlib call in expression position with a single result.
+		if len(x.ResultTypes) == 1 && x.ResultTypes[0] != nil {
+			return x.ResultTypes[0], true
+		}
+	case *ir.ZeroVal:
+		return x.Type, true
 	}
 	return nil, false
+}
+
+// emitStdlibOutCallDecl is the declarative-region emit for the 2-LHS
+// stdlib out-call define `data, err := os.ReadFile(p)`. It declares
+// each LHS with its *types.Info-resolved result type and queues a
+// pendingOutCall; emitSubprogram/emitMainProc drain the queue at the
+// top of the body, emitting `Gada.Std.OS.Read_File (P, Data, Err);`.
+func (e *emitter) emitStdlibOutCallDecl(a *ir.Assign, c *ir.Call) {
+	var lhs []string
+	for i, l := range a.LHS {
+		id, ok := l.(*ir.Ident)
+		if !ok || c.ResultTypes[i] == nil {
+			e.fail(fmt.Errorf("emit: 2-LHS stdlib out-call LHS must be plain identifiers with known result types"))
+			return
+		}
+		typ, err := e.typeName(c.ResultTypes[i])
+		if err != nil {
+			e.fail(err)
+			return
+		}
+		if rt := c.ResultTypes[i]; rt != nil {
+			if _, isStr := rt.(*ir.StringType); isStr {
+				typ = "Ada.Strings.Unbounded.Unbounded_String"
+				e.unboundedStrings[id.Name] = true
+				e.needsUnbounded = true
+				decl := adaIdent(id.Name) + " : " + typ +
+					` := Ada.Strings.Unbounded.To_Unbounded_String ("")`
+				e.println(decl + ";")
+				lhs = append(lhs, adaIdent(id.Name))
+				continue
+			}
+		}
+		decl := adaIdent(id.Name) + " : " + typ
+		if init := declInit(c.ResultTypes[i]); init != "" {
+			decl += " := " + init
+		}
+		e.println(decl + ";")
+		lhs = append(lhs, adaIdent(id.Name))
+	}
+	e.pendingHead = append(e.pendingHead,
+		pendingHeadInit{outCall: &pendingOutCall{call: c, lhs: lhs}})
+	// Key by the *Go* name — refsDeferred matches on ir.Ident.Name,
+	// which is still the un-capitalised Go spelling.
+	for _, l := range a.LHS {
+		if id, ok := l.(*ir.Ident); ok {
+			e.deferredDecls[id.Name] = true
+		}
+	}
+}
+
+// emitIOReadAllBody special-cases Phase 7 `body, err := io.ReadAll(r.Body)`
+// (define or plain assign): the http port's Request/Response Body_K
+// component is already the whole body as a Byte_Slice, so the read
+// lowers to a direct assign plus a nil error — the body is in memory,
+// and Gada.Std.IO.Read_All's Reader_Access signature does not apply.
+// lhs holds the two Ada-side LHS names. Returns false when c is not
+// that shape, leaving the caller to emit the generic out-call.
+func (e *emitter) emitIOReadAllBody(c *ir.Call, lhs []string) bool {
+	sel, ok := c.Fun.(*ir.Selector)
+	if !ok || sel.Sel != "ReadAll" || len(c.Args) != 1 || len(lhs) != 2 {
+		return false
+	}
+	xid, ok := sel.X.(*ir.Ident)
+	if !ok || xid.Name != "io" {
+		return false
+	}
+	if _, imported := e.stdlibImports["io"]; !imported {
+		return false
+	}
+	bsel, ok := c.Args[0].(*ir.Selector)
+	if !ok || bsel.Sel != "Body" {
+		return false
+	}
+	bid, ok := bsel.X.(*ir.Ident)
+	if !ok {
+		return false
+	}
+	pt, ok := e.localTypes[bid.Name].(*ir.PointerType)
+	if !ok {
+		return false
+	}
+	nt, ok := pt.Elem.(*ir.NamedType)
+	if !ok || (nt.Name != "Request" && nt.Name != "Response") {
+		return false
+	}
+	e.needsStdErrors = true
+	e.println(lhs[0] + " := " + e.emitExpr(c.Args[0]) + ";")
+	e.println(lhs[1] + " := Gada.Std.Errors.No_Error;")
+	return true
+}
+
+// emitPendingHead drains the pendingHead queue in source order: each
+// 2-LHS out-call define becomes its `Pkg.Member (args…, L1, L2);`
+// statement, each deferred `v := rhs` becomes `V := Rhs;` at the top
+// of the body — preserving Go's "RHS evaluates at the := point" order
+// that Ada declarative initialisers cannot honour for out-call results.
+func (e *emitter) emitPendingHead() {
+	for _, ph := range e.pendingHead {
+		if ph.outCall != nil {
+			po := ph.outCall
+			if e.emitIOReadAllBody(po.call, po.lhs) {
+				continue
+			}
+			e.emitOutCallStmt(po.call, po.lhs)
+		} else {
+			rhs := e.emitExpr(ph.rhs)
+			if e.unboundedStrings[ph.name] {
+				rhs = "Ada.Strings.Unbounded.To_Unbounded_String (" + rhs + ")"
+			}
+			e.println(ph.lhs + " := " + rhs + ";")
+		}
+	}
+	e.pendingHead = nil
+}
+
+// refsDeferred reports whether x mentions any name whose decl
+// initialiser was deferred to the body (out-call targets and their
+// transitive dependents), so the caller can defer this init too.
+func (e *emitter) refsDeferred(x ir.Expr) bool {
+	switch x := x.(type) {
+	case nil:
+		return false
+	case *ir.Ident:
+		return e.deferredDecls[x.Name]
+	case *ir.Lit:
+		return false
+	case *ir.BinOp:
+		return e.refsDeferred(x.X) || e.refsDeferred(x.Y)
+	case *ir.UnaryOp:
+		return e.refsDeferred(x.X)
+	case *ir.Selector:
+		return e.refsDeferred(x.X)
+	case *ir.SliceLit:
+		for _, el := range x.Elems {
+			if e.refsDeferred(el) {
+				return true
+			}
+		}
+		return false
+	case *ir.MapLit:
+		for _, en := range x.Entries {
+			if e.refsDeferred(en.Key) || e.refsDeferred(en.Value) {
+				return true
+			}
+		}
+		return false
+	case *ir.StructLit:
+		for _, fv := range x.Fields {
+			if e.refsDeferred(fv.Value) {
+				return true
+			}
+		}
+		return false
+	case *ir.MakeChan:
+		return e.refsDeferred(x.Capacity)
+	case *ir.MakeSlice:
+		return e.refsDeferred(x.Len)
+	case *ir.TypeAssert:
+		return e.refsDeferred(x.X)
+	case *ir.IndexExpr:
+		return e.refsDeferred(x.X) || e.refsDeferred(x.Index)
+	case *ir.SliceExpr:
+		return e.refsDeferred(x.X) || e.refsDeferred(x.Low) || e.refsDeferred(x.High)
+	case *ir.BuiltinCall:
+		for _, a := range x.Args {
+			if e.refsDeferred(a) {
+				return true
+			}
+		}
+		return false
+	case *ir.Call:
+		if e.refsDeferred(x.Fun) {
+			return true
+		}
+		for _, a := range x.Args {
+			if e.refsDeferred(a) {
+				return true
+			}
+		}
+		return false
+	case *ir.ChanRecv:
+		return e.refsDeferred(x.Chan)
+	}
+	return false
 }
 
 // emitSubprogram writes one function or procedure body, with its
@@ -1539,6 +2398,9 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	// bleed in.
 	e.pendingRecvs = nil
 	e.pendingAsserts = nil
+	e.pendingHead = nil
+	e.deferredDecls = map[string]bool{}
+	e.unboundedStrings = map[string]bool{}
 	e.populateLocals(fn)
 	header, name, ok := e.subpHeader(fn)
 	if !ok {
@@ -1600,7 +2462,12 @@ func (e *emitter) emitSubprogram(fn *ir.Function) {
 	// "RHS evaluates at the := point" semantics hold; the inner
 	// declare scope keeps Discard_OK from colliding across multiple
 	// receive sites and from leaking into the surrounding scope.
-	emittedAny := len(e.pendingRecvs) > 0 || len(e.pendingAsserts) > 0
+	emittedAny := len(e.pendingRecvs) > 0 || len(e.pendingAsserts) > 0 ||
+		len(e.pendingHead) > 0
+	// Drain deferred head-of-body initialisers (stdlib out-calls and
+	// their dependents) first, in source order, so every later body
+	// statement sees Go's at-the-:= values.
+	e.emitPendingHead()
 	for _, pr := range e.pendingRecvs {
 		e.emitChanRecvBlock(pr)
 	}
@@ -2072,6 +2939,67 @@ func (e *emitter) emitGoClosureWithArgs(n int, g *ir.GoStmt) {
 // runtime instantiation defaults so a `recover()`-rescued function
 // returns the same value its callers would observe on a normal-flow
 // short-circuit.
+// vectorEmptyInit returns the empty-vector initializer for
+// vector-backed slice types ([]string → String_Vectors.Empty,
+// []byte → Byte_Vectors.Empty). Their Ada subtypes are unconstrained,
+// so every declaration of one needs an initializer.
+func vectorEmptyInit(t ir.Type) string {
+	st, ok := t.(*ir.SliceType)
+	if !ok {
+		return ""
+	}
+	switch st.Elem.(type) {
+	case *ir.StringType:
+		return "Gada.Std.Strings.String_Vectors.Empty"
+	case *ir.ByteType:
+		return "Gada.Std.Bytes.Byte_Vectors.Empty"
+	}
+	return ""
+}
+
+// rhsIRType recovers the IR type of a `:=` RHS for decl-initializer
+// decisions (vector-backed slices and unconstrained String need one).
+func (e *emitter) rhsIRType(x ir.Expr) ir.Type {
+	switch x := x.(type) {
+	case *ir.ZeroVal:
+		return x.Type
+	case *ir.Call:
+		if len(x.ResultTypes) == 1 {
+			return x.ResultTypes[0]
+		}
+	case *ir.IndexExpr:
+		if elem, ok := e.sliceElemForExpr(x.X); ok {
+			return elem
+		}
+	case *ir.SliceLit:
+		return &ir.SliceType{Elem: x.Elem}
+	case *ir.BuiltinCall:
+		switch x.Name {
+		case "string":
+			return &ir.StringType{}
+		case "bytes":
+			// []byte(s) conversion (Phase 7).
+			return &ir.SliceType{Elem: &ir.ByteType{}}
+		case "len", "cap":
+			return &ir.IntType{}
+		}
+	}
+	if t, ok := inferRHSType(x); ok {
+		return t
+	}
+	return nil
+}
+
+// declInit returns the initializer for a bare (deferred) declaration:
+// vector-backed slices get their empty vector, other unconstrained
+// types (String) get their zero literal. "" means no initializer.
+func declInit(t ir.Type) string {
+	if init := vectorEmptyInit(t); init != "" {
+		return init
+	}
+	return ""
+}
+
 func zeroLiteralOf(t ir.Type) string {
 	switch t.(type) {
 	case *ir.IntType:
@@ -2190,6 +3118,14 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 				e.emitTypeAssertDecl(a, r)
 				return
 			}
+		case *ir.Call:
+			// 2-LHS stdlib out-call (`data, err := os.ReadFile(p)`):
+			// declare each LHS with its result type here, queue the
+			// call statement for the top of the body.
+			if len(r.ResultTypes) == 2 {
+				e.emitStdlibOutCallDecl(a, r)
+				return
+			}
 		}
 	}
 	if len(a.LHS) != 1 || len(a.RHS) != 1 {
@@ -2216,12 +3152,87 @@ func (e *emitter) emitVarDecl(a *ir.Assign) {
 		e.emitChanRecvDecl(a, cr)
 		return
 	}
+	// Phase 7: `err := json.Unmarshal(data, &v)` — the call's second
+	// argument is the out-target, so the define declares only the
+	// error and the call statement runs at the top of the body with
+	// the target appended as an out-arg.
+	if c, ok := a.RHS[0].(*ir.Call); ok && len(c.ResultTypes) == 1 &&
+		e.isJSONUnmarshal(c) {
+		typ, terr := e.typeName(c.ResultTypes[0])
+		if terr != nil {
+			e.fail(terr)
+			return
+		}
+		decl := adaIdent(id.Name) + " : " + typ
+		if init := declInit(c.ResultTypes[0]); init != "" {
+			decl += " := " + init
+		}
+		e.println(decl + ";")
+		e.pendingHead = append(e.pendingHead,
+			pendingHeadInit{outCall: &pendingOutCall{
+				call: c, lhs: []string{adaIdent(id.Name)},
+			}})
+		e.deferredDecls[id.Name] = true
+		return
+	}
 	typ, err := e.inferDeclType(a.RHS[0])
 	if err != nil {
 		e.fail(err)
 		return
 	}
+	// Local string vars are Unbounded_String (see populateLocals).
+	rhsT := e.rhsIRType(a.RHS[0])
+	if _, isStr := rhsT.(*ir.StringType); isStr {
+		typ = "Ada.Strings.Unbounded.Unbounded_String"
+	}
+	// `var x T` — Go guarantees the zero value, so scalars get an
+	// explicit zero initializer; protected types and records
+	// default-initialise on their own.
+	if zv, ok := a.RHS[0].(*ir.ZeroVal); ok {
+		// Local struct/record types default-initialise; scalars and
+		// stdlib value types get an explicit zero literal (Go's
+		// guaranteed zero value).
+		_, isLocalStruct := e.structByName[nt2Name(zv.Type)]
+		z := ""
+		switch zv.Type.(type) {
+		case *ir.IntType, *ir.BoolType, *ir.Float64Type, *ir.StringType:
+			z = zeroLiteralOf(zv.Type)
+		default:
+			// Stdlib scalar value types (time.Duration) zero to 0;
+			// protected types and records default-initialise bare.
+			if nt, ok := zv.Type.(*ir.NamedType); ok && nt.Name == "Duration" {
+				z = "0"
+			}
+		}
+		_ = isLocalStruct
+		if z != "" {
+			e.println(adaIdent(id.Name) + " : " + typ + " := " + z + ";")
+		} else {
+			e.println(adaIdent(id.Name) + " : " + typ + ";")
+		}
+		return
+	}
+	// If the RHS reads an out-call result (or anything derived from
+	// one), the value is not available until the body runs — declare
+	// bare and queue the initialiser for the top of the body.
+	if e.refsDeferred(a.RHS[0]) {
+		decl := adaIdent(id.Name) + " : " + typ
+		if _, isStr := rhsT.(*ir.StringType); isStr {
+			decl += ` := Ada.Strings.Unbounded.To_Unbounded_String ("")`
+		} else if init := declInit(rhsT); init != "" {
+			decl += " := " + init
+		}
+		e.println(decl + ";")
+		e.pendingHead = append(e.pendingHead, pendingHeadInit{
+			lhs: adaIdent(id.Name), name: id.Name, rhs: a.RHS[0],
+		})
+		e.deferredDecls[id.Name] = true
+		return
+	}
 	rhs := e.emitExpr(a.RHS[0])
+	if _, isStr := rhsT.(*ir.StringType); isStr {
+		rhs = "Ada.Strings.Unbounded.To_Unbounded_String (" + rhs + ")"
+	}
 	e.println(adaIdent(id.Name) + " : " + typ + " := " + rhs + ";")
 }
 
@@ -2255,12 +3266,12 @@ func (e *emitter) emitChanRecvDecl(a *ir.Assign, cr *ir.ChanRecv) {
 		e.fail(fmt.Errorf("emit: ChanRecv on non-chan or non-ident operand not supported in Phase 3"))
 		return
 	}
-	tname, err := e.typeName(elem)
-	if err != nil {
-		e.fail(err)
+	tname, ok := e.chanAdaElemNameOfExpr(cr.Chan)
+	if !ok {
+		e.fail(fmt.Errorf("emit: ChanRecv: unknown element type name"))
 		return
 	}
-	pkg, err := chanPkgFor(elem)
+	pkg, err := e.chanPkgForT(elem)
 	if err != nil {
 		e.fail(err)
 		return
@@ -2527,6 +3538,14 @@ func (e *emitter) emitStmtListOrNull(stmts []ir.Stmt) {
 // literal (whose element type is on the node, so no *types.Info
 // plumbing is needed). Anything else still defers — full RHS-typing
 // arrives with the type-info plumbing in a later phase.
+// argIdent returns the name of x when x is a bare identifier.
+func argIdent(x ir.Expr) string {
+	if id, ok := x.(*ir.Ident); ok {
+		return id.Name
+	}
+	return ""
+}
+
 func (e *emitter) inferDeclType(x ir.Expr) (string, error) {
 	switch x := x.(type) {
 	case *ir.Lit:
@@ -2554,17 +3573,52 @@ func (e *emitter) inferDeclType(x ir.Expr) (string, error) {
 		}
 		return pkg + ".Map", nil
 	case *ir.MakeChan:
-		pkg, err := chanPkgFor(x.Elem)
+		pkg, err := e.chanPkgForT(x.Elem)
 		if err != nil {
 			return "", err
 		}
 		return pkg + ".Channel", nil
+	case *ir.MakeSlice:
+		return e.typeName(&ir.SliceType{Elem: x.Elem})
 	case *ir.StructLit:
 		// The literal names its own record type; no *types.Info needed.
 		return adaIdent(x.TypeName), nil
 	case *ir.TypeAssert:
 		// `v := x.(T)` binds v to the asserted type T.
 		return e.typeName(x.Type)
+	case *ir.ZeroVal:
+		return e.typeName(x.Type)
+	case *ir.Call:
+		// Stdlib package call in expression position; the result
+		// type was resolved at translate time from *types.Info.
+		if len(x.ResultTypes) == 1 && x.ResultTypes[0] != nil {
+			return e.typeName(x.ResultTypes[0])
+		}
+		return "", fmt.Errorf("emit: call result type unknown (needs a single-value stdlib call)")
+	case *ir.IndexExpr:
+		// `v := s[i]` binds v to the slice's element type.
+		if elem, ok := e.sliceElemForExpr(x.X); ok {
+			return e.typeName(elem)
+		}
+		return "", fmt.Errorf("emit: := from index expr of unknown slice type")
+	case *ir.BuiltinCall:
+		switch x.Name {
+		case "string":
+			return "String", nil
+		case "bytes":
+			// []byte(s) conversion (Phase 7).
+			return "Gada.Std.Bytes.Byte_Slice", nil
+		case "len", "cap":
+			return "Integer", nil
+		case "append":
+			if st, ok := e.localTypes[argIdent(x.Args[0])]; ok {
+				if sl, ok := st.(*ir.SliceType); ok {
+					return e.typeName(sl)
+				}
+			}
+			return "", fmt.Errorf("emit: := from append of unknown slice type")
+		}
+		return "", fmt.Errorf("emit: := from builtin %q not supported", x.Name)
 	}
 	return "", fmt.Errorf("emit: := requires a literal or composite RHS, got %T", x)
 }
@@ -2686,6 +3740,34 @@ func (e *emitter) emitAssign(a *ir.Assign) {
 		e.fail(fmt.Errorf("emit: := outside head of function body not supported in Phase 1"))
 		return
 	}
+	// Phase 7: a 1-LHS plain assignment of json.Unmarshal
+	// (`err = json.Unmarshal(data, &v)`) emits the call with the LHS
+	// as the trailing out-arg — the target is a source argument, not
+	// a result, so this is `Gada.Std.Json.Unmarshal (Data, V, Err);`.
+	if c, ok := a.RHS[0].(*ir.Call); ok && len(a.LHS) == 1 &&
+		e.isJSONUnmarshal(c) {
+		args := make([]string, 0, len(c.Args)+1)
+		for _, arg := range c.Args {
+			args = append(args, e.emitExpr(arg))
+		}
+		args = append(args, e.emitExpr(a.LHS[0]))
+		e.println(e.emitExpr(c.Fun) + " (" + strings.Join(args, ", ") + ");")
+		return
+	}
+	// Phase 7: a 2-LHS plain assignment of an out-call
+	// (`n, err = conn.Read(buf)`) emits the call statement with the
+	// LHS as trailing out-params — same shape as the head-of-body
+	// define, minus the declarations.
+	if len(a.LHS) == 2 && len(a.RHS) == 1 {
+		if c, ok := a.RHS[0].(*ir.Call); ok && len(c.ResultTypes) == 2 {
+			lhsNames := []string{e.emitExpr(a.LHS[0]), e.emitExpr(a.LHS[1])}
+			if e.emitIOReadAllBody(c, lhsNames) {
+				return
+			}
+			e.emitOutCallStmt(c, lhsNames)
+			return
+		}
+	}
 	if len(a.LHS) != 1 || len(a.RHS) != 1 {
 		e.fail(fmt.Errorf("emit: multi-value assignment not supported in Phase 1"))
 		return
@@ -2712,12 +3794,30 @@ func (e *emitter) emitAssign(a *ir.Assign) {
 			s := e.emitExpr(ix.X)
 			i := e.emitExpr(ix.Index)
 			v := e.emitExpr(a.RHS[0])
+			// []string uses a vector: Replace_Element (not the
+			// Slices generic's Set_Element) and the value wraps
+			// back into Unbounded_String.
+			if elem, ok := e.sliceElemForExpr(ix.X); ok {
+				if _, isStr := elem.(*ir.StringType); isStr {
+					e.println(pkg + ".Replace_Element (" + s + ", " + i + " + 1, " +
+						"Ada.Strings.Unbounded.To_Unbounded_String (" + v + "));")
+					return
+				}
+			}
 			e.println(pkg + ".Set_Element (" + s + ", " + i + " + 1, " + v + ");")
 			return
 		}
 	}
+	// The LHS of an assignment is an l-value: never wrap it in
+	// To_String even when it is an unbounded string local.
 	lhs := e.emitExpr(a.LHS[0])
+	if id, ok := a.LHS[0].(*ir.Ident); ok && e.unboundedStrings[id.Name] {
+		lhs = adaIdent(id.Name)
+	}
 	rhs := e.emitExpr(a.RHS[0])
+	if id, ok := a.LHS[0].(*ir.Ident); ok && e.unboundedStrings[id.Name] {
+		rhs = "Ada.Strings.Unbounded.To_Unbounded_String (" + rhs + ")"
+	}
 	e.println(lhs + " := " + rhs + ";")
 }
 
@@ -3004,19 +4104,152 @@ func (e *emitter) emitCallStmt(c *ir.Call) {
 		e.emitFmtPrintln(c)
 		return
 	}
-	// A selector-headed call `x.M(args)` is a method call (package-
-	// qualified calls other than fmt.Println are not supported). It emits
-	// as the Ada prefixed-view `X.M`, which is a valid primitive-operation
-	// call only when M is a dispatch operation — an interface method,
-	// which 5b-i declares as an abstract op and 5c bodies as an
-	// overriding primitive. A call to a method that is *not* part of any
-	// interface (a plain method on a non-deriving type) has no emitted
-	// subprogram, so `X.M` would dangle; reject it loudly rather than emit
-	// uncompilable Ada. Direct calls to non-dispatching methods ride a
-	// later item.
-	if sel, ok := c.Fun.(*ir.Selector); ok && !e.dispatchMethodNames[sel.Sel] {
-		e.fail(fmt.Errorf("emit: method call to %q: only interface (dispatching) methods are callable yet; a direct call to a non-interface method is not supported", sel.Sel))
+	// Phase 7 item 2b: bare `json.Unmarshal(data, &v);` on a struct
+	// target (rewritten to Json_Unmarshal_T) — discard the error into
+	// a block-local and pass the target as the trailing out-arg.
+	if id, ok := c.Fun.(*ir.Ident); ok &&
+		strings.HasPrefix(id.Name, "Json_Unmarshal_") {
+		e.println("declare")
+		e.indent++
+		e.println("Err : Gada.Std.Errors.Error_Access;")
+		e.println("begin")
+		e.indent++
+		args := make([]string, 0, len(c.Args)+1)
+		for _, a := range c.Args {
+			args = append(args, e.emitExpr(a))
+		}
+		args = append(args, "Err")
+		e.println(e.emitExpr(c.Fun) + " (" + strings.Join(args, ", ") + ");")
+		e.indent--
+		e.println("end;")
+		e.indent--
 		return
+	}
+	// A selector-headed call whose prefix is a stdlib import name
+	// (`strings.ToUpper(s)`) is a qualified package call, not a method
+	// call: emit `Gada.Std.Strings.To_Upper (S);`.
+	if sel, ok := c.Fun.(*ir.Selector); ok {
+		if id, ok := sel.X.(*ir.Ident); ok {
+			if _, isStdlib := e.stdlibImports[id.Name]; isStdlib {
+				fun := e.emitExpr(c.Fun)
+				args := make([]string, 0, len(c.Args))
+				for _, a := range c.Args {
+					args = append(args, e.emitExpr(a))
+				}
+				// Phase 7: bare `json.Unmarshal(data, &v);` statement
+				// — discard the error into a block-local and pass the
+				// target as the trailing out-arg.
+				if sel.Sel == "HandleFunc" && len(c.Args) == 2 {
+					if hid, ok := c.Args[1].(*ir.Ident); ok &&
+						e.funcByName[hid.Name] != nil {
+						args[1] = args[1] + "'Access"
+					}
+				}
+				if e.isJSONUnmarshal(c) {
+					e.println("declare")
+					e.indent++
+					e.println("Err : Gada.Std.Errors.Error_Access;")
+					e.println("begin")
+					e.indent++
+					args = append(args, "Err")
+					e.println(fun + " (" + strings.Join(args, ", ") + ");")
+					e.indent--
+					e.println("end;")
+					e.indent--
+					return
+				}
+				if len(args) == 0 {
+					e.println(fun + ";")
+				} else {
+					e.println(fun + " (" + strings.Join(args, ", ") + ");")
+				}
+				return
+			}
+		}
+		// Phase 6: a method call on a Gada.Std.Sync value (`mu.Lock()`,
+		// `wg.Add(1)`) lowers to the protected dot-call `Mu.Lock;` /
+		// `Wg.Add (1);` — these are protected operations, not dispatching
+		// primitives, so they bypass the interface-method check below.
+		if id, ok := sel.X.(*ir.Ident); ok {
+			_, syncImported := e.stdlibImports["sync"]
+			localType := e.localTypeNames[nt2Name(e.localTypes[id.Name])]
+			if nt, ok := e.localTypes[id.Name].(*ir.NamedType); ok &&
+				syncTypeNames[nt.Name] && syncImported && !localType {
+				fun := e.emitExpr(sel.X) + "." + adaIdent(sel.Sel)
+				args := make([]string, 0, len(c.Args))
+				for _, a := range c.Args {
+					args = append(args, e.emitExpr(a))
+				}
+				if len(args) == 0 {
+					e.println(fun + ";")
+				} else {
+					e.println(fun + " (" + strings.Join(args, ", ") + ");")
+				}
+				return
+			}
+		}
+		// Phase 8 wave 4: a method call on a wave-4 crypto value in
+		// statement position (`mac.Write(msg)`) lowers to the prefix
+		// call `Gada.Std.Crypto.Hmac.Write (Mac, Msg);`.
+		if s, ok := e.cryptoMethodCall(c); ok {
+			e.println(s + ";")
+			return
+		}
+		// Phase 7: a method call on a Gada.Std.Net value
+		// (`conn.Write(b)`) lowers to the routed protected dot-call
+		// `Conn.all.Write (B);` — same shape as the sync branch above.
+		if netFun, ok := e.netMethodCall(sel); ok {
+			args := make([]string, 0, len(c.Args))
+			for _, a := range c.Args {
+				args = append(args, e.emitExpr(a))
+			}
+			if len(args) == 0 {
+				e.println(netFun + ";")
+			} else {
+				e.println(netFun + " (" + strings.Join(args, ", ") + ");")
+			}
+			return
+		}
+		// Phase 7: net/http method call in statement position
+		// (`w.Write(b)` discarding the (int, error) results) — the Ada
+		// protected op has out-params, so wrap in a block with locals.
+		if httpFun, ok := e.httpMethodCall(sel); ok {
+			args := make([]string, 0, len(c.Args))
+			for _, a := range c.Args {
+				args = append(args, e.emitExpr(a))
+			}
+			if len(c.ResultTypes) == 2 {
+				e.println("declare")
+				e.indent++
+				e.println("N : Natural;")
+				e.println("Err : Gada.Std.Errors.Error_Access;")
+				e.println("begin")
+				e.indent++
+				args = append(args, "N", "Err")
+				e.println(httpFun + " (" + strings.Join(args, ", ") + ");")
+				e.indent--
+				e.println("end;")
+				e.indent--
+			} else if len(args) == 0 {
+				e.println(httpFun + ";")
+			} else {
+				e.println(httpFun + " (" + strings.Join(args, ", ") + ");")
+			}
+			return
+		}
+		// Otherwise `x.M(args)` is a method call (package-qualified calls
+		// other than stdlib ones are not supported). It emits as the Ada
+		// prefixed-view `X.M`, which is a valid primitive-operation call
+		// only when M is a dispatch operation — an interface method, which
+		// 5b-i declares as an abstract op and 5c bodies as an overriding
+		// primitive. A call to a method that is *not* part of any interface
+		// has no emitted subprogram, so `X.M` would dangle; reject it
+		// loudly rather than emit uncompilable Ada. Direct calls to
+		// non-dispatching methods ride a later item.
+		if !e.dispatchMethodNames[sel.Sel] {
+			e.fail(fmt.Errorf("emit: method call to %q: only interface (dispatching) methods are callable yet; a direct call to a non-interface method is not supported", sel.Sel))
+			return
+		}
 	}
 	fun := e.emitExpr(c.Fun)
 	args := make([]string, 0, len(c.Args))
@@ -3066,8 +4299,41 @@ func (e *emitter) emitFmtPrintln(c *ir.Call) {
 // statements, and Go's `gc` would reject these too — but the corpus
 // includes one to exercise the IR path, so we accept it lossily.
 func (e *emitter) emitExprStmt(s *ir.ExprStmt) {
-	_ = s
-	e.println("null;")
+	switch x := s.X.(type) {
+	case *ir.Call:
+		e.emitCallStmt(x)
+	case *ir.BuiltinCall:
+		e.emitBuiltinStmt(x)
+	case *ir.ChanRecv:
+		// Bare `<-c` statement: a real receive with the value
+		// discarded (Go blocks until a value arrives or the channel
+		// closes). Previously this emitted `null;` — a silent
+		// miscompile.
+		pkg, ok := e.chanPkgForExpr(x.Chan)
+		if !ok {
+			e.fail(fmt.Errorf("emit: <-c statement on unresolvable chan operand"))
+			return
+		}
+		tName, ok := e.chanAdaElemNameOfExpr(x.Chan)
+		if !ok {
+			e.fail(fmt.Errorf("emit: <-c statement: unknown element type"))
+			return
+		}
+		e.println("declare")
+		e.indent++
+		e.println("V : " + tName + ";")
+		e.println("OK : Boolean;")
+		e.println("begin")
+		e.indent++
+		e.println(pkg + ".Receive (" + e.emitExpr(x.Chan) + ", V, OK);")
+		e.indent--
+		e.println("end;")
+		e.indent--
+	default:
+		// Other expression statements (e.g. blank-ish `_ = x`) keep
+		// the historical no-op lowering.
+		e.println("null;")
+	}
 }
 
 // --- expressions ----------------------------------------------------------
@@ -3078,7 +4344,11 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 	}
 	switch x := x.(type) {
 	case *ir.Ident:
-		return adaIdent(x.Name)
+		name := adaIdent(x.Name)
+		if e.unboundedStrings[x.Name] {
+			return "Ada.Strings.Unbounded.To_String (" + name + ")"
+		}
+		return name
 	case *ir.Lit:
 		return e.emitLit(x)
 	case *ir.BinOp:
@@ -3095,6 +4365,8 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		return e.emitStructLit(x)
 	case *ir.MakeChan:
 		return e.emitMakeChan(x)
+	case *ir.MakeSlice:
+		return e.emitMakeSlice(x)
 	case *ir.TypeAssert:
 		return e.emitTypeAssert(x)
 	case *ir.IndexExpr:
@@ -3103,6 +4375,25 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		return e.emitSliceExpr(x)
 	case *ir.BuiltinCall:
 		return e.emitBuiltinCall(x)
+	case *ir.Call:
+		// Phase 8 wave 4: method call on a wave-4 crypto value
+		// (`mac.Write(msg)`, `gcm.Seal(...)`) lowers to the prefix
+		// call on the port package.
+		if s, ok := e.cryptoMethodCall(x); ok {
+			return s
+		}
+		// Phase 5 wave 1: stdlib package call in expression position
+		// (`words := strings.Fields(s)`). emitSelector maps the
+		// pkg.Member prefix to the Gada.Std.* qualified name.
+		fun := e.emitExpr(x.Fun)
+		args := make([]string, 0, len(x.Args))
+		for _, a := range x.Args {
+			args = append(args, e.emitExpr(a))
+		}
+		if len(args) == 0 {
+			return fun
+		}
+		return fun + " (" + strings.Join(args, ", ") + ")"
 	case *ir.ChanRecv:
 		// Receive is a procedure with an `out` Value parameter, not a
 		// function — there is no expression form to splice in here.
@@ -3111,6 +4402,11 @@ func (e *emitter) emitExpr(x ir.Expr) string {
 		// etc.) lands here; surface the constraint loudly so the
 		// failure axis points at the right widening.
 		e.fail(fmt.Errorf("emit: <-c at expression position not supported in Phase 3 (only `v := <-c` head-of-body define is)"))
+		return ""
+	case *ir.ZeroVal:
+		// No expression form; only a define-RHS is valid (handled by
+		// emitVarDecl). Anywhere else is malformed IR — fail loudly.
+		e.fail(fmt.Errorf("emit: ZeroVal in expression position (only a sole define-RHS is valid)"))
 		return ""
 	}
 	e.fail(fmt.Errorf("emit: unsupported expr %T", x))
@@ -3129,6 +4425,13 @@ func (e *emitter) emitSliceLit(s *ir.SliceLit) string {
 	if len(s.Elems) == 0 {
 		return pkg + ".Empty"
 	}
+	// Vector-backed element types ([]string, []byte) have no
+	// From_Array; build them via strings.Split / bytes.To_Bytes.
+	switch s.Elem.(type) {
+	case *ir.StringType, *ir.ByteType:
+		e.fail(fmt.Errorf("emit: composite literal of []string/[]byte not supported (vectors have no From_Array); build via strings.Split/bytes.To_Bytes"))
+		return ""
+	}
 	parts := make([]string, 0, len(s.Elems))
 	for _, el := range s.Elems {
 		parts = append(parts, e.emitExpr(el))
@@ -3141,8 +4444,22 @@ func (e *emitter) emitSliceLit(s *ir.SliceLit) string {
 // `Channels_Of_<T>.Make (1)` per the runtime's documented
 // behavioural approximation for unbuffered channels (see
 // `runtime/src/gada-async-channels-bounded.ads` § Make rationale).
+// emitMakeSlice lowers `make ([]T, N)` — Phase 7 supports the
+// `make ([]byte, N)` read-buffer shape as `Gada.Std.Bytes.New_Bytes (N)`
+// (and `make ([]byte)` as the empty vector).
+func (e *emitter) emitMakeSlice(x *ir.MakeSlice) string {
+	if _, isByte := x.Elem.(*ir.ByteType); !isByte {
+		e.fail(fmt.Errorf("emit: make ([]T, N) supports only []byte in Phase 7, got elem %s", x.Elem.NodeKind()))
+		return ""
+	}
+	if x.Len == nil {
+		return "Gada.Std.Bytes.Byte_Vectors.Empty_Vector"
+	}
+	return "Gada.Std.Bytes.New_Bytes (" + e.emitExpr(x.Len) + ")"
+}
+
 func (e *emitter) emitMakeChan(m *ir.MakeChan) string {
-	pkg, err := chanPkgFor(m.Elem)
+	pkg, err := e.chanPkgForT(m.Elem)
 	if err != nil {
 		e.fail(err)
 		return ""
@@ -3164,7 +4481,15 @@ func (e *emitter) emitIndexExpr(ix *ir.IndexExpr) string {
 	if pkg, ok := e.slicePkgForExpr(ix.X); ok {
 		x := e.emitExpr(ix.X)
 		idx := e.emitExpr(ix.Index)
-		return pkg + ".Element (" + x + ", " + idx + " + 1)"
+		expr := pkg + ".Element (" + x + ", " + idx + " + 1)"
+		// []string elements are Unbounded_String on the Ada side;
+		// Go code sees them as plain String.
+		if elem, ok := e.sliceElemForExpr(ix.X); ok {
+			if _, isStr := elem.(*ir.StringType); isStr {
+				expr = "Ada.Strings.Unbounded.To_String (" + expr + ")"
+			}
+		}
+		return expr
 	}
 	if pkg, ok := e.mapPkgForExpr(ix.X); ok {
 		x := e.emitExpr(ix.X)
@@ -3383,6 +4708,14 @@ func (e *emitter) emitSliceExpr(s *ir.SliceExpr) string {
 		return ""
 	}
 	x := e.emitExpr(s.X)
+	// `s[:]` (both bounds omitted) on a vector-backed []byte / []string
+	// port is just the vector itself (a copy) — Ada.Containers.Vectors
+	// has no Slice_Of. The Slices_Of_* generic keeps its Slice_Of form.
+	if s.Low == nil && s.High == nil &&
+		(pkg == "Gada.Std.Bytes.Byte_Vectors" ||
+			pkg == "Gada.Std.Strings.String_Vectors") {
+		return x
+	}
 	var lo, hi string
 	if s.Low != nil {
 		lo = e.emitExpr(s.Low) + " + 1"
@@ -3410,10 +4743,56 @@ func (e *emitter) emitBuiltinCall(b *ir.BuiltinCall) string {
 			if _, ok := e.mapPkgForExpr(b.Args[0]); ok {
 				return e.emitMapBuiltin(b)
 			}
+			// len(os.Args): os.Args is Gada.Std.OS.Args, a String_Slice.
+			if sel, ok := b.Args[0].(*ir.Selector); ok {
+				if id, ok := sel.X.(*ir.Ident); ok && id.Name == "os" &&
+					sel.Sel == "Args" {
+					if _, ok := e.stdlibImports["os"]; ok {
+						return "Integer (Gada.Std.Strings.String_Vectors." +
+							"Length (Gada.Std.OS.Args))"
+					}
+				}
+			}
 		}
 		return e.emitSliceBuiltin(b)
 	case "delete":
 		return e.emitMapBuiltin(b)
+	case "bytes":
+		// []byte(x) conversion: only []byte(string) is supported
+		// (→ Gada.Std.Bytes.To_Bytes).
+		if len(b.Args) != 1 {
+			e.fail(fmt.Errorf("emit: []byte() takes exactly 1 arg, got %d", len(b.Args)))
+			return ""
+		}
+		return "Gada.Std.Bytes.To_Bytes (" + e.emitExpr(b.Args[0]) + ")"
+	case "string":
+		// string(x) conversion. Only string([]byte) is supported
+		// (→ Gada.Std.Bytes.To_String); other conversions ride a
+		// later item.
+		if len(b.Args) != 1 {
+			e.fail(fmt.Errorf("emit: string() takes exactly 1 arg, got %d", len(b.Args)))
+			return ""
+		}
+		if elem, ok := e.sliceElemForExpr(b.Args[0]); ok {
+			if _, isByte := elem.(*ir.ByteType); isByte {
+				return "Gada.Std.Bytes.To_String (" + e.emitExpr(b.Args[0]) + ")"
+			}
+		}
+		// Phase 7: string(resp.Body) / string(r.Body) — the http port's
+		// Request/Response Body_K component is a Byte_Slice.
+		if sel, ok := b.Args[0].(*ir.Selector); ok && sel.Sel == "Body" {
+			if id, ok := sel.X.(*ir.Ident); ok {
+				if pt, ok := e.localTypes[id.Name].(*ir.PointerType); ok {
+					if nt, ok := pt.Elem.(*ir.NamedType); ok &&
+						(nt.Name == "Response" || nt.Name == "Request") {
+						return "Gada.Std.Bytes.To_String (" +
+							e.emitExpr(b.Args[0]) + ")"
+					}
+				}
+			}
+		}
+		e.fail(fmt.Errorf("emit: string(x) conversion supported only for []byte, got %T", b.Args[0]))
+		return ""
 	case "recover":
 		if len(b.Args) != 0 {
 			e.fail(fmt.Errorf("emit: recover takes no args, got %d", len(b.Args)))
@@ -3477,20 +4856,41 @@ func (e *emitter) emitSliceBuiltin(b *ir.BuiltinCall) string {
 		e.fail(fmt.Errorf("emit: cannot determine slice instantiation for %q (Phase 2 supports only Ident-of-known-slice-type as the first arg)", b.Name))
 		return ""
 	}
+	// Vector-backed slices ([]string, []byte) have no Len/Cap/Append
+	// functionals — Ada.Containers.Vectors' Length returns Count_Type
+	// and its Append is a procedure, not a function.
+	isVector := false
+	if elem, ok := e.sliceElemForExpr(b.Args[0]); ok {
+		switch elem.(type) {
+		case *ir.StringType, *ir.ByteType:
+			isVector = true
+		}
+	}
 	switch b.Name {
 	case "len":
 		if len(b.Args) != 1 {
 			e.fail(fmt.Errorf("emit: len takes exactly 1 arg, got %d", len(b.Args)))
 			return ""
 		}
+		if isVector {
+			return "Integer (" + pkg + ".Length (" + e.emitExpr(b.Args[0]) + "))"
+		}
 		return pkg + ".Len (" + e.emitExpr(b.Args[0]) + ")"
 	case "cap":
+		if isVector {
+			e.fail(fmt.Errorf("emit: cap on a []string/[]byte vector is not supported (vectors have no capacity concept)"))
+			return ""
+		}
 		if len(b.Args) != 1 {
 			e.fail(fmt.Errorf("emit: cap takes exactly 1 arg, got %d", len(b.Args)))
 			return ""
 		}
 		return pkg + ".Cap (" + e.emitExpr(b.Args[0]) + ")"
 	case "append":
+		if isVector {
+			e.fail(fmt.Errorf("emit: append on a []string/[]byte vector is not supported in expression position (Vectors.Append is a procedure); assign via a helper that returns the vector"))
+			return ""
+		}
 		if len(b.Args) != 2 {
 			e.fail(fmt.Errorf("emit: append-of-N values not supported in Phase 2 (got %d args)", len(b.Args)))
 			return ""
@@ -3525,6 +4925,25 @@ func (e *emitter) slicePkgForExpr(x ir.Expr) (string, bool) {
 	return pkg, true
 }
 
+// sliceElemForExpr returns the element type of x when x is a known
+// slice, so call sites can wrap/unwarp elements at the String /
+// Unbounded_String boundary ([]string case). ok=false otherwise.
+func (e *emitter) sliceElemForExpr(x ir.Expr) (ir.Type, bool) {
+	id, ok := x.(*ir.Ident)
+	if !ok {
+		return nil, false
+	}
+	t, ok := e.localTypes[id.Name]
+	if !ok {
+		return nil, false
+	}
+	st, ok := t.(*ir.SliceType)
+	if !ok {
+		return nil, false
+	}
+	return st.Elem, true
+}
+
 // chanPkgForExpr returns the Channels_Of_<T> prefix for x when x is
 // known to evaluate to a chan; ok=false otherwise. Same constraint as
 // slicePkgForExpr / mapPkgForExpr: bare-ident-only resolution until
@@ -3537,19 +4956,26 @@ func (e *emitter) chanPkgForExpr(x ir.Expr) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	t, ok := e.localTypes[id.Name]
-	if !ok {
+	if t, ok := e.localTypes[id.Name]; ok {
+		if ct, ok := t.(*ir.ChanType); ok {
+			pkg, err := e.chanPkgForT(ct.Elem)
+			if err != nil {
+				return "", false
+			}
+			return pkg, true
+		}
 		return "", false
 	}
-	ct, ok := t.(*ir.ChanType)
-	if !ok {
-		return "", false
+	// `c := make(chan T, …)` head defines land in chanIdentTypes (the
+	// pre-walk), not localTypes.
+	if elem, ok := e.chanIdentTypes[id.Name]; ok {
+		pkg, err := e.chanPkgForT(elem)
+		if err != nil {
+			return "", false
+		}
+		return pkg, true
 	}
-	pkg, err := chanPkgFor(ct.Elem)
-	if err != nil {
-		return "", false
-	}
-	return pkg, true
+	return "", false
 }
 
 // chanElemTypeOfExpr returns the element type of a chan-typed
@@ -3564,15 +4990,36 @@ func (e *emitter) chanElemTypeOfExpr(x ir.Expr) (ir.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	t, ok := e.localTypes[id.Name]
-	if !ok {
+	if t, ok := e.localTypes[id.Name]; ok {
+		if ct, ok := t.(*ir.ChanType); ok {
+			return ct.Elem, true
+		}
 		return nil, false
 	}
-	ct, ok := t.(*ir.ChanType)
-	if !ok {
-		return nil, false
+	if elem, ok := e.chanIdentTypes[id.Name]; ok {
+		return elem, true
 	}
-	return ct.Elem, true
+	return nil, false
+}
+
+// chanAdaElemNameOfExpr resolves the Ada-side element type name for a
+// chan operand. `chan time.Time` rides Gada.Std.Time.Time_Channels, a
+// Boolean-element channel (the tick payload is a dummy Boolean — see
+// runtime COVERAGE notes), so its Ada element type is Boolean, not Time.
+func (e *emitter) chanAdaElemNameOfExpr(x ir.Expr) (string, bool) {
+	elem, ok := e.chanElemTypeOfExpr(x)
+	if !ok {
+		return "", false
+	}
+	if pkg, err := e.chanPkgForT(elem); err == nil &&
+		pkg == "Gada.Std.Time.Time_Channels" {
+		return "Boolean", true
+	}
+	t, err := e.typeName(elem)
+	if err != nil {
+		return "", false
+	}
+	return t, true
 }
 
 // emitChanSend lowers a `c <- v` SendStmt to `Channels_Of_T.Send (C, V);`.
@@ -3909,6 +5356,8 @@ func (e *emitter) emitLit(l *ir.Lit) string {
 			return "True"
 		}
 		return "False"
+	case ir.LitNil:
+		return "null"
 	case ir.LitString:
 		unq, err := strconv.Unquote(l.Value)
 		if err != nil {
@@ -3983,12 +5432,80 @@ func (e *emitter) emitUnaryOp(u *ir.UnaryOp) string {
 	return s
 }
 
+// isJSONUnmarshal reports whether c is `json.Unmarshal(data, &v)` —
+// the one stdlib call whose *argument* (not result) is an out-param,
+// so it lowers to a procedure call with the target appended after the
+// source args: `Gada.Std.Json.Unmarshal (Data, V, Err);`.
+func (e *emitter) isJSONUnmarshal(c *ir.Call) bool {
+	// Struct-typed calls were rewritten to Json_Unmarshal_T idents by
+	// the item-2b pre-pass; the out-arg shape is the same.
+	if id, ok := c.Fun.(*ir.Ident); ok {
+		return strings.HasPrefix(id.Name, "Json_Unmarshal_")
+	}
+	sel, ok := c.Fun.(*ir.Selector)
+	if !ok || sel.Sel != "Unmarshal" {
+		return false
+	}
+	id, ok := sel.X.(*ir.Ident)
+	if !ok {
+		return false
+	}
+	return e.stdlibImports[id.Name] == "Gada.Std.Json"
+}
+
+// netMethodCall renders a method call on a Gada.Std.Net-typed local:
+// `conn.Read(buf)` -> `Conn.all.Read`, `ip.String()` -> `Ip.To_String`.
+// The net import must be present and no local type may shadow the
+// name (same misroute guard as the sync dot-call path). ok=false when
+// the prefix is not a net-typed local.
+func (e *emitter) netMethodCall(s *ir.Selector) (string, bool) {
+	id, ok := s.X.(*ir.Ident)
+	if !ok {
+		return "", false
+	}
+	if _, netImported := e.stdlibImports["net"]; !netImported {
+		return "", false
+	}
+	nt, ok := e.localTypes[id.Name].(*ir.NamedType)
+	if !ok || !netTypeNames[nt.Name] {
+		return "", false
+	}
+	if e.localTypeNames[nt.Name] {
+		return "", false
+	}
+	member := adaIdent(s.Sel)
+	if s.Sel == "String" {
+		member = "To_String"
+	}
+	if netAccessTypeNames[nt.Name] {
+		return e.emitExpr(s.X) + ".all." + member, true
+	}
+	return e.emitExpr(s.X) + "." + member, true
+}
+
 // emitSelector special-cases `fmt.Println` (the only stdlib symbol
 // the Phase 1 corpus uses). Every other selector falls through to a
 // dotted Ada reference; that path is exercised in error tests but
 // won't produce compilable Ada until later phases plumb proper
 // package translation.
 func (e *emitter) emitSelector(s *ir.Selector) string {
+	// A selector whose prefix is a stdlib import name (`strings.ToUpper`)
+	// lowers to the qualified Ada call `Gada.Std.Strings.To_Upper`; the
+	// member name goes through goNameToAdaMember (CamelCase → snake).
+	if id, ok := s.X.(*ir.Ident); ok {
+		if pkg, ok := e.stdlibImports[id.Name]; ok {
+			return pkg + "." + goNameToAdaMember(s.Sel)
+		}
+	}
+	// Phase 7: a method call on a Gada.Std.Net value (`conn.Read(b)`,
+	// `ip.String()`) lowers to the routed dot-call above.
+	if netFun, ok := e.netMethodCall(s); ok {
+		return netFun
+	}
+	// Phase 7: same routing for net/http (`w.Write(b)` -> `W.all.Write`).
+	if httpFun, ok := e.httpMethodCall(s); ok {
+		return httpFun
+	}
 	// `fmt.Println` in statement position is intercepted by emitCallStmt
 	// (-> emitFmtPrintln), so it never reaches here. Any other selector
 	// renders as the Ada dotted form. The selected name goes through
@@ -4063,6 +5580,10 @@ func (e *emitter) typeName(t ir.Type) (string, error) {
 		return "Boolean", nil
 	case *ir.Float64Type:
 		return "Long_Float", nil
+	case *ir.ByteType:
+		return "Character", nil
+	case *ir.ErrorType:
+		return "Gada.Std.Errors.Error_Access", nil
 	case *ir.NamedType:
 		if e.interfaceNames[t.Name] {
 			return adaIdent(t.Name) + "'Class", nil
@@ -4070,8 +5591,17 @@ func (e *emitter) typeName(t ir.Type) (string, error) {
 		if _, ok := e.structByName[t.Name]; ok {
 			return adaIdent(t.Name), nil
 		}
+		if pkg, ok := e.stdlibValueType(t.Name); ok {
+			return pkg, nil
+		}
 		return "", fmt.Errorf("emit: type %q is not a struct or interface; only struct and interface types are usable as value types yet (a named scalar or an undefined/cross-package type reaches here)", t.Name)
 	case *ir.SliceType:
+		switch t.Elem.(type) {
+		case *ir.StringType:
+			return "Gada.Std.Strings.String_Slice", nil
+		case *ir.ByteType:
+			return "Gada.Std.Bytes.Byte_Slice", nil
+		}
 		pkg, err := slicePkgFor(t.Elem)
 		if err != nil {
 			return "", err
@@ -4084,11 +5614,20 @@ func (e *emitter) typeName(t ir.Type) (string, error) {
 		}
 		return pkg + ".Map", nil
 	case *ir.ChanType:
-		pkg, err := chanPkgFor(t.Elem)
+		pkg, err := e.chanPkgForT(t.Elem)
 		if err != nil {
 			return "", err
 		}
 		return pkg + ".Channel", nil
+	case *ir.PointerType:
+		// v1: stdlib pointer types (*http.Request) map to the port's
+		// access type (`Gada.Std.Http.Request_Access`).
+		if nt, ok := t.Elem.(*ir.NamedType); ok {
+			if pkg, ok := e.stdlibValueType(nt.Name); ok {
+				return pkg + "_Access", nil
+			}
+		}
+		return "", fmt.Errorf("emit: pointer type over %T not supported (v1: stdlib types only)", t.Elem)
 	case nil:
 		return "", fmt.Errorf("emit: missing type")
 	}

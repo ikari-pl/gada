@@ -89,6 +89,11 @@ var corpusFixtures = []string{
 	"type_assert_commaok",
 	// Phase 4 — type switch (item 6c).
 	"type_switch",
+	// Phase 5 — stdlib import mapping (with Gada.Std.Strings; + qualified call).
+	"stdlib_import",
+	// Phase 5 — stdlib calls in expression position, 2-LHS (T, error)
+	// out-call, string([]byte), []string index/assign/len, nil compare.
+	"stdlib_calls",
 }
 
 // TestCorpus loads each fixture's IR (from translate/testdata), runs
@@ -96,6 +101,12 @@ var corpusFixtures = []string{
 // the corresponding .golden.adb. The IR side is shared with
 // translate so a divergence in emit alone surfaces here, while a
 // divergence in IR shape would surface in translate's TestCorpus.
+// flattenSpaces collapses all whitespace runs to single spaces so
+// assertions survive the emitter's 80-column line wrapping.
+func flattenSpaces(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func TestCorpus(t *testing.T) {
 	t.Parallel()
 
@@ -595,7 +606,8 @@ func TestVarDeclTypeInference(t *testing.T) {
 		want string
 	}{
 		{"int", &ir.Lit{Kind: ir.LitInt, Value: "1"}, "X : Integer := 1;"},
-		{"string", &ir.Lit{Kind: ir.LitString, Value: `"hi"`}, `X : String := "hi";`},
+		// (line-wrapped at 80 cols in real output; match the tail)
+		{"string", &ir.Lit{Kind: ir.LitString, Value: `"hi"`}, `Ada.Strings.Unbounded.To_Unbounded_String ("hi");`},
 		{"bool", &ir.Lit{Kind: ir.LitBool, Value: "true"}, "X : Boolean := True;"},
 		{"float", &ir.Lit{Kind: ir.LitFloat, Value: "1.5"}, "X : Long_Float := 1.5;"},
 	}
@@ -1093,14 +1105,14 @@ func TestSelectorInstantiationsPrelude(t *testing.T) {
 		for _, want := range []string{
 			"with Gada.Async.Channels.Bounded;",
 			"with Gada.Async.Selector;",
-			"package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);",
+			"package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);", // may wrap; matched via flattenSpaces below
 			"package Selectors_Of_Integer is new Gada.Async.Selector",
 			"(Element_Type    => Integer,",
 			"Default_Element => 0,",
 			"Bnd             => Channels_Of_Integer);",
 			"Sel_Cases_1 : Selectors_Of_Integer.Case_Array",
 		} {
-			if !strings.Contains(got, want) {
+			if !strings.Contains(flattenSpaces(got), flattenSpaces(want)) {
 				t.Fatalf("missing %q in output:\n%s", want, got)
 			}
 		}
@@ -1142,14 +1154,14 @@ func TestSelectorInstantiationsPrelude(t *testing.T) {
 		for _, want := range []string{
 			"with Gada.Async.Channels.Bounded;",
 			"with Gada.Async.Selector;",
-			"package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);",
+			"package Channels_Of_Integer is new Gada.Async.Channels.Bounded (Element_Type => Integer);", // may wrap; matched via flattenSpaces below
 			"package Selectors_Of_Integer is new Gada.Async.Selector",
 			"(Element_Type    => Integer,",
 			"Default_Element => 0,",
 			"Bnd             => Channels_Of_Integer);",
 			"Sel_Cases_1 : Selectors_Of_Integer.Case_Array",
 		} {
-			if !strings.Contains(got, want) {
+			if !strings.Contains(flattenSpaces(got), flattenSpaces(want)) {
 				t.Fatalf("missing %q in output:\n%s", want, got)
 			}
 		}
@@ -1642,8 +1654,11 @@ func TestTypeNameSliceAndMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("typeName(SliceType{StringType}): unexpected error %v", err)
 	}
-	if got != "Slices_Of_String.Slice" {
-		t.Errorf("typeName(SliceType{StringType}) = %q, want %q", got, "Slices_Of_String.Slice")
+	// []string maps to the Gada.Std.Strings vector subtype, not a
+	// Slices_Of_* instantiation (String is uncontrolled, illegal as a
+	// generic element here).
+	if got != "Gada.Std.Strings.String_Slice" {
+		t.Errorf("typeName(SliceType{StringType}) = %q, want %q", got, "Gada.Std.Strings.String_Slice")
 	}
 	if _, err := e.typeName(nil); err == nil {
 		t.Fatal("expected error for nil type")
@@ -2079,8 +2094,6 @@ func TestEmitSliceLitOfStringFloatBool(t *testing.T) {
 		elem     ir.Type
 		wantInst string
 	}{
-		{"string", &ir.StringType{},
-			"package Slices_Of_String is new Gada.Core.Slices (Element_Type => String);"},
 		{"bool", &ir.BoolType{},
 			"package Slices_Of_Boolean is new Gada.Core.Slices (Element_Type => Boolean);"},
 		{"float64", &ir.Float64Type{},
@@ -2101,10 +2114,35 @@ func TestEmitSliceLitOfStringFloatBool(t *testing.T) {
 			if err := Package(pkg, &buf); err != nil {
 				t.Fatalf("emit: %v", err)
 			}
-			if !strings.Contains(buf.String(), tc.wantInst) {
+			if !strings.Contains(flattenSpaces(buf.String()), flattenSpaces(tc.wantInst)) {
 				t.Fatalf("expected %q in:\n%s", tc.wantInst, buf.String())
 			}
 		})
+	}
+}
+
+// TestEmitSliceLitOfStringRejected pins the Phase 5 rule: a []string
+// composite literal has no Slices_Of_String instantiation (String is
+// uncontrolled) and no vector From_Array — the emit fails loudly, and
+// the type name maps to Gada.Std.Strings.String_Slice.
+func TestEmitSliceLitOfStringRejected(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name:    "f",
+		Results: []*ir.Param{{Type: &ir.SliceType{Elem: &ir.StringType{}}}},
+		Body: []ir.Stmt{&ir.Return{Results: []ir.Expr{
+			&ir.SliceLit{Elem: &ir.StringType{}, Elems: []ir.Expr{
+				&ir.Lit{Kind: ir.LitString, Value: `"a"`},
+			}},
+		}}},
+	})
+	var buf bytes.Buffer
+	err := Package(pkg, &buf)
+	if err == nil {
+		t.Fatalf("expected emit error for []string literal, got output:\n%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "composite literal of []string/[]byte not supported") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -2380,7 +2418,7 @@ func TestMapLitNonEmptyInVarDecl(t *testing.T) {
 	if !strings.Contains(out, "M : Maps_Of_Integer_To_Integer.Map :=") {
 		t.Fatalf("expected map := decl, got:\n%s", out)
 	}
-	if !strings.Contains(out, "From_Pairs ([(K => 1, V => 2)])") {
+	if !strings.Contains(flattenSpaces(out), "From_Pairs ([(K => 1, V => 2)])") {
 		t.Fatalf("expected From_Pairs aggregate, got:\n%s", out)
 	}
 }
@@ -3545,5 +3583,235 @@ func TestTypeMetaErrors(t *testing.T) {
 				t.Fatalf("expected error for %s, got nil", tc.name)
 			}
 		})
+	}
+}
+
+// TestGoNameToAdaMember pins the Go→Ada member-name conversion used for
+// stdlib qualified calls: lower→upper boundaries split ("ToUpper" →
+// "To_Upper"), all-caps initialisms stay whole ("EOF" → "EOF"), and a
+// leading lowercase is capitalised ("atoi" would be "Atoi" if Go
+// exported it — unexported names never reach here).
+func TestGoNameToAdaMember(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"New":         "New_K", // `new` is an Ada reserved word → _K suffix
+		"ToUpper":     "To_Upper",
+		"ReadAll":     "Read_All",
+		"TrimSpace":   "Trim_Space",
+		"EOF":         "EOF",
+		"Atoi":        "Atoi",
+		"Itoa":        "Itoa",
+		"Is":          "Is_K", // `is` is reserved → _K
+		"As":          "As",   // not an Ada reserved word
+		"Unwrap":      "Unwrap",
+		"ParseFloat":  "Parse_Float",
+		"FormatFloat": "Format_Float",
+		"NewReader":   "New_Reader",
+		"ReadLine":    "Read_Line",
+	}
+	for in, want := range cases {
+		if got := goNameToAdaMember(in); got != want {
+			t.Errorf("goNameToAdaMember(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestStdlibImportEmit covers the import-mapping emit paths: a stdlib
+// import produces a sorted `with Gada.Std.*;` clause and qualified
+// calls, an unknown import is a loud error, and "fmt" keeps its Phase 1
+// Gada.Core.IO special case.
+func TestStdlibImportEmit(t *testing.T) {
+	t.Parallel()
+
+	// Happy path: `import "strings"` + statement-position qualified
+	// calls (the IR's Call node is statement-only today, so call results
+	// in expression position ride a later item).
+	pkg := wrapPkg(&ir.Function{
+		Name:   "f",
+		Params: []*ir.Param{{Name: "s", Type: &ir.StringType{}}},
+		Body: []ir.Stmt{
+			&ir.Call{Fun: &ir.Selector{X: idn("strings"), Sel: "ToUpper"},
+				Args: []ir.Expr{idn("s")}},
+			&ir.Call{Fun: &ir.Selector{X: idn("strings"), Sel: "Contains"},
+				Args: []ir.Expr{idn("s"), &ir.Lit{Kind: ir.LitString, Value: `"x"`}}},
+		},
+	})
+	pkg.Files[0].Imports = []string{"strings"}
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("Package: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"with Gada.Std.Strings;",
+		"Gada.Std.Strings.To_Upper (S);",
+		"Gada.Std.Strings.Contains (S, \"x\");",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q, got:\n%s", want, got)
+		}
+	}
+
+	// Unknown import: loud error naming the supported set.
+	pkg3 := wrapPkg(&ir.Function{Name: "f"})
+	pkg3.Files[0].Imports = []string{"crypto/rand"}
+	buf.Reset()
+	if err := Package(pkg3, &buf); err == nil {
+		t.Fatalf("expected error for unsupported import, got:\n%s", buf.String())
+	} else if !strings.Contains(err.Error(), "crypto/rand") {
+		t.Fatalf("error should name the bad import, got: %v", err)
+	}
+
+	// fmt keeps the Gada.Core.IO path (no Gada.Std.Fmt yet).
+	pkg4 := wrapPkg(&ir.Function{Name: "f", Body: []ir.Stmt{
+		&ir.Call{Fun: &ir.Selector{X: idn("fmt"), Sel: "Println"},
+			Args: []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"hi"`}}},
+	}})
+	pkg4.Files[0].Imports = []string{"fmt"}
+	buf.Reset()
+	if err := Package(pkg4, &buf); err != nil {
+		t.Fatalf("Package fmt: %v", err)
+	}
+	if !strings.Contains(buf.String(), "with Gada.Core.IO;") || strings.Contains(buf.String(), "Gada.Std.Fmt") {
+		t.Fatalf("fmt should map to Gada.Core.IO, got:\n%s", buf.String())
+	}
+}
+
+// TestWrapBreakPoint pins the 80-column wrapper's literal-awareness:
+// breaks must land on spaces outside string literals (with "" escapes)
+// and character literals, never inside them.
+func TestWrapBreakPoint(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		line    string
+		wantBrk int // index of last legal break space within col 80; -1 = none
+	}{
+		{"short line", 5},
+		{strings.Repeat("a", 70) + " b c", 72},
+		{`Print ("cannot read input");` + strings.Repeat(" x", 60), 80},
+		// Spaces inside the string literal are not breakable; the
+		// only legal break within 80 cols is the one after `S`.
+		{`S := "a b c d e f g h i j k l m n o p q r s t u v w x y z 0 1 2 3 4";`, 4},
+		// The space inside the char literal ' ' (index 6) is skipped;
+		// the last legal break is the space after the semicolon.
+		{`C := ' '; ` + strings.Repeat("y", 90), 9},
+	}
+	for _, tc := range cases {
+		if got := wrapBreakPoint(tc.line); got != tc.wantBrk {
+			t.Errorf("wrapBreakPoint(%q) = %d, want %d", tc.line, got, tc.wantBrk)
+		}
+	}
+	// No space outside a string literal in the first 80 cols -> no
+	// legal break (never break inside the literal).
+	line := `F("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm");`
+	if got := wrapBreakPoint(line); got != -1 {
+		t.Errorf("wrapBreakPoint inside string = %d, want -1", got)
+	}
+	// A comment line must never break: the continuation would be
+	// outside the comment and invalid Ada.
+	comment := "      --  a very long comment that would overflow the eighty column limit easily"
+	if got := wrapBreakPoint(comment); got != -1 {
+		t.Errorf("wrapBreakPoint on comment = %d, want -1", got)
+	}
+}
+
+// TestWave4CryptoEmit covers the Phase 8 wave 4 emit paths: hmac.New's
+// enum-tag arg and Hmac result type, the (value, error) out-call form
+// for aes.NewCipher / cipher.NewGCM / gcm.Open, method calls on the
+// concrete crypto values lowering to prefix calls, the Gada.Std.Errors
+// with-clause, and a full-slice `sum[:]` on a []byte vector.
+func TestWave4CryptoEmit(t *testing.T) {
+	t.Parallel()
+	pkg := wrapPkg(&ir.Function{
+		Name: "main",
+		Body: []ir.Stmt{
+			&ir.Assign{Define: true,
+				LHS: []ir.Expr{idn("sum")},
+				RHS: []ir.Expr{&ir.Call{
+					Fun:         &ir.Selector{X: idn("sha256"), Sel: "Sum256"},
+					Args:        []ir.Expr{idn("msg")},
+					ResultTypes: []ir.Type{&ir.SliceType{Elem: &ir.ByteType{}}},
+				}}},
+			&ir.Assign{Define: true,
+				LHS: []ir.Expr{idn("mac")},
+				RHS: []ir.Expr{&ir.Call{
+					Fun: &ir.Selector{X: idn("hmac"), Sel: "New"},
+					Args: []ir.Expr{
+						&ir.Selector{X: idn("hmac"), Sel: "Sha256"},
+						idn("key"),
+					},
+					ResultTypes: []ir.Type{&ir.NamedType{Name: "Hmac"}},
+				}}},
+			&ir.Assign{Define: true,
+				LHS: []ir.Expr{idn("block"), idn("err")},
+				RHS: []ir.Expr{&ir.Call{
+					Fun:  &ir.Selector{X: idn("aes"), Sel: "NewCipher"},
+					Args: []ir.Expr{idn("key")},
+					ResultTypes: []ir.Type{
+						&ir.NamedType{Name: "Block"}, &ir.ErrorType{},
+					},
+				}}},
+			&ir.Assign{Define: true,
+				LHS: []ir.Expr{idn("gcm"), idn("err2")},
+				RHS: []ir.Expr{&ir.Call{
+					Fun:  &ir.Selector{X: idn("cipher"), Sel: "NewGCM"},
+					Args: []ir.Expr{idn("block")},
+					ResultTypes: []ir.Type{
+						&ir.NamedType{Name: "AEAD"}, &ir.ErrorType{},
+					},
+				}}},
+			&ir.Assign{Define: true,
+				LHS: []ir.Expr{idn("opened"), idn("err3")},
+				RHS: []ir.Expr{&ir.Call{
+					Fun: &ir.Selector{X: idn("gcm"), Sel: "Open"},
+					Args: []ir.Expr{idn("dst"), idn("nonce"),
+						idn("sealed"), idn("ad")},
+					ResultTypes: []ir.Type{
+						&ir.SliceType{Elem: &ir.ByteType{}}, &ir.ErrorType{},
+					},
+				}}},
+			&ir.Call{Fun: &ir.Selector{X: idn("mac"), Sel: "Write"},
+				Args: []ir.Expr{idn("msg")}},
+			&ir.Assign{
+				LHS: []ir.Expr{idn("sig")},
+				RHS: []ir.Expr{&ir.Call{
+					Fun:  &ir.Selector{X: idn("mac"), Sel: "Sum"},
+					Args: []ir.Expr{idn("empty")},
+					ResultTypes: []ir.Type{
+						&ir.SliceType{Elem: &ir.ByteType{}},
+					},
+				}}},
+			&ir.Call{Fun: &ir.Selector{X: idn("hex"), Sel: "EncodeToString"},
+				Args: []ir.Expr{&ir.SliceExpr{X: idn("sum")}},
+			},
+		},
+	})
+	pkg.Files[0].Imports = []string{
+		"crypto/aes", "crypto/cipher", "crypto/hmac", "crypto/sha256",
+		"encoding/hex",
+	}
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("Package: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"with Gada.Std.Errors;",
+		"with Gada.Std.Crypto.Hmac;",
+		"Sum : Gada.Std.Bytes.Byte_Slice := Gada.Std.Crypto.Sha256.Sum256 (Msg);",
+		"Mac : Gada.Std.Crypto.Hmac.Hmac := Gada.Std.Crypto.Hmac.New_K",
+		"(Gada.Std.Crypto.Hmac.Sha256, Key);",
+		"Block : Gada.Std.Crypto.Aes.Block;",
+		"Gcm : Gada.Std.Crypto.Cipher.GCM;",
+		"Gada.Std.Crypto.Aes.New_Cipher (Key, Block, Err);",
+		"Gada.Std.Crypto.Cipher.New_GCM (Block, Gcm, Err2);",
+		"Gada.Std.Crypto.Cipher.Open (Gcm, Nonce, Sealed, Ad, Opened, Err3);", // Go dst arg dropped
+		"Gada.Std.Crypto.Hmac.Write (Mac, Msg);",
+		"Sig := Gada.Std.Crypto.Hmac.Sum (Mac, Empty);",
+		"Gada.Std.Encoding.Hex.Encode_To_String (Sum)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("output missing %q, got:\n%s", want, got)
+		}
 	}
 }

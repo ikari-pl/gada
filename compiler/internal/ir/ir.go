@@ -148,15 +148,21 @@ type Return struct {
 func (*Return) irStmt()          {}
 func (*Return) NodeKind() string { return "Return" }
 
-// Call is a function or method invocation used in statement
-// position. Call-as-expression is intentionally deferred until a
-// later phase; the corpus does not need it.
+// Call is a function or method invocation. Statement position is the
+// original use; Phase 5 adds expression position for stdlib package
+// calls (`words := strings.Fields(s)`), where Fun is a Selector headed
+// by a stdlib import name. ResultTypes carries the call's result types
+// (resolved from *types.Info at translate time) so the emitter can
+// declare `:=` targets — one entry for single-value calls, two for the
+// `(T, error)` out-call shape (`data, err := os.ReadFile(p)`).
 type Call struct {
-	Fun  Expr
-	Args []Expr
+	Fun         Expr
+	Args        []Expr
+	ResultTypes []Type
 }
 
 func (*Call) irStmt()          {}
+func (*Call) irExpr()          {}
 func (*Call) NodeKind() string { return "Call" }
 
 // ExprStmt wraps a non-call expression used in statement position.
@@ -191,6 +197,7 @@ const (
 	LitString LitKind = "string"
 	LitBool   LitKind = "bool"
 	LitFloat  LitKind = "float64"
+	LitNil    LitKind = "nil"
 )
 
 // Lit is a literal. Value is the canonical Go source form so the
@@ -203,6 +210,19 @@ type Lit struct {
 
 func (*Lit) irExpr()          {}
 func (*Lit) NodeKind() string { return "Lit" }
+
+// ZeroVal is the zero value of a declared type, produced by a
+// no-initializer `var x T` (DeclStmt). Type is resolved from
+// types.Info at translate time; the emitter declares the variable
+// bare (protected types and records default-initialise).
+type ZeroVal struct {
+	Type Type
+}
+
+func (*ZeroVal) irExpr() {}
+
+// NodeKind returns "ZeroVal".
+func (*ZeroVal) NodeKind() string { return "ZeroVal" }
 
 // BinOp is a binary operator expression. Op is the Go-source operator
 // string (e.g. "+", "<", "&&"); the emitter translates to the Ada
@@ -266,6 +286,18 @@ type MakeChan struct {
 
 func (*MakeChan) irExpr()          {}
 func (*MakeChan) NodeKind() string { return "MakeChan" }
+
+// MakeSlice is Go `make ([]T, N)` and `make ([]T)` (the latter has a
+// nil Len). Phase 7 adds it for `make ([]byte, N)` read buffers.
+type MakeSlice struct {
+	Elem Type
+	Len  Expr // nil for `make ([]T)` — zero length
+}
+
+func (*MakeSlice) irExpr() {}
+
+// NodeKind returns the JSON envelope tag for MakeSlice.
+func (*MakeSlice) NodeKind() string { return "MakeSlice" }
 
 // IndexExpr is `X[Index]`. The same node shape covers slice indexing
 // (`s[i]`) and map lookup (`m[k]`); the emitter resolves the
@@ -599,6 +631,27 @@ type Float64Type struct{}
 func (*Float64Type) irType()          {}
 func (*Float64Type) NodeKind() string { return "Float64Type" }
 
+// ByteType is Go `byte`/`uint8`. As a slice element (`[]byte`) it maps
+// to Character inside Gada.Std.Bytes.Byte_Slice (a vector), not to a
+// Slices_Of_* instantiation — Gada.Core.Slices' element type must be
+// definite and uncontrolled, and String/byte slices use the
+// Gada.Std.* vector types instead.
+type ByteType struct{}
+
+func (*ByteType) irType() {}
+
+// NodeKind returns the JSON envelope tag for ByteType.
+func (*ByteType) NodeKind() string { return "ByteType" }
+
+// ErrorType is Go's predeclared `error` interface. Translates to
+// Gada.Std.Errors.Error_Access (nil error = null access).
+type ErrorType struct{}
+
+func (*ErrorType) irType() {}
+
+// NodeKind returns the JSON envelope tag for ErrorType.
+func (*ErrorType) NodeKind() string { return "ErrorType" }
+
 // NamedType is a reference to a defined type by name — a struct or
 // interface declared elsewhere in the file (`type Point struct {…}`,
 // `type Stringer interface {…}`). It appears wherever a Go type is a
@@ -652,6 +705,16 @@ type ChanType struct {
 
 func (*ChanType) irType()          {}
 func (*ChanType) NodeKind() string { return "ChanType" }
+
+// PointerType is Go `*T` (Phase 7: used for stdlib pointer types like
+// *http.Request, which map to the port's access type). Elem is the
+// pointee type.
+type PointerType struct {
+	Elem Type
+}
+
+func (*PointerType) irType()          {}
+func (*PointerType) NodeKind() string { return "PointerType" }
 
 // StructField is one named field of a StructType, in source order. A
 // Go field group like `X, Y int` expands to one StructField per name.
@@ -865,6 +928,12 @@ func unmarshalExpr(raw json.RawMessage) (Expr, error) {
 			return nil, err
 		}
 		return &n, nil
+	case "MakeSlice":
+		var n MakeSlice
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
 	case "ChanRecv":
 		var n ChanRecv
 		if err := json.Unmarshal(raw, &n); err != nil {
@@ -913,6 +982,14 @@ func unmarshalExpr(raw json.RawMessage) (Expr, error) {
 			return nil, err
 		}
 		return &n, nil
+	case "Call":
+		// Phase 5: stdlib package calls also appear in expression
+		// position; the type shares the stmt unmarshal.
+		var n Call
+		if err := json.Unmarshal(raw, &n); err != nil {
+			return nil, err
+		}
+		return &n, nil
 	default:
 		return nil, fmt.Errorf("ir: unknown expr kind %q", env.Kind)
 	}
@@ -934,6 +1011,10 @@ func unmarshalType(raw json.RawMessage) (Type, error) {
 		return &BoolType{}, nil
 	case "Float64Type":
 		return &Float64Type{}, nil
+	case "ByteType":
+		return &ByteType{}, nil
+	case "ErrorType":
+		return &ErrorType{}, nil
 	case "NamedType":
 		var n NamedType
 		if err := json.Unmarshal(raw, &n); err != nil {
@@ -946,6 +1027,12 @@ func unmarshalType(raw json.RawMessage) (Type, error) {
 			return nil, err
 		}
 		return &n, nil
+	case "PointerType":
+		t := &PointerType{}
+		if err := t.UnmarshalJSON(raw); err != nil {
+			return nil, err
+		}
+		return t, nil
 	case "ChanType":
 		var n ChanType
 		if err := json.Unmarshal(raw, &n); err != nil {
@@ -1314,16 +1401,18 @@ func (s *Return) UnmarshalJSON(b []byte) error {
 
 func (s *Call) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Kind string `json:"kind"`
-		Fun  Expr   `json:"fun"`
-		Args []Expr `json:"args"`
-	}{"Call", s.Fun, s.Args})
+		Kind        string `json:"kind"`
+		Fun         Expr   `json:"fun"`
+		Args        []Expr `json:"args"`
+		ResultTypes []Type `json:"resultTypes,omitempty"`
+	}{"Call", s.Fun, s.Args, s.ResultTypes})
 }
 
 func (s *Call) UnmarshalJSON(b []byte) error {
 	var aux struct {
-		Fun  json.RawMessage   `json:"fun"`
-		Args []json.RawMessage `json:"args"`
+		Fun         json.RawMessage   `json:"fun"`
+		Args        []json.RawMessage `json:"args"`
+		ResultTypes []json.RawMessage `json:"resultTypes"`
 	}
 	if err := json.Unmarshal(b, &aux); err != nil {
 		return err
@@ -1338,6 +1427,13 @@ func (s *Call) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	s.Args = args
+	for _, rt := range aux.ResultTypes {
+		t, err := unmarshalType(rt)
+		if err != nil {
+			return err
+		}
+		s.ResultTypes = append(s.ResultTypes, t)
+	}
 	return nil
 }
 
@@ -1508,6 +1604,16 @@ func (*Float64Type) MarshalJSON() ([]byte, error) {
 	return []byte(`{"kind":"Float64Type"}`), nil
 }
 
+// MarshalJSON emits the payload-free JSON envelope for ByteType.
+func (*ByteType) MarshalJSON() ([]byte, error) {
+	return []byte(`{"kind":"ByteType"}`), nil
+}
+
+// MarshalJSON emits the payload-free JSON envelope for ErrorType.
+func (*ErrorType) MarshalJSON() ([]byte, error) {
+	return []byte(`{"kind":"ErrorType"}`), nil
+}
+
 func (t *NamedType) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Kind string `json:"kind"`
@@ -1545,6 +1651,31 @@ func (t *SliceType) UnmarshalJSON(b []byte) error {
 	}
 	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
 		return fmt.Errorf("ir: SliceType missing elem")
+	}
+	elem, err := unmarshalType(aux.Elem)
+	if err != nil {
+		return err
+	}
+	t.Elem = elem
+	return nil
+}
+
+func (t *PointerType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Elem Type   `json:"elem"`
+	}{"PointerType", t.Elem})
+}
+
+func (t *PointerType) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Elem json.RawMessage `json:"elem"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
+		return fmt.Errorf("ir: PointerType missing elem")
 	}
 	elem, err := unmarshalType(aux.Elem)
 	if err != nil {
@@ -1735,6 +1866,42 @@ func (e *MakeChan) MarshalJSON() ([]byte, error) {
 		Elem     Type   `json:"elem"`
 		Capacity Expr   `json:"capacity,omitempty"`
 	}{"MakeChan", e.Elem, e.Capacity})
+}
+
+// MarshalJSON emits the tagged envelope for MakeSlice.
+func (e *MakeSlice) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		Elem Type   `json:"elem"`
+		Len  Expr   `json:"len,omitempty"`
+	}{"MakeSlice", e.Elem, e.Len})
+}
+
+// UnmarshalJSON parses the tagged envelope for MakeSlice.
+func (e *MakeSlice) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Elem json.RawMessage `json:"elem"`
+		Len  json.RawMessage `json:"len,omitempty"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	if len(aux.Elem) == 0 || string(aux.Elem) == "null" {
+		return fmt.Errorf("ir: MakeSlice missing elem")
+	}
+	elem, err := unmarshalType(aux.Elem)
+	if err != nil {
+		return err
+	}
+	e.Elem = elem
+	if len(aux.Len) != 0 && string(aux.Len) != "null" {
+		ln, err := unmarshalExpr(aux.Len)
+		if err != nil {
+			return err
+		}
+		e.Len = ln
+	}
+	return nil
 }
 
 func (e *MakeChan) UnmarshalJSON(b []byte) error {

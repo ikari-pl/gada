@@ -97,7 +97,7 @@ reason = "Trampoline C-boundary exception arm — see runtime/COVERAGE.md"
 # (gada-async-scheduler).
 [[exclude]]
 file = "runtime/src/gada-async-scheduler.adb"
-lines = [592, 593, 594, 595, 596, 597, 598]
+lines = [599, 600, 601, 602, 603, 604, 605]
 reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 
 # Spawn's `Make` failure leak guard. Same fault-injection prerequisite
@@ -109,7 +109,7 @@ reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 # (gada-async-scheduler).
 [[exclude]]
 file = "runtime/src/gada-async-scheduler.adb"
-lines = [643, 644, 645]
+lines = [650, 651, 652]
 reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"
 
 # Park_Sender's race-recheck arm: between the caller's
@@ -128,7 +128,7 @@ reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-bounded.adb"
-lines = [436, 437]
+lines = [448, 449]
 reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
 
 # Park_Receiver's race-recheck arms (Got=True / Closed=True). Mirror of
@@ -141,7 +141,7 @@ reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-bounded.adb"
-lines = [502, 503, 504, 507, 508, 509]
+lines = [527, 528, 529, 532, 533, 534]
 reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
 
 # Channels.Unbounded mirror of the Channels.Bounded Park_Receiver
@@ -153,7 +153,7 @@ reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE
 # Rationale: runtime/COVERAGE.md (gada-async-channels-unbounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-unbounded.adb"
-lines = [405, 406, 407, 410, 411, 412]
+lines = [416, 417, 418, 421, 422, 423]
 reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
 
 # Selector defensive / unreachable lines (line numbers adjusted in
@@ -193,6 +193,48 @@ file = "runtime/src/gada-async-selector.adb"
 lines = [104, 109, 165, 166, 167, 322]
 reason = "Selector defensive/unreachable arms — see runtime/COVERAGE.md"
 
+# --- Phase 5 stdlib wave 1 (Gada.Std.*) ------------------------------------
+# Rationale for all of these: runtime/COVERAGE.md (gada-std-* sections).
+# Two categories:
+#   (a) gcov/lcov 2.x misattribution artifacts — the line IS executed (the
+#       suite test that can only pass through it is green in the same CI
+#       run) but lcov reports hit-count 0: fall-through `end X;` terminators
+#       of always-returning functions, `declare`/`end;` block markers, and
+#       the bodies of dynamically-bounded pad loops in Fmt_F. Same category
+#       as the approved gada-async-race.adb:80 exclusion.
+#   (b) genuinely unreachable/defensive code: the `return 17` fallback of
+#       Shortest_K (17 significant digits always round-trip a binary64 —
+#       a mathematical fact, not a test gap), Parse_Float's
+#       Constraint_Error arm (this GNAT returns ±Inf on overflow instead of
+#       raising; the post-check below it is covered by the 1e999 tests), and
+#       Parse_Spec's `when others => null;` (the while-guard already
+#       restricts to the five flag characters).
+
+[[exclude]]
+file = "runtime/src/gada-std-strconv.adb"
+lines = [405, 406, 415, 416, 417, 418, 431, 432, 451, 452, 522, 694, 695, 697, 740, 745, 751, 753, 755, 756, 845, 868, 890, 902]
+reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-strings.adb"
+lines = [142, 249, 377, 386, 395, 522, 544]
+reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-fmt.adb"
+lines = [54, 55, 100, 143, 253, 314, 390, 400, 440, 509]
+reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-bufio.adb"
+lines = [51, 106, 179, 295]
+reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-io.adb"
+lines = [44, 57, 81]
+reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
+
 # `end Image;` — the fall-through terminator of Gada.Async.Race.Image.
 # Image is a function that always `return`s (single returned conditional
 # expression covering both the no-race and detected arms, both exercised
@@ -212,3 +254,211 @@ reason = "Selector defensive/unreachable arms — see runtime/COVERAGE.md"
 file = "runtime/src/gada-async-race.adb"
 lines = [80]
 reason = "Race.Image fall-through terminator — see runtime/COVERAGE.md"
+
+# lcov 2.4 misattributes the implicit no-return basic block at the
+# bottom of begin/end subprogram bodies to the `end X;` terminator
+# line even when every contained line is hit (same class as
+# gada-async-race.adb:80 and the Phase 5 stdlib terminators).
+# Rationale: runtime/COVERAGE.md (gada-std-time).
+[[exclude]]
+file = "runtime/src/gada-std-time.adb"
+lines = [69, 231, 242, 455]
+reason = "end Append_Frac/Dig2/Image_Date_Time/New_Timer terminators — see runtime/COVERAGE.md"
+
+# Read_File's stream-read exception arm (62-68): the directory case is
+# now rejected up front by the Ada.Directories.Kind guard (covered by
+# Test_Read_File_Dir), and Device_Error / End_Error / Data_Error on a
+# regular-file read are not deterministically triggerable in CI.
+# 70-71, 149, 168: `end;`/`end Read_File;`/`end Open;`/`end Create;`
+# block terminators (lcov 2.4 no-return-block misattribution, same class
+# as gada-std-time.adb). 83-84: the Args argv loop body only runs when
+# the runner is invoked with CLI args; the CI full-suite coverage run
+# passes no filter (Argument_Count = 0). Rationale: runtime/COVERAGE.md.
+[[exclude]]
+file = "runtime/src/gada-std-os.adb"
+lines = [62, 63, 64, 65, 66, 67, 68, 70, 71, 83, 84, 149, 168]
+reason = "untriggerable read-error arm + lcov terminators + argv loop — see runtime/COVERAGE.md"
+
+# `end Go_Max_Procs;` terminator — lcov 2.4 no-return-block
+# misattribution (same class as gada-std-time.adb). Rationale:
+# runtime/COVERAGE.md (gada-std-runtime).
+[[exclude]]
+file = "runtime/src/gada-std-runtime.adb"
+lines = [31]
+reason = "end Go_Max_Procs terminator — see runtime/COVERAGE.md"
+
+# Phase 7 wave 3 (net): Parse_IPv4's `Part < 4 and then Dot = 0` arm is
+# unreachable — the Count(S, ".") = 3 guard guarantees a dot remains
+# in the suffix for parts 1..3, so Index never returns 0 there.
+# Rationale: runtime/COVERAGE.md (gada-std-net).
+[[exclude]]
+file = "runtime/src/gada-std-net.adb"
+lines = [82]
+reason = "Parse_IPv4 Dot=0 arm unreachable behind Count=3 guard — see runtime/COVERAGE.md"
+
+# gnatcoverage/lcov 2.4 no-return-block misattribution on declare-block
+# and subprogram terminator lines (same class as gada-std-time.adb).
+# Rationale: runtime/COVERAGE.md (gada-std-net, gada-std-bytes).
+[[exclude]]
+file = "runtime/src/gada-std-net.adb"
+lines = [92, 96, 141, 176, 230, 279, 280, 452, 453, 484, 820, 982, 1014]
+reason = "end-of-block/subprogram terminators — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-bytes.adb"
+lines = [38, 132, 176]
+reason = "end To_String / end loop terminators — see runtime/COVERAGE.md"
+
+# Resolve's "resolved but no IPv4 address" arm (v6-only names): v1
+# sockets are IPv4-only, and on Linux CI every resolvable name used by
+# the suite (localhost) has a v4 entry, so the post-loop fall-through
+# is defensive only. The Inet6 arm of To_IP is unreachable in v1
+# because every socket is created AF_INET, so no Inet6 Sock_Addr is
+# ever produced; Addr_Image's non-inet guard is the same defensive
+# class. Rationale: runtime/COVERAGE.md (gada-std-net).
+[[exclude]]
+file = "runtime/src/gada-std-net.adb"
+lines = [455, 456, 478, 479, 480, 481, 507]
+reason = "Resolve no-v4 arm + To_IP Inet6 arm + Addr_Image guard: v1 is IPv4-only — see runtime/COVERAGE.md"
+
+# Nested `when others => null` inside the Socket_Error cleanup handlers
+# of Dial/Listen/Listen_Packet: only reachable if Close_Socket itself
+# raises, which needs fault injection — CI cannot trigger it
+# deterministically. Rationale: runtime/COVERAGE.md (gada-std-net).
+[[exclude]]
+file = "runtime/src/gada-std-net.adb"
+lines = [704, 814, 976]
+reason = "Close_Socket failure arm in Socket_Error handlers — see runtime/COVERAGE.md"
+
+# Phase 7 wave 3 (json, item 2a). Unreachable-by-construction arms:
+# Unescape's `Code > 16#FFFF#` reject (145-146) — four hex digits cap
+# Code at 0xFFFF; Parse_Scalar's Constraint_Error arms on
+# Long_Float'Value (413-414, 425-426) — a syntactically valid JSON
+# number always parses as a float64; Marshal's NaN arm (485-487) —
+# no portable way to produce a non-finite Long_Float literal.
+# Rationale: runtime/COVERAGE.md (gada-std-json).
+[[exclude]]
+file = "runtime/src/gada-std-json.adb"
+lines = [145, 146, 392, 393, 404, 405, 606, 607, 608]
+reason = "unreachable-by-construction / non-portable arms — see runtime/COVERAGE.md"
+
+# lcov 2.4 no-return-block misattribution on declare/end-case/
+# subprogram-header lines in gada-std-json.adb (same class as
+# gada-std-net.adb). Rationale: runtime/COVERAGE.md (gada-std-json).
+[[exclude]]
+file = "runtime/src/gada-std-json.adb"
+lines = [153, 220, 228, 264, 310, 411, 477, 638, 665, 689, 711]
+reason = "lcov block-terminator artifacts — see runtime/COVERAGE.md"
+
+# Phase 7 wave 3 (net/http). 122/181/229/323/446/558-559: `end X;`/block
+# terminators; 126: Read_Request subprogram-header line; 160/210/510:
+# `declare` markers — all lcov 2.4 misattribution (same class as
+# gada-std-time.adb / gada-std-json.adb). 147-148 and 245-247: the
+# N = 0-without-error arms — Gada.Std.Net.Conn.Read always sets
+# Err = EOF on orderly shutdown, so N = 0 implies E /= No_Error;
+# defensive, unreachable. 166-167: First_Lf = 0 arm — unreachable
+# because Hd > 0 already guarantees a CRLF inside Head.
+# 391-392: the accept loop's top-of-loop Stopping arm — only fires when
+# Stop lands while the loop is inside Serve_One (the suite always stops
+# while blocked in Accept_K, which takes the post-accept arm at 399-402);
+# racy, not deterministically triggerable. 396-397: the Accept_K error
+# arm — Stop wakes a blocked accept via a self-connect that succeeds, and
+# genuine accept errors (EMFILE/ENFILE) are not CI-triggerable.
+# 495-497: client write-error arm of Do_Request — needs EPIPE/RST;
+# tests only close after the server read the full request.
+# Rationale: runtime/COVERAGE.md (gada-std-http).
+[[exclude]]
+file = "runtime/src/gada-std-http.adb"
+lines = [122, 126, 147, 148, 160, 166, 167, 181, 210, 229, 245, 246, 247, 323, 391, 392, 396, 397, 446, 495, 496, 497, 510, 558, 559]
+reason = "lcov terminator artifacts + unreachable defensive arms + non-CI-triggerable socket error arms — see runtime/COVERAGE.md"
+
+# lcov 2.4 no-return-block misattribution: Make_Table returns via
+# `return Tab;` on its own line, so the `end Make_Table;` terminator
+# carries hit-count 0 even though every contained line is hit
+# (Std_Hash_Suite exercises both polynomial-bit arms). Same class as
+# gada-std-time.adb / gada-std-http.adb terminators.
+# Rationale: runtime/COVERAGE.md (gada-std-hash-*).
+[[exclude]]
+file = "runtime/src/gada-std-hash-crc32.adb"
+lines = [25]
+reason = "end Make_Table terminator — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-hash-crc64.adb"
+lines = [25]
+reason = "end Make_Table terminator — see runtime/COVERAGE.md"
+
+# lcov 2.4 no-return-block misattribution: Transform is a procedure with
+# no return statement, so its `end Transform;` terminator carries
+# hit-count 0 even though every contained line is hit (the suite hashes
+# multi-block messages, so the loop bodies and state adds all execute).
+# Same class as the end Make_Table terminators above.
+# Rationale: runtime/COVERAGE.md (gada-std-crypto-*).
+[[exclude]]
+file = "runtime/src/gada-std-crypto-sha256.adb"
+lines = [66]
+reason = "end Transform terminator — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-crypto-sha512.adb"
+lines = [98]
+reason = "end Transform terminator — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-crypto-sha1.adb"
+lines = [49]
+reason = "end Transform terminator — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-crypto-md5.adb"
+lines = [72]
+reason = "end Transform terminator — see runtime/COVERAGE.md"
+
+# lcov 2.4 no-return-block misattribution: each Sum case arm returns
+# via `return ...;` on its own line, so the arm's `end;` terminator
+# carries hit-count 0 even though every contained line is hit (the
+# suite MACs all four algorithms over all 14 RFC vectors). Same class
+# as the end Transform / end Make_Table terminators above.
+# Rationale: runtime/COVERAGE.md (gada-std-crypto-hmac.adb).
+[[exclude]]
+file = "runtime/src/gada-std-crypto-hmac.adb"
+lines = [98, 110, 122, 134]
+reason = "end of Sum case-arm blocks — see runtime/COVERAGE.md"
+
+# lcov 2.4 terminator/continuation artifacts: the end X; lines of
+# functions that return on their own line, and the continuation line
+# of XOR_Key_Stream's multi-line append (the statement executes — the
+# CTR KAT passes — but lcov leaves hit-count 0 on the continuation).
+# Rationale: runtime/COVERAGE.md (gada-std-crypto-aes/-cipher).
+[[exclude]]
+file = "runtime/src/gada-std-crypto-aes.adb"
+lines = [150, 161, 205, 216, 295]
+reason = "lcov terminator artifacts — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-crypto-cipher.adb"
+lines = [24, 165, 203, 212, 235, 253]
+reason = "lcov terminator/continuation artifacts — see runtime/COVERAGE.md"
+
+# New_GCM's out-procedure overload wraps the infallible function form for
+# the Go (value, error) out-call shape; its `when others` handler can only
+# fire if New_GCM itself raises, which no valid Aes.Block triggers (the
+# AES key expansion already ran in New_Cipher). Defensive only.
+# Rationale: runtime/COVERAGE.md (gada-std-crypto-cipher, Phase 8 item 7).
+[[exclude]]
+file = "runtime/src/gada-std-crypto-cipher.adb"
+lines = [270, 271, 273, 274]
+reason = "New_GCM out-proc defensive when-others — see runtime/COVERAGE.md"
+
+
+# lcov 2.4 terminator artifacts (functions returning on their own
+# line). Rationale: runtime/COVERAGE.md (gada-std-encoding-*).
+[[exclude]]
+file = "runtime/src/gada-std-encoding-base64.adb"
+lines = [72]
+reason = "end Encode terminator — see runtime/COVERAGE.md"
+
+[[exclude]]
+file = "runtime/src/gada-std-encoding-hex.adb"
+lines = [34]
+reason = "end Encode_To_String terminator — see runtime/COVERAGE.md"

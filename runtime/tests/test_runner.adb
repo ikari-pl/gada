@@ -28,6 +28,8 @@ with AUnit.Reporter.Text;
 with AUnit.Test_Suites; use AUnit.Test_Suites;
 
 with IO_Suite;
+with Bufio_Suite;
+with Fmt_Suite;
 with Memory_Suite;
 with Slices_Suite;
 with Defer_Suite;
@@ -47,6 +49,26 @@ with Reflect_Types_Suite;
 with Reflect_Suite;
 with Reflect_Values_Suite;
 with Reflect_Interfaces_Suite;
+with Runtime_Suite;
+with Sync_Suite;
+with Time_Suite;
+with Errors_Suite;
+with Strings_Suite;
+with Strconv_Suite;
+with Bytes_Suite;
+with Std_IO_Suite;
+with Bufio_Suite;
+with Fmt_Suite;
+with OS_Suite;
+with Net_Suite;
+with Json_Suite;
+with Http_Suite;
+with Std_Hash_Suite;
+with Std_Crypto_Hash_Suite;
+with Std_Crypto_Hmac_Suite;
+with Std_Crypto_Aes_Suite;
+with Std_Encoding_Suite;
+with Std_Encoding_Text_Suite;
 
 procedure Test_Runner is
 
@@ -81,6 +103,26 @@ procedure Test_Runner is
       or else Pkg = "reflect"
       or else Pkg = "reflect.values"
       or else Pkg = "reflect.interfaces"
+      or else Pkg = "stdlib.errors"
+      or else Pkg = "stdlib.strings"
+      or else Pkg = "stdlib.strconv"
+      or else Pkg = "stdlib.bytes"
+      or else Pkg = "stdlib.io"
+      or else Pkg = "stdlib.bufio"
+      or else Pkg = "stdlib.fmt"
+      or else Pkg = "stdlib.os"
+      or else Pkg = "stdlib.runtime"
+      or else Pkg = "stdlib.sync"
+      or else Pkg = "stdlib.time"
+      or else Pkg = "stdlib.net"
+      or else Pkg = "stdlib.encoding.json"
+      or else Pkg = "stdlib.net.http"
+      or else Pkg = "stdlib.hash"
+      or else Pkg = "stdlib.crypto.hash"
+      or else Pkg = "stdlib.crypto.hmac"
+      or else Pkg = "stdlib.crypto.aes"
+      or else Pkg = "stdlib.encoding"
+      or else Pkg = "stdlib.encoding.text"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -159,6 +201,66 @@ procedure Test_Runner is
          Add_Test
            (Result,
             new Reflect_Interfaces_Suite.Reflect_Interfaces_Test);
+      end if;
+      if Should_Register ("stdlib.errors") then
+         Add_Test (Result, new Errors_Suite.Errors_Test);
+      end if;
+      if Should_Register ("stdlib.strings") then
+         Add_Test (Result, new Strings_Suite.Strings_Test);
+      end if;
+      if Should_Register ("stdlib.strconv") then
+         Add_Test (Result, new Strconv_Suite.Strconv_Test);
+      end if;
+      if Should_Register ("stdlib.bytes") then
+         Add_Test (Result, new Bytes_Suite.Bytes_Test);
+      end if;
+      if Should_Register ("stdlib.io") then
+         Add_Test (Result, new Std_IO_Suite.Std_IO_Test);
+      end if;
+      if Should_Register ("stdlib.bufio") then
+         Add_Test (Result, new Bufio_Suite.Bufio_Test);
+      end if;
+      if Should_Register ("stdlib.fmt") then
+         Add_Test (Result, new Fmt_Suite.Fmt_Test);
+      end if;
+      if Should_Register ("stdlib.os") then
+         Add_Test (Result, new OS_Suite.OS_Test);
+      end if;
+      if Should_Register ("stdlib.runtime") then
+         Add_Test (Result, new Runtime_Suite.Runtime_Test);
+      end if;
+      if Should_Register ("stdlib.sync") then
+         Add_Test (Result, new Sync_Suite.Sync_Test);
+      end if;
+      if Should_Register ("stdlib.time") then
+         Add_Test (Result, new Time_Suite.Time_Test);
+      end if;
+      if Should_Register ("stdlib.net") then
+         Add_Test (Result, new Net_Suite.Net_Test);
+      end if;
+      if Should_Register ("stdlib.encoding.json") then
+         Add_Test (Result, new Json_Suite.Json_Test);
+      end if;
+      if Should_Register ("stdlib.net.http") then
+         Add_Test (Result, new Http_Suite.Http_Test);
+      end if;
+      if Should_Register ("stdlib.hash") then
+         Add_Test (Result, new Std_Hash_Suite.Std_Hash_Test);
+      end if;
+      if Should_Register ("stdlib.crypto.hash") then
+         Add_Test (Result, new Std_Crypto_Hash_Suite.Std_Crypto_Hash_Test);
+      end if;
+      if Should_Register ("stdlib.crypto.hmac") then
+         Add_Test (Result, new Std_Crypto_Hmac_Suite.Std_Crypto_Hmac_Test);
+      end if;
+      if Should_Register ("stdlib.crypto.aes") then
+         Add_Test (Result, new Std_Crypto_Aes_Suite.Std_Crypto_Aes_Test);
+      end if;
+      if Should_Register ("stdlib.encoding") then
+         Add_Test (Result, new Std_Encoding_Suite.Std_Encoding_Test);
+      end if;
+      if Should_Register ("stdlib.encoding.text") then
+         Add_Test (Result, new Std_Encoding_Text_Suite.Std_Encoding_Text_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

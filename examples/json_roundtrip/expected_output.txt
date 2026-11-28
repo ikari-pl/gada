@@ -1,0 +1,2 @@
+{"X":3,"Y":4,"On":true,"R":2.5}
+roundtrip equal

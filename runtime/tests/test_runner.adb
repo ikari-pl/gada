@@ -68,6 +68,7 @@ with Std_Crypto_Hash_Suite;
 with Std_Crypto_Hmac_Suite;
 with Std_Crypto_Aes_Suite;
 with Std_Encoding_Suite;
+with Std_Encoding_Text_Suite;
 
 procedure Test_Runner is
 
@@ -121,6 +122,7 @@ procedure Test_Runner is
       or else Pkg = "stdlib.crypto.hmac"
       or else Pkg = "stdlib.crypto.aes"
       or else Pkg = "stdlib.encoding"
+      or else Pkg = "stdlib.encoding.text"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -256,6 +258,9 @@ procedure Test_Runner is
       end if;
       if Should_Register ("stdlib.encoding") then
          Add_Test (Result, new Std_Encoding_Suite.Std_Encoding_Test);
+      end if;
+      if Should_Register ("stdlib.encoding.text") then
+         Add_Test (Result, new Std_Encoding_Text_Suite.Std_Encoding_Text_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

@@ -97,7 +97,7 @@ reason = "Trampoline C-boundary exception arm — see runtime/COVERAGE.md"
 # (gada-async-scheduler).
 [[exclude]]
 file = "runtime/src/gada-async-scheduler.adb"
-lines = [592, 593, 594, 595, 596, 597, 598]
+lines = [639, 640, 641, 642, 643, 644, 645]
 reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 
 # Spawn's `Make` failure leak guard. Same fault-injection prerequisite
@@ -109,7 +109,7 @@ reason = "Init Worker_Task allocation rollback — see runtime/COVERAGE.md"
 # (gada-async-scheduler).
 [[exclude]]
 file = "runtime/src/gada-async-scheduler.adb"
-lines = [643, 644, 645]
+lines = [690, 691, 692]
 reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"
 
 # Park_Sender's race-recheck arm: between the caller's
@@ -128,7 +128,7 @@ reason = "Spawn Make-failure leak guard — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-bounded.adb"
-lines = [436, 437]
+lines = [452, 453]
 reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
 
 # Park_Receiver's race-recheck arms (Got=True / Closed=True). Mirror of
@@ -141,7 +141,7 @@ reason = "Send Park_Sender close-race recheck — see runtime/COVERAGE.md"
 # Rationale: runtime/COVERAGE.md (gada-async-channels-bounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-bounded.adb"
-lines = [502, 503, 504, 507, 508, 509]
+lines = [531, 532, 533, 536, 537, 538]
 reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
 
 # Channels.Unbounded mirror of the Channels.Bounded Park_Receiver
@@ -153,7 +153,7 @@ reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE
 # Rationale: runtime/COVERAGE.md (gada-async-channels-unbounded).
 [[exclude]]
 file = "runtime/src/gada-async-channels-unbounded.adb"
-lines = [405, 406, 407, 410, 411, 412]
+lines = [417, 418, 419, 422, 423, 424]
 reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE.md"
 
 # Selector defensive / unreachable lines (line numbers adjusted in
@@ -190,7 +190,7 @@ reason = "Receive Park_Receiver send/close-race recheck — see runtime/COVERAGE
 # Rationale: runtime/COVERAGE.md (gada-async-selector).
 [[exclude]]
 file = "runtime/src/gada-async-selector.adb"
-lines = [104, 109, 165, 166, 167, 322]
+lines = [104, 109, 165, 166, 167, 339]
 reason = "Selector defensive/unreachable arms — see runtime/COVERAGE.md"
 
 # --- Phase 5 stdlib wave 1 (Gada.Std.*) ------------------------------------
@@ -239,11 +239,6 @@ file = "runtime/src/gada-std-io.adb"
 lines = [44, 57, 81]
 reason = "lcov 2.4 zero-hit artifacts (block terminators / declare lines / dead arm / untestable arms) — see runtime/COVERAGE.md"
 
-[[exclude]]
-file = "runtime/src/gada-std-os.adb"
-lines = [44, 45, 46, 47, 48, 49, 50, 52, 53]
-reason = "read-error exception arm is untestable without a failing device + gcov terminator artifacts — see runtime/COVERAGE.md"
-
 # `end Image;` — the fall-through terminator of Gada.Async.Race.Image.
 # Image is a function that always `return`s (single returned conditional
 # expression covering both the no-race and detected arms, both exercised
@@ -263,3 +258,44 @@ reason = "read-error exception arm is untestable without a failing device + gcov
 file = "runtime/src/gada-async-race.adb"
 lines = [80]
 reason = "Race.Image fall-through terminator — see runtime/COVERAGE.md"
+
+# lcov 2.4 misattributes the implicit no-return basic block at the
+# bottom of begin/end subprogram bodies to the `end X;` terminator
+# line even when every contained line is hit (same class as
+# gada-async-race.adb:80 and the Phase 5 stdlib terminators).
+# Rationale: runtime/COVERAGE.md (gada-std-time).
+[[exclude]]
+file = "runtime/src/gada-std-time.adb"
+lines = [69, 223, 234, 496]
+reason = "end Append_Frac/Dig2/Image_Date_Time/One_Shot terminators — see runtime/COVERAGE.md"
+
+# Read_File's stream-read exception arm (62-68): the directory case is
+# now rejected up front by the Ada.Directories.Kind guard (covered by
+# Test_Read_File_Dir), and Device_Error / End_Error / Data_Error on a
+# regular-file read are not deterministically triggerable in CI.
+# 70-71, 149, 168: `end;`/`end Read_File;`/`end Open;`/`end Create;`
+# block terminators (lcov 2.4 no-return-block misattribution, same class
+# as gada-std-time.adb). 83-84: the Args argv loop body only runs when
+# the runner is invoked with CLI args; the CI full-suite coverage run
+# passes no filter (Argument_Count = 0). Rationale: runtime/COVERAGE.md.
+[[exclude]]
+file = "runtime/src/gada-std-os.adb"
+lines = [66, 70, 72, 73, 75, 87, 88, 153, 172]
+reason = "untriggerable read-error arm + lcov terminators + argv loop — see runtime/COVERAGE.md"
+
+# `end GOMAXPROCS;` terminator — lcov 2.4 no-return-block
+# misattribution (same class as gada-std-time.adb). Rationale:
+# runtime/COVERAGE.md (gada-std-runtime).
+[[exclude]]
+file = "runtime/src/gada-std-runtime.adb"
+lines = [37]
+reason = "end GOMAXPROCS terminator — see runtime/COVERAGE.md"
+
+# Gada.Core.Process.Finish's default arm calls GNAT.OS_Lib.OS_Exit,
+# which ends the test runner; Process_Suite drives every other line
+# through an installed exit handler. Rationale: runtime/COVERAGE.md
+# (gada-core-process).
+[[exclude]]
+file = "runtime/src/gada-core-process.adb"
+lines = [22]
+reason = "default OS_Exit arm ends the process — see runtime/COVERAGE.md"

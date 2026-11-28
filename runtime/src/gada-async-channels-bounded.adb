@@ -421,11 +421,27 @@ package body Gada.Async.Channels.Bounded is
       --  queue), and then returning to the caller without an actual
       --  Park leaves Slot orphaned: a future Receive or Close walks
       --  the parked-senders list and writes through the dangling
-      --  pointer. Raise here, before allocation, so the contract
-      --  violation surfaces at the call site rather than as a
-      --  delayed memory corruption.
+      --  pointer. Instead of raising, poll the ring buffer with a timed
+      --  delay until there is room or the channel closes: Go allows a
+      --  main-task send to block, and a main task has no cothread to
+      --  park. The shared Scheduler.Main_Block loop also reports Go's
+      --  deadlock fatal when nothing can ever make room.
       if Scheduler.Current = Scheduler.No_Goroutine then
-         raise Program_Error with "Gada.Async.Channels.Bounded.Send: cannot park outside a goroutine context (call from a Scheduler.Spawn body, not from a top-level task or main)";
+         declare
+            function Try return Boolean is
+            begin
+               C.Ref.State.Try_Buffered_Send (V, Stored, Was_Closed);
+               return Stored or else Was_Closed;
+            end Try;
+            procedure Wait is new Scheduler.Main_Block (Try);
+         begin
+            Wait;
+         end;
+         if Was_Closed then
+            raise Channel_Closed
+              with "Gada.Async.Channels.Bounded.Send: channel is closed";
+         end if;
+         return;
       end if;
       Slot := new Wait_Slot'(G              => Scheduler.Current,
                              Value          => V,
@@ -489,11 +505,24 @@ package body Gada.Async.Channels.Bounded is
       --  Buffer empty, channel open — park.
       --  Same non-goroutine-context guard as Send: see the note
       --  above the matching guard in Send for the full rationale.
-      --  Without this, Park_Receiver enqueues a Slot whose owner
-      --  cannot be resumed, and a later Send / Close writes through
-      --  the dangling pointer.
+      --  Without parking, Park_Receiver would enqueue a Slot whose
+      --  owner cannot be resumed, and a later Send / Close would write
+      --  through the dangling pointer. Poll with a timed delay instead
+      --  (main task has no cothread to park): Go allows a main-task
+      --  receive to block. Mirror of the Send poll arm above.
       if Scheduler.Current = Scheduler.No_Goroutine then
-         raise Program_Error with "Gada.Async.Channels.Bounded.Receive: cannot park outside a goroutine context (call from a Scheduler.Spawn body, not from a top-level task or main)";
+         declare
+            function Try return Boolean is
+            begin
+               C.Ref.State.Try_Buffered_Receive (V, Got, Was_Closed);
+               return Got or else Was_Closed;
+            end Try;
+            procedure Wait is new Scheduler.Main_Block (Try);
+         begin
+            Wait;
+         end;
+         OK := Got;   --  False: closed (or a test-only deadlock return)
+         return;
       end if;
       Slot := new Wait_Slot;
       Slot.G := Scheduler.Current;

@@ -246,6 +246,14 @@ func (tr *translator) transType(e ast.Expr) (ir.Type, error) {
 			}
 			return &ir.NamedType{Name: t.Name}, nil
 		}
+	case *ast.SelectorExpr:
+		// Qualified type `pkg.T` (e.g. sync.Mutex, time.Duration):
+		// carry the bare type name; the emitter qualifies it against
+		// the file's stdlib imports (stdlibValueType in emit.go).
+		if _, ok := t.X.(*ast.Ident); ok {
+			return &ir.NamedType{Name: t.Sel.Name}, nil
+		}
+		return nil, fmt.Errorf("translate: unsupported qualified type expr %T", t.X)
 	case *ast.ArrayType:
 		if t.Len != nil {
 			return nil, fmt.Errorf("translate: fixed-size array types not supported in Phase 2")
@@ -425,9 +433,58 @@ func (tr *translator) transStmt(s ast.Stmt) (ir.Stmt, error) {
 		return tr.transReturn(s)
 	case *ast.ExprStmt:
 		return tr.transExprStmt(s)
+	case *ast.DeclStmt:
+		return tr.transDeclStmt(s)
 	default:
 		return nil, fmt.Errorf("translate: unsupported stmt %T", s)
 	}
+}
+
+// transDeclStmt handles a no-initializer `var x T` inside a function
+// body (the only DeclStmt shape Phase 6 needs — e.g. `var mu
+// sync.Mutex`). It becomes a defining Assign whose RHS is a ZeroVal
+// carrying the translated type, so the emitter's head-of-body define
+// machinery declares `X : T;` bare.
+func (tr *translator) transDeclStmt(s *ast.DeclStmt) (ir.Stmt, error) {
+	gd, ok := s.Decl.(*ast.GenDecl)
+	if !ok || gd.Tok != token.VAR {
+		return nil, fmt.Errorf("translate: unsupported DeclStmt (only var)")
+	}
+	if len(gd.Specs) != 1 {
+		return nil, fmt.Errorf("translate: multi-spec var decl not supported")
+	}
+	vs, ok := gd.Specs[0].(*ast.ValueSpec)
+	if !ok {
+		return nil, fmt.Errorf("translate: unsupported var spec %T", gd.Specs[0])
+	}
+	if len(vs.Values) != 0 {
+		// `var a = 1` is legal Go and equivalent to `a := 1`:
+		// lower it to a normal defining assign.
+		if len(vs.Names) != 1 || len(vs.Values) != 1 {
+			return nil, fmt.Errorf("translate: multi-name/multi-value var decl not supported")
+		}
+		rhs, err := tr.transExpr(vs.Values[0])
+		if err != nil {
+			return nil, err
+		}
+		return &ir.Assign{
+			LHS:    []ir.Expr{&ir.Ident{Name: vs.Names[0].Name}},
+			Define: true,
+			RHS:    []ir.Expr{rhs},
+		}, nil
+	}
+	if len(vs.Names) != 1 {
+		return nil, fmt.Errorf("translate: multi-name var decl not supported")
+	}
+	t, err := tr.transType(vs.Type)
+	if err != nil {
+		return nil, err
+	}
+	return &ir.Assign{
+		LHS:    []ir.Expr{&ir.Ident{Name: vs.Names[0].Name}},
+		Define: true,
+		RHS:    []ir.Expr{&ir.ZeroVal{Type: t}},
+	}, nil
 }
 
 // transRange handles `for k, v := range x { ... }` plus the elided

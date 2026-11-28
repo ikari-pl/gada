@@ -96,7 +96,9 @@ with Ada.Containers.Doubly_Linked_Lists;
 with Ada.Unchecked_Deallocation;
 with System.Multiprocessors;
 
+with Ada.Text_IO;
 with Gada.Async.Context;
+with Gada.Core.Process;
 use type System.Address;
 
 package body Gada.Async.Scheduler is
@@ -288,6 +290,17 @@ package body Gada.Async.Scheduler is
       function Is_Initialised return Boolean;
       procedure Set_Initialised (V : Boolean);
 
+      --  Read-only counters for Live_Goroutines / Live_Workers.
+      function Live_Goroutines return Natural;
+      function Live_Workers return Natural;
+
+      --  External-waker counter (deadlock detection) and its atomic
+      --  "nothing can make progress" snapshot.
+      procedure Add_Waker;
+      procedure Remove_Waker;
+      function Wakers return Natural;
+      function Idle_Forever return Boolean;
+
       --  Reset lifecycle state at Init time. Without this, Shutting_Down
       --  carries across Init/Shutdown cycles and the very next worker
       --  pops Stop=True from an empty-but-shutting-down queue, exiting
@@ -304,6 +317,7 @@ package body Gada.Async.Scheduler is
       Shutting_Down  : Boolean := False;
       Workers_Active : Natural := 0;
       Initialised    : Boolean := False;
+      N_Wakers       : Natural := 0;
    end Run_Queue;
 
    protected body Run_Queue is
@@ -368,6 +382,24 @@ package body Gada.Async.Scheduler is
       end Drain;
 
       function Is_Initialised return Boolean is (Initialised);
+
+      function Live_Goroutines return Natural is (In_Flight);
+      function Live_Workers return Natural is (Workers_Active);
+
+      procedure Add_Waker is
+      begin
+         N_Wakers := @ + 1;
+      end Add_Waker;
+
+      procedure Remove_Waker is
+      begin
+         N_Wakers := @ - 1;
+      end Remove_Waker;
+
+      function Wakers return Natural is (N_Wakers);
+
+      function Idle_Forever return Boolean is
+        (In_Flight = 0 and then N_Wakers = 0);
 
       procedure Set_Initialised (V : Boolean) is
       begin
@@ -555,11 +587,26 @@ package body Gada.Async.Scheduler is
 
    --  ## Public-API implementations
 
+   --  Set_Default_Workers override for Init (Workers => 0); 0 means
+   --  Number_Of_CPUs. Written only from the main task (GOMAXPROCS).
+   Requested_Workers : Natural := 0;
+
+   procedure Set_Default_Workers (N : Natural) is
+   begin
+      Requested_Workers := N;
+   end Set_Default_Workers;
+
+   function Default_Workers return Positive is
+     (if Requested_Workers = 0
+      then Positive (System.Multiprocessors.Number_Of_CPUs)
+      else Requested_Workers);
+
+   function Is_Running return Boolean is (Run_Queue.Is_Initialised);
+
    procedure Init (Workers : Natural := 0) is
       Effective_Workers : constant Active_Worker_Index :=
         (if Workers = 0
-         then Active_Worker_Index
-                (System.Multiprocessors.Number_Of_CPUs)
+         then Active_Worker_Index (Default_Workers)
          else Active_Worker_Index (Workers));
    begin
       if Run_Queue.Is_Initialised then
@@ -776,5 +823,65 @@ package body Gada.Async.Scheduler is
       Run_Queue.Set_Initialised (False);
       The_Workers := null;
    end Shutdown;
+
+   function Live_Goroutines return Natural is
+   begin
+      return Run_Queue.Live_Goroutines;
+   end Live_Goroutines;
+
+   function Live_Workers return Natural is
+   begin
+      return Run_Queue.Live_Workers;
+   end Live_Workers;
+
+   --  Written only by the generated main's prologue / tests.
+   Detect_Deadlock : Boolean := False;
+   pragma Atomic (Detect_Deadlock);
+
+   procedure Set_Deadlock_Detection (On : Boolean) is
+   begin
+      Detect_Deadlock := On;
+   end Set_Deadlock_Detection;
+
+   procedure Add_Waker is
+   begin
+      Run_Queue.Add_Waker;
+   end Add_Waker;
+
+   procedure Remove_Waker is
+   begin
+      Run_Queue.Remove_Waker;
+   end Remove_Waker;
+
+   function Pending_Wakers return Natural is (Run_Queue.Wakers);
+
+   function No_Progress_Possible return Boolean is
+     (Detect_Deadlock and then Run_Queue.Idle_Forever);
+
+   procedure Report_Deadlock is
+   begin
+      Ada.Text_IO.Flush (Ada.Text_IO.Standard_Output);
+      Ada.Text_IO.Put_Line
+        (Ada.Text_IO.Standard_Error,
+         "fatal error: all goroutines are asleep - deadlock!");
+      Gada.Core.Process.Finish (Gada.Core.Process.Panic_Exit_Status);
+   end Report_Deadlock;
+
+   procedure Main_Block is
+   begin
+      loop
+         exit when Try;
+         --  Suspect a deadlock only on two observations separated by
+         --  a failed re-poll (see the spec).
+         if No_Progress_Possible then
+            exit when Try;
+            if No_Progress_Possible then
+               Report_Deadlock;
+               return;  --  only reached under a test exit handler
+            end if;
+         end if;
+         delay Main_Poll_Interval;
+      end loop;
+   end Main_Block;
 
 end Gada.Async.Scheduler;

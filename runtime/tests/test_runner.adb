@@ -34,6 +34,7 @@ with Memory_Suite;
 with Slices_Suite;
 with Defer_Suite;
 with Panic_Suite;
+with Process_Suite;
 with Maps_Suite;
 with Hash_Suite;
 with Stress_Gc_Suite;
@@ -44,11 +45,15 @@ with Scheduler_Suite;
 with Channels_Suite;
 with Channels_Unbounded_Suite;
 with Selector_Suite;
+with Deadlock_Suite;
 with Race_Suite;
 with Reflect_Types_Suite;
 with Reflect_Suite;
 with Reflect_Values_Suite;
 with Reflect_Interfaces_Suite;
+with Runtime_Suite;
+with Sync_Suite;
+with Time_Suite;
 with Errors_Suite;
 with Strings_Suite;
 with Strconv_Suite;
@@ -79,6 +84,7 @@ procedure Test_Runner is
       or else Pkg = "core.slices"
       or else Pkg = "core.defer"
       or else Pkg = "core.panic"
+      or else Pkg = "core.process"
       or else Pkg = "core.maps"
       or else Pkg = "core.hash"
       or else Pkg = "async.context"
@@ -86,6 +92,7 @@ procedure Test_Runner is
       or else Pkg = "async.channels.bounded"
       or else Pkg = "async.channels.unbounded"
       or else Pkg = "async.select"
+      or else Pkg = "async.deadlock"
       or else Pkg = "async.race"
       or else Pkg = "reflect.type"
       or else Pkg = "reflect"
@@ -99,6 +106,9 @@ procedure Test_Runner is
       or else Pkg = "stdlib.bufio"
       or else Pkg = "stdlib.fmt"
       or else Pkg = "stdlib.os"
+      or else Pkg = "stdlib.runtime"
+      or else Pkg = "stdlib.sync"
+      or else Pkg = "stdlib.time"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -138,6 +148,9 @@ procedure Test_Runner is
       if Should_Register ("core.panic") then
          Add_Test (Result, new Panic_Suite.Panic_Test);
       end if;
+      if Should_Register ("core.process") then
+         Add_Test (Result, new Process_Suite.Process_Test);
+      end if;
       if Should_Register ("core.maps") then
          Add_Test (Result, new Maps_Suite.Maps_Test);
       end if;
@@ -160,6 +173,9 @@ procedure Test_Runner is
       end if;
       if Should_Register ("async.select") then
          Add_Test (Result, new Selector_Suite.Selector_Test);
+      end if;
+      if Should_Register ("async.deadlock") then
+         Add_Test (Result, new Deadlock_Suite.Deadlock_Test);
       end if;
       if Should_Register ("async.race") then
          Add_Test (Result, new Race_Suite.Race_Test);
@@ -201,6 +217,15 @@ procedure Test_Runner is
       end if;
       if Should_Register ("stdlib.os") then
          Add_Test (Result, new OS_Suite.OS_Test);
+      end if;
+      if Should_Register ("stdlib.runtime") then
+         Add_Test (Result, new Runtime_Suite.Runtime_Test);
+      end if;
+      if Should_Register ("stdlib.sync") then
+         Add_Test (Result, new Sync_Suite.Sync_Test);
+      end if;
+      if Should_Register ("stdlib.time") then
+         Add_Test (Result, new Time_Suite.Time_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

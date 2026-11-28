@@ -457,6 +457,598 @@ func TestStdlibOutCallStringResultEmit(t *testing.T) {
 	}
 }
 
+// TestSyncImportEmit pins the Phase 6 `sync` import mapping: the
+// with-clause and a qualified call lower through goNameToAdaMember.
+func TestSyncImportEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"sync"},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("sync"), Sel: "NewCond"},
+			Args: []ir.Expr{&ir.Lit{Kind: ir.LitNil}},
+		},
+	)
+	for _, want := range []string{
+		"with Gada.Std.Sync;",
+		"Gada.Std.Sync.New_Cond (null);",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestTimeImportEmit pins the Phase 6 `time` import mapping.
+func TestTimeImportEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"time"},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("time"), Sel: "NewTimer"},
+			Args: []ir.Expr{litInt("5_000_000_000")},
+		},
+	)
+	for _, want := range []string{
+		"with Gada.Std.Time;",
+		"Gada.Std.Time.New_Timer (",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestRuntimeImportEmit pins the Phase 6 `runtime` import mapping.
+func TestRuntimeImportEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"runtime"},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("runtime"), Sel: "NumGoroutine"},
+			Args: nil,
+		},
+	)
+	for _, want := range []string{
+		"with Gada.Std.Runtime;",
+		"Gada.Std.Runtime.Num_Goroutine",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestRuntimeGoschedGomaxprocsEmit pins the mechanical member mapping
+// for runtime.Gosched / runtime.GOMAXPROCS (regression: the runtime
+// declared Go_Sched / Go_Max_Procs, so the emitted calls did not
+// resolve). goNameToAdaMember leaves both names unchanged.
+func TestRuntimeGoschedGomaxprocsEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"runtime"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("p")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun:         &ir.Selector{X: idn("runtime"), Sel: "GOMAXPROCS"},
+				Args:        []ir.Expr{litInt("2")},
+				ResultTypes: []ir.Type{&ir.IntType{}},
+			}},
+		},
+		&ir.Call{Fun: &ir.Selector{X: idn("runtime"), Sel: "Gosched"}},
+	)
+	for _, want := range []string{
+		"Gada.Std.Runtime.Gosched;",
+		"Gada.Std.Runtime.GOMAXPROCS (2)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestTimeChanImportEmit pins the Phase 6 `chan time.Time` mapping:
+// `timer := time.After(...)` declares a Gada.Std.Time.Time_Channels
+// channel and no per-file Channels_Of_Time instantiation is emitted.
+func TestTimeChanImportEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"time"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("timer")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun: &ir.Selector{X: idn("time"), Sel: "After"},
+				Args: []ir.Expr{&ir.BinOp{
+					Op: "*",
+					X:  litInt("200"),
+					Y:  &ir.Selector{X: idn("time"), Sel: "Millisecond"},
+				}},
+				ResultTypes: []ir.Type{
+					&ir.ChanType{Elem: &ir.NamedType{Name: "Time"}},
+				},
+			}},
+		},
+	)
+	for _, want := range []string{
+		"with Gada.Std.Time; use type Gada.Std.Time.Duration;",
+		"Gada.Std.Time.Time_Channels.Channel",
+		"Gada.Std.Time.After (200 * Gada.Std.Time.Millisecond)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Channels_Of_Time") {
+		t.Errorf("must not instantiate Channels_Of_Time:\n%s", out)
+	}
+}
+
+// TestSyncMutexVarEmit pins the Phase 6 `var mu sync.Mutex` +
+// `mu.Lock()` lowering: a bare `Mu : Gada.Std.Sync.Mutex;` declaration
+// (via ir.ZeroVal) and protected dot-calls `Mu.Lock;` / `Mu.Unlock;`.
+func TestSyncMutexVarEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"sync"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("mu")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "Mutex"}}},
+		},
+		&ir.Call{Fun: &ir.Selector{X: idn("mu"), Sel: "Lock"}},
+		&ir.Call{Fun: &ir.Selector{X: idn("mu"), Sel: "Unlock"}},
+	)
+	for _, want := range []string{
+		"with Gada.Std.Sync;",
+		"Mu : Gada.Std.Sync.Mutex;",
+		"Mu.Lock;",
+		"Mu.Unlock;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestLenOsArgsEmit pins the `len(os.Args)` special case: it lowers to
+// String_Vectors.Length over Gada.Std.OS.Args (a String_Slice).
+func TestLenOsArgsEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"os"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("argc")},
+			Define: true,
+			RHS: []ir.Expr{&ir.BuiltinCall{
+				Name: "len",
+				Args: []ir.Expr{&ir.Selector{X: idn("os"), Sel: "Args"}},
+			}},
+		},
+	)
+	want := "Integer (Gada.Std.Strings.String_Vectors.Length (Gada.Std.OS.Args))"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing %q in:\n%s", want, out)
+	}
+}
+
+// TestLenOsArgsInIfCond pins that len(os.Args) in ANY expression
+// position (here an if-condition) pulls in `with Gada.Std.Strings;`.
+func TestLenOsArgsInIfCond(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"os"},
+		&ir.If{
+			Cond: &ir.BinOp{
+				Op: ">",
+				X: &ir.BuiltinCall{
+					Name: "len",
+					Args: []ir.Expr{&ir.Selector{X: idn("os"), Sel: "Args"}},
+				},
+				Y: litInt("1"),
+			},
+			Then: []ir.Stmt{&ir.Return{}},
+		},
+	)
+	if !strings.Contains(out, "with Gada.Std.Strings;") {
+		t.Errorf("missing with Gada.Std.Strings; in:\n%s", out)
+	}
+	want := "Integer (Gada.Std.Strings.String_Vectors.Length (Gada.Std.OS.Args))"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing %q in:\n%s", want, out)
+	}
+}
+
+// TestBareRecvStmt pins that a bare `<-c` statement lowers to a real
+// Receive block (value discarded), not a `null;` no-op.
+func TestBareRecvStmt(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, nil,
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("c")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.MakeChan{Elem: &ir.IntType{}, Capacity: litInt("1")}},
+		},
+		&ir.ExprStmt{X: &ir.ChanRecv{Chan: idn("c")}},
+	)
+	want := "Channels_Of_Integer.Receive (C, V, OK);"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing %q in:\n%s", want, out)
+	}
+}
+
+// TestBareRecvTimeChan pins that a bare `<-timer` on a `chan time.Time`
+// (which rides Gada.Std.Time.Time_Channels, a Boolean-element channel)
+// declares the discard variable as Boolean — not Time — so the emitted
+// Receive call type-checks against the runtime package.
+func TestBareRecvTimeChan(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"time"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("timer")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.MakeChan{Elem: &ir.NamedType{Name: "Time"}}},
+		},
+		&ir.ExprStmt{X: &ir.ChanRecv{Chan: idn("timer")}},
+	)
+	if !strings.Contains(out, "V : Boolean;") {
+		t.Errorf("missing Boolean discard decl in:\n%s", out)
+	}
+	want := "Gada.Std.Time.Time_Channels.Receive (Timer, V, OK);"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing %q in:\n%s", want, out)
+	}
+}
+
+// TestZeroValScalarZero pins Go's zero-value guarantee for
+// `var n int` (and friends): the decl carries an explicit zero
+// initializer, not a bare uninitialized object.
+func TestZeroValScalarZero(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, nil,
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("n")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.IntType{}}},
+		},
+	)
+	if !strings.Contains(out, "N : Integer := 0;") {
+		t.Errorf("missing zero initializer in:\n%s", out)
+	}
+}
+
+// TestUserTimeChanNotMisrouted pins that a LOCAL type named Time never
+// gets routed to Gada.Std.Time.Time_Channels: without the time import
+// `make(chan Time)` fails loudly (unsupported element type), and with
+// the time import present the local type shadows the special case
+// (also a loud failure, never a silent misroute).
+func TestUserTimeChanNotMisrouted(t *testing.T) {
+	t.Parallel()
+	for _, imports := range [][]string{nil, {"time"}} {
+		pkg := &ir.Package{Name: "p", Files: []*ir.File{
+			{Name: "x.go", Imports: imports, Decls: []ir.Decl{
+				&ir.TypeDecl{Name: "Time", Underlying: &ir.StructType{}},
+				funcMain(
+					&ir.Assign{
+						LHS:    []ir.Expr{idn("c")},
+						Define: true,
+						RHS:    []ir.Expr{&ir.MakeChan{Elem: &ir.NamedType{Name: "Time"}}},
+					},
+				),
+			}},
+		}}
+		var buf bytes.Buffer
+		err := Package(pkg, &buf)
+		if err == nil {
+			t.Fatalf("imports=%v: emit succeeded, want loud error; out:\n%s", imports, buf.String())
+		}
+		if strings.Contains(buf.String(), "Time_Channels") {
+			t.Fatalf("imports=%v: local Time misrouted to Time_Channels:\n%s", imports, buf.String())
+		}
+	}
+}
+
+// TestUserMutexNoSyncImport pins that a method call on a LOCAL type
+// named Mutex (no sync import) does NOT take the sync dot-call path —
+// it must fail loudly like any other non-dispatching method call.
+func TestUserMutexNoSyncImport(t *testing.T) {
+	t.Parallel()
+	pkg := &ir.Package{Name: "p", Files: []*ir.File{
+		{Name: "x.go", Decls: []ir.Decl{
+			&ir.TypeDecl{Name: "Mutex", Underlying: &ir.StructType{}},
+			funcMain(
+				&ir.Assign{
+					LHS:    []ir.Expr{idn("mu")},
+					Define: true,
+					RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "Mutex"}}},
+				},
+				&ir.Call{Fun: &ir.Selector{X: idn("mu"), Sel: "Lock"}},
+			),
+		}},
+	}}
+	var buf bytes.Buffer
+	err := Package(pkg, &buf)
+	if err == nil {
+		t.Fatalf("emit succeeded, want loud error; out:\n%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "dispatching") {
+		t.Fatalf("wrong error: %v", err)
+	}
+}
+
+// TestVarDurationZero pins `var d time.Duration`: scalar stdlib value
+// type gets an explicit zero literal and the Duration use-type clause.
+func TestVarDurationZero(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"time"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("d")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "Duration"}}},
+		},
+	)
+	for _, want := range []string{
+		"D : Gada.Std.Time.Duration := 0;",
+		"use type Gada.Std.Time.Duration;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestVarTimeValue pins `var t time.Time`: the struct value type
+// declares bare (records default-initialise).
+func TestVarTimeValue(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"time"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("t")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "Time"}}},
+		},
+	)
+	if !strings.Contains(out, "T : Gada.Std.Time.Time;") {
+		t.Errorf("missing bare Time decl in:\n%s", out)
+	}
+}
+
+// TestSyncWaitGroupArgCall pins the with-args sync dot-call shape:
+// `wg.Add(1)` -> `Wg.Add (1);`.
+func TestSyncWaitGroupArgCall(t *testing.T) {
+	t.Parallel()
+	out := emitMain(t, []string{"sync"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("wg")},
+			Define: true,
+			RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: "WaitGroup"}}},
+		},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("wg"), Sel: "Add"},
+			Args: []ir.Expr{litInt("1")},
+		},
+	)
+	for _, want := range []string{
+		"Wg : Gada.Std.Sync.Wait_Group;",
+		"Wg.Add (1);",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// TestBareRecvUnknownChan pins the loud failure for a bare `<-c`
+// whose operand cannot be resolved to a chan type.
+func TestBareRecvUnknownChan(t *testing.T) {
+	t.Parallel()
+	pkg := &ir.Package{Name: "p", Files: []*ir.File{
+		{Name: "x.go", Decls: []ir.Decl{funcMain(
+			&ir.ExprStmt{X: &ir.ChanRecv{Chan: idn("c")}},
+		)}},
+	}}
+	var buf bytes.Buffer
+	err := Package(pkg, &buf)
+	if err == nil || !strings.Contains(err.Error(), "unresolvable chan") {
+		t.Fatalf("want unresolvable-chan error, got %v", err)
+	}
+}
+
+// emitMainPkg is emitMain for a `package main` file: main becomes the
+// Ada main procedure, so the program-exit lowering applies.
+func emitMainPkg(t *testing.T, imports []string, body ...ir.Stmt) string {
+	t.Helper()
+	pkg := &ir.Package{Name: "main", Files: []*ir.File{
+		{Name: "x.go", Imports: imports, Decls: []ir.Decl{funcMain(body...)}},
+	}}
+	var buf bytes.Buffer
+	if err := Package(pkg, &buf); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	return flattenSpaces(buf.String())
+}
+
+// TestTimeOnlyMainExitsEmit pins Go main-return semantics for a main
+// with no `go` statement that uses time (regression: Stop_All was only
+// emitted under needsAsyncScheduler, so `<-time.Tick(d)` programs never
+// exited; ADR-0011). Main ends through Gada.Core.Process.Exit_Main and
+// an escaping exception through Unhandled — nothing joins or stops
+// timers.
+func TestTimeOnlyMainExitsEmit(t *testing.T) {
+	t.Parallel()
+	out := emitMainPkg(t, []string{"time"},
+		&ir.Assign{
+			LHS:    []ir.Expr{idn("tick")},
+			Define: true,
+			RHS: []ir.Expr{&ir.Call{
+				Fun: &ir.Selector{X: idn("time"), Sel: "Tick"},
+				Args: []ir.Expr{&ir.BinOp{
+					Op: "*",
+					X:  litInt("100"),
+					Y:  &ir.Selector{X: idn("time"), Sel: "Millisecond"},
+				}},
+				ResultTypes: []ir.Type{
+					&ir.ChanType{Elem: &ir.NamedType{Name: "Time"}},
+				},
+			}},
+		},
+	)
+	for _, want := range []string{
+		"with Gada.Core.Process;",
+		"Gada.Core.Process.Exit_Main; exception when E : others => Gada.Core.Process.Unhandled (E); end Main;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"Stop_All", "Scheduler.Shutdown", "Scheduler.Init"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("unexpected %q in:\n%s", bad, out)
+		}
+	}
+}
+
+// TestProcessExitRunsMainDefersFirst pins that a main which exits via
+// Exit_Main declares its Defer_Blocks in the inner block (so they run
+// before the process ends) rather than in Main's declarative part,
+// whose finalization Exit_Main would skip.
+func TestProcessExitRunsMainDefersFirst(t *testing.T) {
+	t.Parallel()
+	out := emitMainPkg(t, []string{"time"},
+		&ir.DeferStmt{Call: &ir.Call{Fun: idn("cleanup")}},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("time"), Sel: "Sleep"},
+			Args: []ir.Expr{litInt("1")},
+		},
+	)
+	begin := strings.Index(out, "begin")
+	decl := strings.Index(out, "Defer_Block")
+	exit := strings.Index(out, "Gada.Core.Process.Exit_Main;")
+	inner := strings.LastIndex(out, "end; Gada.Core.Process.Exit_Main;")
+	if begin < 0 || decl < begin || exit < decl || inner < 0 {
+		t.Errorf("defers must be declared after Main's begin and close before Exit_Main:\n%s", out)
+	}
+}
+
+// TestPlainMainHasNoProcessExit pins that a task-free program keeps
+// the plain return (nothing to abandon), so hello-world shapes are
+// unchanged.
+func TestPlainMainHasNoProcessExit(t *testing.T) {
+	t.Parallel()
+	out := emitMainPkg(t, []string{"strings"},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("strings"), Sel: "ToUpper"},
+			Args: []ir.Expr{&ir.Lit{Kind: ir.LitString, Value: `"x"`}},
+		},
+	)
+	if strings.Contains(out, "Gada.Core.Process") {
+		t.Errorf("unexpected process exit in a task-free main:\n%s", out)
+	}
+}
+
+// syncCallOut emits a main whose local `v` has the sync type typ and
+// whose body is the given method calls on v (plus an optional helper
+// function `hello` for Once.Do).
+func syncCallOut(t *testing.T, typ string, calls ...ir.Stmt) (string, error) {
+	t.Helper()
+	body := append([]ir.Stmt{&ir.Assign{
+		LHS:    []ir.Expr{idn("v")},
+		Define: true,
+		RHS:    []ir.Expr{&ir.ZeroVal{Type: &ir.NamedType{Name: typ}}},
+	}}, calls...)
+	hello := &ir.Function{Name: "hello", Body: []ir.Stmt{&ir.Return{}}}
+	withArg := &ir.Function{Name: "takesArg",
+		Params: []*ir.Param{{Name: "n", Type: &ir.IntType{}}},
+		Body:   []ir.Stmt{&ir.Return{}}}
+	pkg := &ir.Package{Name: "main", Files: []*ir.File{
+		{Name: "x.go", Imports: []string{"sync"},
+			Decls: []ir.Decl{hello, withArg, funcMain(body...)}},
+	}}
+	var buf bytes.Buffer
+	err := Package(pkg, &buf)
+	return flattenSpaces(buf.String()), err
+}
+
+func vcall(sel string, args ...ir.Expr) ir.Stmt {
+	return &ir.Call{Fun: &ir.Selector{X: idn("v"), Sel: sel}, Args: args}
+}
+
+// TestSyncMethodNamesEmit pins one lowering per sync method
+// (regression: members went through adaIdent, so RLock/RUnlock/TryLock
+// emitted names the runtime does not declare, Cond's package-level
+// procedures were dot-called, and once.Do passed a bare name where an
+// access value is required).
+func TestSyncMethodNamesEmit(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		typ  string
+		call ir.Stmt
+		want string
+	}{
+		{"Mutex", vcall("Lock"), "V.Lock;"},
+		{"Mutex", vcall("Unlock"), "V.Unlock;"},
+		{"Mutex", vcall("TryLock"), "if V.Try_Lock then null; end if;"},
+		{"RWMutex", vcall("Lock"), "V.Lock;"},
+		{"RWMutex", vcall("Unlock"), "V.Unlock;"},
+		{"RWMutex", vcall("RLock"), "V.R_Lock;"},
+		{"RWMutex", vcall("RUnlock"), "V.R_Unlock;"},
+		{"RWMutex", vcall("TryLock"), "if V.Try_Lock then null; end if;"},
+		{"RWMutex", vcall("TryRLock"), "if V.Try_R_Lock then null; end if;"},
+		{"WaitGroup", vcall("Add", litInt("2")), "V.Add (2);"},
+		{"WaitGroup", vcall("Done"), "V.Done;"},
+		{"WaitGroup", vcall("Wait"), "V.Wait;"},
+		{"Once", vcall("Do", idn("hello")), "V.Do_K (Hello'Access);"},
+		{"Cond", vcall("Wait"), "Gada.Std.Sync.Wait (V);"},
+		{"Cond", vcall("Signal"), "Gada.Std.Sync.Signal (V);"},
+		{"Cond", vcall("Broadcast"), "Gada.Std.Sync.Broadcast (V);"},
+	}
+	for _, tc := range cases {
+		out, err := syncCallOut(t, tc.typ, tc.call)
+		if err != nil {
+			t.Errorf("%s: emit: %v", tc.want, err)
+			continue
+		}
+		if !strings.Contains(out, tc.want) {
+			t.Errorf("%s.%s: missing %q in:\n%s", tc.typ,
+				tc.call.(*ir.Call).Fun.(*ir.Selector).Sel, tc.want, out)
+		}
+	}
+}
+
+// TestSyncOnceDoRejectsNonFunction pins the loud failure for once.Do
+// arguments that have no access-to-procedure lowering.
+func TestSyncOnceDoRejectsNonFunction(t *testing.T) {
+	t.Parallel()
+	for _, arg := range []ir.Expr{idn("takesArg"), idn("notAFunc"), litInt("1")} {
+		if _, err := syncCallOut(t, "Once", vcall("Do", arg)); err == nil ||
+			!strings.Contains(err.Error(), "sync.Once.Do") {
+			t.Errorf("once.Do(%T) err = %v, want a sync.Once.Do error", arg, err)
+		}
+	}
+}
+
+// TestDeadlockDetectionOptIn pins that a `package main` whose main
+// task can block on a channel arms Go's deadlock report
+// (Scheduler.Set_Deadlock_Detection) and withs the scheduler, while a
+// non-main package (hand-written-Ada callers) and a channel-free main
+// never opt in (PR #46 review finding #11).
+func TestDeadlockDetectionOptIn(t *testing.T) {
+	t.Parallel()
+	mk := &ir.Assign{
+		LHS:    []ir.Expr{idn("c")},
+		Define: true,
+		RHS:    []ir.Expr{&ir.MakeChan{Elem: &ir.IntType{}, Capacity: litInt("1")}},
+	}
+	const on = "Gada.Async.Scheduler.Set_Deadlock_Detection (True);"
+	out := emitMainPkg(t, nil, mk)
+	for _, want := range []string{"with Gada.Async.Scheduler;", on} {
+		if !strings.Contains(out, want) {
+			t.Errorf("chan main: missing %q in:\n%s", want, out)
+		}
+	}
+	if out := emitMainPkg(t, []string{"sync"}); !strings.Contains(out, on) {
+		t.Errorf("sync main (Cond can block): missing %q in:\n%s", on, out)
+	}
+	if out := emitMain(t, nil, mk); strings.Contains(out, "Set_Deadlock_Detection") {
+		t.Errorf("non-main package must not opt in:\n%s", out)
+	}
+	if out := emitMainPkg(t, []string{"strings"}); strings.Contains(out, "Set_Deadlock_Detection") {
+		t.Errorf("channel-free main must not opt in:\n%s", out)
+	}
+}
+
 // TestAliasedStdlibImport is the regression test for PR #45 review #13:
 // `import str "strings"; str.ToUpper(s)` must lower through the alias
 // (the emitter used to key stdlib imports by path segment only, so the
@@ -674,6 +1266,83 @@ func TestFloatBitSizeDropped(t *testing.T) {
 		var buf bytes.Buffer
 		if err := Package(pkg, &buf); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("bitSize %v: err = %v, want %q", c.bits, err, c.want)
+		}
+	}
+}
+
+// TestMainEarlyReturnReachesExitMain is the regression test for the
+// review-fix verification finding on ADR-0011: a `return` inside main
+// lowered to Ada `return;`, skipping Gada.Core.Process.Exit_Main, so a
+// main with a parked goroutine or live timer hung instead of exiting.
+// The body is wrapped in the Go_Main_Body loop and the return lowers to
+// `exit Go_Main_Body;`; defers (inner block) still run before the exit.
+func TestMainEarlyReturnReachesExitMain(t *testing.T) {
+	t.Parallel()
+	cond := &ir.BinOp{Op: "==", X: litInt("1"), Y: litInt("1")}
+	out := emitMainPkg(t, []string{"time"},
+		&ir.DeferStmt{Call: &ir.Call{Fun: idn("cleanup")}},
+		&ir.If{Cond: cond, Then: []ir.Stmt{&ir.Return{}}},
+		&ir.Call{
+			Fun:  &ir.Selector{X: idn("time"), Sel: "Sleep"},
+			Args: []ir.Expr{litInt("1")},
+		},
+	)
+	for _, want := range []string{
+		"Go_Main_Body : loop",
+		"then exit Go_Main_Body; end if;",
+		"exit Go_Main_Body; end loop Go_Main_Body; end; Gada.Core.Process.Exit_Main;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "return;") {
+		t.Errorf("main's return must not lower to Ada return:\n%s", out)
+	}
+}
+
+// TestMainReturnWithoutProcessExitStaysReturn pins that a main which
+// owns no runtime tasks keeps the plain Ada `return;` (no wrapper loop).
+func TestMainReturnWithoutProcessExitStaysReturn(t *testing.T) {
+	t.Parallel()
+	cond := &ir.BinOp{Op: "==", X: litInt("1"), Y: litInt("1")}
+	out := emitMainPkg(t, []string{"strings"},
+		&ir.If{Cond: cond, Then: []ir.Stmt{&ir.Return{}}},
+	)
+	if !strings.Contains(out, "then return; end if;") {
+		t.Errorf("want plain return in:\n%s", out)
+	}
+	if strings.Contains(out, "Go_Main_Body") {
+		t.Errorf("unexpected exit loop in:\n%s", out)
+	}
+}
+
+// TestBodyHasReturn covers every control-flow arm bodyHasReturn walks.
+func TestBodyHasReturn(t *testing.T) {
+	t.Parallel()
+	ret := []ir.Stmt{&ir.Return{}}
+	cases := []struct {
+		name string
+		body []ir.Stmt
+		want bool
+	}{
+		{"empty", nil, false},
+		{"plain", ret, true},
+		{"if-then", []ir.Stmt{&ir.If{Then: ret}}, true},
+		{"if-else", []ir.Stmt{&ir.If{Else: ret}}, true},
+		{"if-none", []ir.Stmt{&ir.If{Then: []ir.Stmt{&ir.ExprStmt{X: litInt("1")}}}}, false},
+		{"for", []ir.Stmt{&ir.For{Body: ret}}, true},
+		{"for-none", []ir.Stmt{&ir.For{}}, false},
+		{"range", []ir.Stmt{&ir.RangeStmt{Body: ret}}, true},
+		{"range-none", []ir.Stmt{&ir.RangeStmt{}}, false},
+		{"select", []ir.Stmt{&ir.SelectStmt{Cases: []*ir.SelectCase{{}, {Body: ret}}}}, true},
+		{"select-none", []ir.Stmt{&ir.SelectStmt{Cases: []*ir.SelectCase{{}}}}, false},
+		{"typeswitch", []ir.Stmt{&ir.TypeSwitch{Cases: []*ir.TypeSwitchCase{{Body: ret}}}}, true},
+		{"typeswitch-none", []ir.Stmt{&ir.TypeSwitch{Cases: []*ir.TypeSwitchCase{{}}}}, false},
+	}
+	for _, c := range cases {
+		if got := bodyHasReturn(c.body); got != c.want {
+			t.Errorf("%s: bodyHasReturn = %v, want %v", c.name, got, c.want)
 		}
 	}
 }

@@ -61,6 +61,7 @@ jobs:
   build-test-coverage:
     name: build, test, coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     permissions:
       contents: read
@@ -212,6 +213,7 @@ jobs:
   examples:
     name: examples (end-to-end)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     # Gate the heavyweight Ada toolchain install + gprbuild link behind a
     # green build-test-coverage run. If the Go unit tests or coverage gate
     # are red, there is no point burning ~3 minutes installing gnat_native
@@ -366,6 +368,17 @@ jobs:
           export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
           make example HELLO=wordcount
 
+      - name: Run make example HELLO=timer_pool
+        # The Phase-6 exit-criterion target (roadmap/06-stdlib-wave2
+        # timer_pool item). Exercises sync.Mutex lock/unlock lowering,
+        # time.After channels, len(os.Args), and runtime.NumGoroutine
+        # end-to-end through transpile -> gprbuild -> run; output is
+        # diffed against expected_output.txt (generated with `go run`).
+        run: |
+          set -euo pipefail
+          export GADA_GC_LDFLAGS="$(pkg-config --libs bdw-gc)"
+          make example HELLO=timer_pool
+
       - name: Upload example binary as artifact
         # Always upload — even on failure the partially-built binary (when
         # present) is useful for post-mortem. `if-no-files-found: warn`
@@ -381,6 +394,7 @@ jobs:
   roadmap-consistency:
     name: roadmap consistency
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

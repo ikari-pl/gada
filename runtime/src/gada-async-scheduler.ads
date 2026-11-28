@@ -219,6 +219,71 @@ package Gada.Async.Scheduler is
    --  matching the Free contract on Gada.Async.Context).
    procedure Shutdown;
 
+   --  Introspection for Gada.Std.Runtime (Go runtime.NumGoroutine /
+   --  GOMAXPROCS). Live counts; both are 0 before Init / after
+   --  Shutdown.
+   function Live_Goroutines return Natural;
+   function Live_Workers return Natural;
+
+   --  ## Main-task blocking and deadlock detection
+   --
+   --  A non-goroutine caller (the main task) cannot Park, so blocking
+   --  channel operations poll instead (Main_Block). Go aborts with
+   --  "fatal error: all goroutines are asleep - deadlock!" when main
+   --  blocks and nothing can ever wake it; GADA reports the same, but
+   --  only when it can *prove* it, and only once a generated main has
+   --  opted in (hand-written Ada may feed channels from plain tasks
+   --  the scheduler cannot see):
+   --
+   --    * detection is enabled (Set_Deadlock_Detection (True)),
+   --    * no goroutine is in flight at all (running, runnable or
+   --      parked — a parked one might still be woken, so v1 stays
+   --      conservative and never reports while any goroutine lives),
+   --    * no external waker is armed (Add_Waker / Remove_Waker — the
+   --      time service counts each pending timer),
+   --    * and the operation is still not ready on a re-poll after that
+   --      observation (a goroutine's last send lands before its reap).
+   --
+   --  A false report is worse than a hang, so any doubt means "keep
+   --  polling".
+
+   Main_Poll_Interval : constant Standard.Duration := 0.001;
+
+   procedure Set_Deadlock_Detection (On : Boolean);
+
+   --  External progress sources (e.g. one per pending timer). Remove
+   --  only after the wake-up it stands for has been delivered.
+   procedure Add_Waker;
+   procedure Remove_Waker;
+   function Pending_Wakers return Natural;
+
+   --  True when detection is on and neither goroutines nor wakers
+   --  exist (one atomic snapshot).
+   function No_Progress_Possible return Boolean;
+
+   --  Go's deadlock crash: print the fatal line to standard error and
+   --  end the process with status 2 (Gada.Core.Process.Finish).
+   procedure Report_Deadlock;
+
+   --  Main-task wait loop shared by every blocking channel operation:
+   --  calls Try until it returns True (the operation completed — got a
+   --  value, stored one, or observed close), sleeping Main_Poll_Interval
+   --  between attempts, and calls Report_Deadlock when progress is
+   --  provably impossible (see above).
+   generic
+      with function Try return Boolean;
+   procedure Main_Block;
+
+   --  True between Init and Shutdown.
+   function Is_Running return Boolean;
+
+   --  Worker count a later Init (Workers => 0) uses instead of
+   --  Number_Of_CPUs (Go runtime.GOMAXPROCS recorded while the pool
+   --  cannot be resized). 0 restores the Number_Of_CPUs default.
+   procedure Set_Default_Workers (N : Natural);
+   --  The count Init (Workers => 0) would start right now.
+   function Default_Workers return Positive;
+
 private
 
    --  A Goroutine_Id is a thin wrapper around the heap-allocated

@@ -2,7 +2,7 @@
 
 [← Phase 6](06-stdlib-wave2.md) · [Index](README.md) · Next: [Phase 8 →](08-stdlib-wave4-crypto.md)
 
-**Status:** `NOT_STARTED`
+**Status:** `IN_PROGRESS` (opened 2026-11-26)
 **Prerequisites:** [Phase 6](06-stdlib-wave2.md) `DONE`, [Phase 4](04-interfaces-reflection.md) `DONE`
 **Goal:** Port `net`, `net/http`, `encoding/json`. This is where GADA
 proves it can run real-world Go libraries: `encoding/json` exercises

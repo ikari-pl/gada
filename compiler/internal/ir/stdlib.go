@@ -20,6 +20,9 @@ var StdlibPackages = map[string]string{
 	"io":      "Gada.Std.IO",
 	"bufio":   "Gada.Std.Bufio",
 	"os":      "Gada.Std.OS",
+	"sync":    "Gada.Std.Sync",
+	"time":    "Gada.Std.Time",
+	"runtime": "Gada.Std.Runtime",
 }
 
 // StdlibWave1 is StdlibPackages' keys, sorted — used in the emitter's

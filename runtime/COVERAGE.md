@@ -95,7 +95,7 @@ Added in PR #3 review feedback (gemini-code-assist comment #1).
 
 ### `runtime/src/gada-async-scheduler.adb`
 
-#### `Init` — per-worker `new Worker_Task` rollback  *(lines 547–553)*
+#### `Init` — per-worker `new Worker_Task` rollback  *(lines 639–645)*
 
 ```ada
 begin
@@ -104,13 +104,13 @@ begin
       The_Workers (I) := new Worker_Task (Idx => I);
    end loop;
 exception
-   when others =>                          --  line 547
-      Run_Queue.Worker_Stopped;            --  line 548
-      Run_Queue.Mark_Shutdown;             --  line 549
-      Run_Queue.Drain;                     --  line 550
-      The_Workers := null;                  --  line 551
-      Run_Queue.Set_Initialised (False);   --  line 552
-      raise;                                --  line 553
+   when others =>                          --  line 639
+      Run_Queue.Worker_Stopped;            --  line 640
+      Run_Queue.Mark_Shutdown;             --  line 641
+      Run_Queue.Drain;                     --  line 642
+      The_Workers := null;                  --  line 643
+      Run_Queue.Set_Initialised (False);   --  line 644
+      raise;                                --  line 645
 end;
 ```
 
@@ -139,16 +139,16 @@ lifted to the multi-worker rollback shape in sub-item 3b. Sub-items
 Exit_Syscall surface) shifted the line numbers but did not change
 the arm's structure.
 
-#### `Spawn` — `Make` failure leak guard  *(lines 587–589)*
+#### `Spawn` — `Make` failure leak guard  *(lines 690–692)*
 
 ```ada
 begin
    Gada.Async.Context.Make
      (G.Ctx, Goroutine_Trampoline'Access, Stack_Size => 256 * 1024);
 exception
-   when others =>          --  line 587
-      Free_Goroutine (G);  --  line 588
-      raise;                --  line 589
+   when others =>          --  line 690
+      Free_Goroutine (G);  --  line 691
+      raise;                --  line 692
 end;
 ```
 
@@ -169,13 +169,13 @@ Added in PR #3 review feedback (gemini-code-assist comment #4).
 
 ### `runtime/src/gada-async-channels-bounded.adb`
 
-#### `Send` — `Park_Sender` close-race recheck  *(lines 413–414)*
+#### `Send` — `Park_Sender` close-race recheck  *(lines 452–453)*
 
 ```ada
 C.Ref.State.Park_Sender (Slot, Was_Closed);
 if Was_Closed then
-   Free_Slot (Slot);                                  --  line 413
-   raise Channel_Closed                               --  line 414
+   Free_Slot (Slot);                                  --  line 452
+   raise Channel_Closed                               --  line 453
      with "Gada.Async.Channels.Bounded.Send: closed during park";
 end if;
 ```
@@ -198,21 +198,26 @@ injection seam (slated alongside Phase 4 panic-marshalling work)
 will park the calling goroutine *between* those two protected calls,
 fire a Close, and re-cover this arm. Two lines.
 
-#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 466–468, 471–473)*
+#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 531–533, 536–538)*
 
 ```ada
 C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);
 if Got then
-   Free_Slot (Slot);   --  line 466
-   OK := True;          --  line 467
-   return;              --  line 468
+   Free_Slot (Slot);   --  line 531
+   OK := True;          --  line 532
+   return;              --  line 533
 end if;
 if Was_Closed then
-   Free_Slot (Slot);   --  line 471
-   OK := False;         --  line 472
-   return;              --  line 473
+   Free_Slot (Slot);   --  line 536
+   OK := False;         --  line 537
+   return;              --  line 538
 end if;
 ```
+
+The main-task timed-poll arms of both `Send` and `Receive` (including
+the poll-sees-closed arms) are covered, not excluded:
+`Test_Main_Task_{Send_Polls_When_Full, Receive_Polls_Until_Send,
+Send_Poll_Raises_On_Close, Receive_Poll_Closed_Gives_False}`.
 
 Mirror image of the Send-side race-recheck above. `Park_Receiver`
 re-checks `Count > 0` and `Closed_F` under its protected lock;
@@ -232,21 +237,26 @@ them here documents the testability gap, not their value.
 
 ### `runtime/src/gada-async-channels-unbounded.adb`
 
-#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 387–389, 392–394)*
+#### `Receive` — `Park_Receiver` send/close-race recheck  *(lines 417–419, 422–424)*
 
 ```ada
 C.Ref.State.Park_Receiver (Slot, V, Got, Was_Closed);
 if Got then
-   Free_Slot (Slot);   --  line 387
-   OK := True;          --  line 388
-   return;              --  line 389
+   Free_Slot (Slot);   --  line 417
+   OK := True;          --  line 418
+   return;              --  line 419
 end if;
 if Was_Closed then
-   Free_Slot (Slot);   --  line 392
-   OK := False;         --  line 393
-   return;              --  line 394
+   Free_Slot (Slot);   --  line 422
+   OK := False;         --  line 423
+   return;              --  line 424
 end if;
 ```
+
+The main-task timed-poll arm of `Receive` (including the
+poll-sees-closed arm) is covered, not excluded:
+`Channels_Unbounded_Suite.Test_Main_Task_Receive_Polls_Until_Send` and
+`..._Poll_Closed_Gives_False`.
 
 Mirror of the Channels.Bounded Park_Receiver race-recheck above.
 Same single-worker-determinism constraint: the only window for the
@@ -446,15 +456,10 @@ returning functions, misattributed by lcov 2.4 (same class as above).
 
 ### `runtime/src/gada-std-os.adb` (Phase 5)
 
-Excluded lines: 44-50, 52, 53 — the `when E : Device_Error | End_Error
-| Data_Error` arm of Read_File's read (lines 44-49) needs a failing
-device to trigger, which no portable AUnit test can arrange (the
-missing-file path is covered via the open arm above); lines 50, 52,
-53 are the inner `end;`, declare-block `end;`, and `end Read_File;`
-terminators. Both reachable branches of Read_File are covered by
-OS_Suite (ok/empty/missing-file tests are green in the same run); lcov
-2.4 leaves hit-count 0 on the block terminators, same misattribution
-class as `gada-async-race.adb:80`.
+Superseded by the Phase 6 wave 2 entry below: the Read_File body was
+rewritten (heap buffer + directory guard), so the old Phase-5 line
+numbers no longer exist. The current exclusions for this file are
+documented in the Phase 6 wave 2 section.
 
 ### `runtime/src/gada-std-bytes.adb`, `gada-std-bufio.adb`, `gada-std-io.adb` (Phase 5)
 
@@ -466,6 +471,61 @@ Read_String are covered by the readErr tests, not excluded. io: 44,
 57, 81 — the inner `end;`, `end Copy;`, `end Read_All;` markers (the
 ErrShortWrite arm itself is covered by the short-write test). All in
 the lcov 2.4 misattribution class documented above.
+
+### `runtime/src/gada-std-time.adb` (Phase 6 wave 2)
+
+69, 223, 234, 496 — `end Append_Frac;`, `end Dig2;`, `end Image_Date_Time;`,
+`end One_Shot;` terminators. (496 is reported unhit only by the Linux CI
+lcov; both `One_Shot` paths — d <= 0 immediate fire and the queued
+node — are exercised by Time_Suite's After/NewTimer zero and positive
+cases.) Every contained line of these subprograms is hit by
+Time_Suite (Duration.String, Date + accessors, the pinned-zone RFC3339
+tests are all green in the same run); lcov 2.4 leaves hit-count 0 on the
+block terminator itself. Same misattribution class as
+`gada-async-race.adb:80` documented above. UTC()/Local() and the
+zone-explicit splits are covered by Test_UTC_Local_Format and
+Test_Zones_Non_UTC (pinned TZ=UTC / Europe/Warsaw / Asia/Kolkata /
+America/New_York). The timer service (Queue insert/remove/clear, the
+ticker drop and re-arm, the Kick on a new head, the d <= 0 and
+never-due paths) is covered by Test_After, Test_Timer_Stop,
+Test_Nonpositive, Test_Tick, Test_Tick_Slow_Receiver, Test_Timer_Queue
+and Test_Stop_All — none excluded.
+
+### `runtime/src/gada-std-os.adb` (Phase 6 wave 2)
+
+66, 70, 72 — Read_File's `when Device_Error | End_Error | Data_Error |
+Use_Error` arm around the chunked read loop.
+The directory case is rejected up front by the `Ada.Directories.Kind`
+guard (covered by OS_Suite's Test_Read_File_Dir, which asserts the
+"is a directory" error); a read failure on a regular file needs a
+failing device, which no portable AUnit test can arrange (the FIFO and
+>64 KiB tests cover the loop itself). 73, 75, 153, 172 —
+`end;`/`end Read_File;`/`end Open;`/`end Create;` block terminators
+where lcov 2.4 leaves hit-count 0 despite every contained line being hit
+(same misattribution class as gada-std-time.adb). 87-88 — the `Args` argv
+loop body; the CI full-suite coverage run invokes test_runner with no
+filter argument (Argument_Count = 0), so the loop body never executes
+there (single-suite `make stdlib-test PKG=...` runs do pass one).
+Open/Create/Stat/Mkdir happy and error paths are all covered by
+OS_Suite, not excluded.
+
+### `runtime/src/gada-core-process.adb` (Phase 6 review fixes)
+
+22 — `GNAT.OS_Lib.OS_Exit (Code);`, the default arm of Finish. It ends
+the process, so it cannot run inside the AUnit runner; Process_Suite
+installs exit handlers (one that raises, one that returns) and covers
+Exit_Main, Finish and Unhandled (with and without a message) through
+them. The real exit is exercised end to end by every example that
+uses goroutines or time (`make example HELLO=timer_pool`,
+`HELLO=ping_pong`).
+
+### `runtime/src/gada-std-runtime.adb` (Phase 6 wave 2)
+
+37 — `end GOMAXPROCS;` terminator: lcov 2.4 leaves hit-count 0 on the
+block terminator even though every contained line is hit by
+Runtime_Suite (NumGoroutine/GOMAXPROCS/Gosched+GC all green in the same
+run; the GOMAXPROCS resize arm is covered by the main-task resize
+test). Same misattribution class as gada-std-time.adb.
 
 ---
 

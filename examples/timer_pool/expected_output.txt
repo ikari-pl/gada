@@ -1,0 +1,4 @@
+jobs: 4
+sum: 12
+goroutines: 3
+argc: 1

@@ -42,8 +42,8 @@ job is to fix it.
 | 3 | Concurrency runtime: goroutines, channels, select | DONE | [03-concurrency.md](03-concurrency.md) |
 | 4 | Interfaces & reflection | DONE | [04-interfaces-reflection.md](04-interfaces-reflection.md) |
 | 5 | Stdlib wave 1: pure-Go foundations | DONE | [05-stdlib-wave1.md](05-stdlib-wave1.md) |
-| 6 | Stdlib wave 2: system wrappers | IN_PROGRESS | [06-stdlib-wave2.md](06-stdlib-wave2.md) |
-| 7 | Stdlib wave 3: network | NOT_STARTED | [07-stdlib-wave3-network.md](07-stdlib-wave3-network.md) |
+| 6 | Stdlib wave 2: system wrappers | DONE | [06-stdlib-wave2.md](06-stdlib-wave2.md) |
+| 7 | Stdlib wave 3: network | IN_PROGRESS | [07-stdlib-wave3-network.md](07-stdlib-wave3-network.md) |
 | 8 | Stdlib wave 4: crypto, hash, encoding | NOT_STARTED | [08-stdlib-wave4-crypto.md](08-stdlib-wave4-crypto.md) |
 | 9 | Verification track: Go → SPARK | NOT_STARTED | [09-verification-spark.md](09-verification-spark.md) |
 | 10 | Mixed Ada/Go codebases | NOT_STARTED | [10-mixed-codebases.md](10-mixed-codebases.md) |

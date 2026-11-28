@@ -66,6 +66,7 @@ with Http_Suite;
 with Std_Hash_Suite;
 with Std_Crypto_Hash_Suite;
 with Std_Crypto_Hmac_Suite;
+with Std_Crypto_Aes_Suite;
 
 procedure Test_Runner is
 
@@ -117,6 +118,7 @@ procedure Test_Runner is
       or else Pkg = "stdlib.hash"
       or else Pkg = "stdlib.crypto.hash"
       or else Pkg = "stdlib.crypto.hmac"
+      or else Pkg = "stdlib.crypto.aes"
       or else Pkg = "stress.gc"
       or else Pkg = "stress.scheduler"
       or else Pkg = "stress.goroutines");
@@ -246,6 +248,9 @@ procedure Test_Runner is
       end if;
       if Should_Register ("stdlib.crypto.hmac") then
          Add_Test (Result, new Std_Crypto_Hmac_Suite.Std_Crypto_Hmac_Test);
+      end if;
+      if Should_Register ("stdlib.crypto.aes") then
+         Add_Test (Result, new Std_Crypto_Aes_Suite.Std_Crypto_Aes_Test);
       end if;
       if Should_Register ("stress.gc") then
          Add_Test (Result, new Stress_Gc_Suite.Stress_Gc_Test);

@@ -36,4 +36,6 @@ var StdlibPackages = map[string]string{
 	"encoding/base64": "Gada.Std.Encoding.Base64",
 	"encoding/hex":    "Gada.Std.Encoding.Hex",
 	"encoding/binary": "Gada.Std.Encoding.Binary",
+	"encoding/csv":    "Gada.Std.Encoding.Csv",
+	"encoding/xml":    "Gada.Std.Encoding.Xml",
 }

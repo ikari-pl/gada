@@ -350,6 +350,50 @@ package body Std_Crypto_Aes_Suite is
       exception
          when Constraint_Error => null;  --  expected
       end;
+      --  Decrypt wants exactly one block too
+      begin
+         declare
+            B : constant Gada.Std.Crypto.Aes.Block :=
+              Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
+            R : Byte_Slice := Gada.Std.Crypto.Aes.Decrypt (B, New_Bytes (17));
+            pragma Unreferenced (R);
+         begin
+            Assert (False, "long block must raise on Decrypt");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  GCM Open with bad nonce length / short ciphertext
+      begin
+         declare
+            B : constant Gada.Std.Crypto.Aes.Block :=
+              Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
+            G : constant Gada.Std.Crypto.Cipher.GCM :=
+              Gada.Std.Crypto.Cipher.New_GCM (B);
+            P : Byte_Slice := Gada.Std.Crypto.Cipher.Open
+              (G, New_Bytes (8), New_Bytes (32), Byte_Vectors.Empty_Vector);
+            pragma Unreferenced (P);
+         begin
+            Assert (False, "short GCM nonce must raise on Open");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      begin
+         declare
+            B : constant Gada.Std.Crypto.Aes.Block :=
+              Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (16));
+            G : constant Gada.Std.Crypto.Cipher.GCM :=
+              Gada.Std.Crypto.Cipher.New_GCM (B);
+            P : Byte_Slice := Gada.Std.Crypto.Cipher.Open
+              (G, New_Bytes (12), New_Bytes (8), Byte_Vectors.Empty_Vector);
+            pragma Unreferenced (P);
+         begin
+            Assert (False, "short GCM ciphertext must raise on Open");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
       --  GCM bad nonce length
       begin
          declare

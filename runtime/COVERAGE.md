@@ -648,6 +648,24 @@ Sum, Reset, Size, Block_Size, Equal (incl. the length-mismatch arm)
 
 ---
 
+### `runtime/src/gada-std-crypto-aes.adb` / `gada-std-crypto-cipher.adb` (Phase 8 wave 4, item 4)
+
+aes.adb 150 / 161 / 205 / 216 / 295 and cipher.adb 24 / 203 / 212 /
+235 / 253 — `end X;` terminators of functions that return on their
+own line (lcov 2.4 no-return-block misattribution), plus cipher.adb
+165, the continuation line of XOR_Key_Stream's multi-line append
+statement (the statement executes — the CTR KAT passes). Same class
+as the `end Transform;` / `end Make_Table;` entries above.
+Everything else in the two ports — Expand/Sub_Word (incl. the
+SubWord+RotWord+Rcon arm), the full round function both directions,
+Encrypt/Decrypt incl. their length-check raises, CBC encrypter and
+decrypter chains, CTR keystream incl. inc32 and leftover handling,
+GCM Seal/Open incl. GF128_Mul, GHASH (AAD, ciphertext, length block),
+tag compare and all three Open error raises, IV/block-size checks —
+is covered by Std_Crypto_Aes_Suite, not excluded.
+
+---
+
 ### Adding a new exception
 
 1. Confirm the line is **genuinely** untestable in CI (not just

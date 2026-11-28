@@ -395,7 +395,7 @@ package body Std_Encoding_Text_Suite is
          "xml8: marshal");
       Assert (Marshal (Unmarshal ("<!DOCTYPE g><a/>")) = "<a></a>", "xml9: marshal");
       Assert (Marshal (Unmarshal ("<a><?pi x?></a>")) = "<a></a>", "xml10: marshal");
-      Assert (Marshal (Unmarshal ("<a>&#x41;&#x4a;&#x61;</a>")) = "<a>AJa</a>", "xml11: marshal");
+      Assert (Marshal (Unmarshal ("<a>&#x4A;&#x4a;&#x61;</a>")) = "<a>JJa</a>", "xml11: marshal");
       Assert (Marshal (Unmarshal ("<a><!DOCTYPE x></a>")) = "<a></a>", "xml12: marshal");
    end Test_Xml_Marshal;
 
@@ -514,12 +514,32 @@ package body Std_Encoding_Text_Suite is
       exception
          when Constraint_Error => null;  --  expected
       end;
+      --  Bad doc 12
+      begin
+         declare
+            N : constant Node := Unmarshal ("<a></a><b/>");
+         begin
+            Assert (N.Kind = Text_Node, "bad12: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
       --  Bad doc 13
       begin
          declare
             N : constant Node := Unmarshal ("<a>&");
          begin
             Assert (N.Kind = Text_Node, "bad13: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 14
+      begin
+         declare
+            N : constant Node := Unmarshal ("text<a/>");
+         begin
+            Assert (N.Kind = Text_Node, "bad14: must raise");
          end;
       exception
          when Constraint_Error => null;  --  expected
@@ -590,6 +610,56 @@ package body Std_Encoding_Text_Suite is
             N : constant Node := Unmarshal ("<a");
          begin
             Assert (N.Kind = Text_Node, "bad21: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 22
+      begin
+         declare
+            N : constant Node := Unmarshal ("<a></a><b/>");
+         begin
+            Assert (N.Kind = Text_Node, "bad22: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 23
+      begin
+         declare
+            N : constant Node := Unmarshal ("<!DOCTYPE");
+         begin
+            Assert (N.Kind = Text_Node, "bad23: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 24
+      begin
+         declare
+            N : constant Node := Unmarshal ("<a><!X");
+         begin
+            Assert (N.Kind = Text_Node, "bad24: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 25
+      begin
+         declare
+            N : constant Node := Unmarshal ("text<a/>");
+         begin
+            Assert (N.Kind = Text_Node, "bad25: must raise");
+         end;
+      exception
+         when Constraint_Error => null;  --  expected
+      end;
+      --  Bad doc 26
+      begin
+         declare
+            N : constant Node := Unmarshal ("<a></a><b/>");
+         begin
+            Assert (N.Kind = Text_Node, "bad26: must raise");
          end;
       exception
          when Constraint_Error => null;  --  expected

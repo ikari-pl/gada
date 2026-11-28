@@ -27,5 +27,6 @@ package Std_Crypto_Aes_Suite is
    procedure Test_Ctr (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Gcm (T : in out AUnit.Test_Cases.Test_Case'Class);
    procedure Test_Errors (T : in out AUnit.Test_Cases.Test_Case'Class);
+   procedure Test_Out_Call_Forms (T : in out AUnit.Test_Cases.Test_Case'Class);
 
 end Std_Crypto_Aes_Suite;

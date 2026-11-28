@@ -10,6 +10,7 @@ with Interfaces; use Interfaces;
 
 with Gada.Std.Bytes; use Gada.Std.Bytes;
 with Gada.Std.Crypto.Aes;
+with Gada.Std.Errors;
 with Gada.Std.Crypto.Cipher;
 
 package body Std_Crypto_Aes_Suite is
@@ -26,6 +27,7 @@ package body Std_Crypto_Aes_Suite is
       Register_Routine (T, Test_Ctr'Access, "SP 800-38A CTR 128/192/256");
       Register_Routine (T, Test_Gcm'Access, "GCM seal/open vectors");
       Register_Routine (T, Test_Errors'Access, "error paths raise");
+      Register_Routine (T, Test_Out_Call_Forms'Access, "Go (value, error) out-call forms");
    end Register_Tests;
 
    function To_Hex (B : Byte_Slice) return String is
@@ -413,5 +415,67 @@ package body Std_Crypto_Aes_Suite is
          when Constraint_Error => null;  --  expected
       end;
    end Test_Errors;
+
+   --  The Go out-call forms `block, err := aes.NewCipher(key)`,
+   --  `gcm, err := cipher.NewGCM(block)` and
+   --  `opened, err := gcm.Open(...)` lower to the procedure overloads;
+   --  pin both the success (Err = null) and error (Err set) halves.
+   procedure Test_Out_Call_Forms (T : in out AUnit.Test_Cases.Test_Case'Class) is
+      pragma Unreferenced (T);
+      Key   : constant Byte_Slice := To_Bytes ("0123456789abcdef");
+      Nonce : constant Byte_Slice := To_Bytes ("012345678901");
+      Msg   : constant Byte_Slice := To_Bytes ("hello gada");
+   begin
+      declare
+         B   : Gada.Std.Crypto.Aes.Block;
+         Err : Gada.Std.Errors.Error_Access;
+      begin
+         Gada.Std.Crypto.Aes.New_Cipher (Key, B, Err);
+         Assert (Err = null, "New_Cipher proc: Err null on good key");
+         Assert (Gada.Std.Crypto.Aes.Encrypt (B, Msg (1 .. 16) & Msg (1 .. 0))
+                   = Gada.Std.Crypto.Aes.Encrypt
+                     (Gada.Std.Crypto.Aes.New_Cipher (Key),
+                      Msg (1 .. 16) & Msg (1 .. 0)),
+                 "New_Cipher proc: same block as function form");
+      end;
+      declare
+         B   : Gada.Std.Crypto.Aes.Block;
+         Err : Gada.Std.Errors.Error_Access;
+      begin
+         Gada.Std.Crypto.Aes.New_Cipher (New_Bytes (15), B, Err);
+         Assert (Err /= null, "New_Cipher proc: Err set on bad key");
+      end;
+      declare
+         B    : Gada.Std.Crypto.Aes.Block;
+         Err  : Gada.Std.Errors.Error_Access;
+         G    : Gada.Std.Crypto.Cipher.GCM;
+         Err2 : Gada.Std.Errors.Error_Access;
+         Ct   : Byte_Slice;
+         Pt   : Byte_Slice;
+         Err3 : Gada.Std.Errors.Error_Access;
+         Err4 : Gada.Std.Errors.Error_Access;
+      begin
+         Gada.Std.Crypto.Aes.New_Cipher (Key, B, Err);
+         Gada.Std.Crypto.Cipher.New_GCM (B, G, Err2);
+         Assert (Err = null and then Err2 = null,
+                 "out-call constructors: Err null");
+         Ct := Gada.Std.Crypto.Cipher.Seal
+           (G, Nonce, Msg, Byte_Vectors.Empty_Vector);
+         Gada.Std.Crypto.Cipher.Open
+           (G, Nonce, Ct, Byte_Vectors.Empty_Vector, Pt, Err3);
+         Assert (Err3 = null and then Pt = Msg, "Open proc: round-trip");
+         declare
+            Bad : Byte_Slice := Ct;
+         begin
+            Byte_Vectors.Replace_Element
+              (Bad,
+               Positive (Byte_Vectors.Length (Bad)),
+               Character'Val (16#FF#));
+            Gada.Std.Crypto.Cipher.Open
+              (G, Nonce, Bad, Byte_Vectors.Empty_Vector, Pt, Err4);
+            Assert (Err4 /= null, "Open proc: Err set on tag mismatch");
+         end;
+      end;
+   end Test_Out_Call_Forms;
 
 end Std_Crypto_Aes_Suite;

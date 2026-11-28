@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"strings"
 	"testing"
 
 	"github.com/gada-lang/gada/compiler/internal/ir"
@@ -788,44 +789,55 @@ func parseSrcInfo(t *testing.T, src string) *ir.Package {
 // Hmac type (Go's hash.Hash interface has no v1 Ada counterpart).
 func TestHmacNewRewrite(t *testing.T) {
 	t.Parallel()
-	pkg := parseSrcInfo(t, `package p
+	for _, tc := range []struct {
+		pkg  string // hash package import path
+		name string // expected enum tag
+	}{
+		{"crypto/sha256", "Sha256"},
+		{"crypto/sha512", "Sha512"},
+		{"crypto/sha1", "Sha1"},
+		{"crypto/md5", "Md5"},
+	} {
+		src := `package p
 
 import (
 	"crypto/hmac"
-	"crypto/sha256"
+	"` + tc.pkg + `"
 )
 
 func f(key []byte) {
-	mac := hmac.New(sha256.New, key)
+	mac := hmac.New(` + tc.pkg[strings.LastIndex(tc.pkg, "/")+1:] + `.New, key)
 	mac.Write(key)
 	_ = mac
 }
-`)
-	fn := pkg.Files[0].Decls[0].(*ir.Function)
-	a0 := fn.Body[0].(*ir.Assign)
-	c, ok := a0.RHS[0].(*ir.Call)
-	if !ok {
-		t.Fatalf("decl0 RHS = %T, want *ir.Call", a0.RHS[0])
-	}
-	sel, ok := c.Fun.(*ir.Selector)
-	if !ok || sel.Sel != "New" {
-		t.Fatalf("call fun = %#v, want hmac.New", c.Fun)
-	}
-	if len(c.Args) != 2 {
-		t.Fatalf("hmac.New args = %d, want 2", len(c.Args))
-	}
-	asel, ok := c.Args[0].(*ir.Selector)
-	if !ok || asel.Sel != "Sha256" {
-		t.Fatalf("args[0] = %#v, want selector hmac.Sha256", c.Args[0])
-	}
-	if xid, ok := asel.X.(*ir.Ident); !ok || xid.Name != "hmac" {
-		t.Fatalf("args[0] prefix = %#v, want ident hmac", asel.X)
-	}
-	if len(c.ResultTypes) != 1 || c.ResultTypes[0].NodeKind() != "NamedType" {
-		t.Fatalf("ResultTypes = %#v, want [NamedType Hmac]", c.ResultTypes)
-	}
-	if nt := c.ResultTypes[0].(*ir.NamedType); nt.Name != "Hmac" {
-		t.Fatalf("result type name = %q, want Hmac", nt.Name)
+`
+		pkg := parseSrcInfo(t, src)
+		fn := pkg.Files[0].Decls[0].(*ir.Function)
+		a0 := fn.Body[0].(*ir.Assign)
+		c, ok := a0.RHS[0].(*ir.Call)
+		if !ok {
+			t.Fatalf("%s: decl0 RHS = %T, want *ir.Call", tc.name, a0.RHS[0])
+		}
+		sel, ok := c.Fun.(*ir.Selector)
+		if !ok || sel.Sel != "New" {
+			t.Fatalf("%s: call fun = %#v, want hmac.New", tc.name, c.Fun)
+		}
+		if len(c.Args) != 2 {
+			t.Fatalf("%s: hmac.New args = %d, want 2", tc.name, len(c.Args))
+		}
+		asel, ok := c.Args[0].(*ir.Selector)
+		if !ok || asel.Sel != tc.name {
+			t.Fatalf("%s: args[0] = %#v, want selector hmac.%s", tc.name, c.Args[0], tc.name)
+		}
+		if xid, ok := asel.X.(*ir.Ident); !ok || xid.Name != "hmac" {
+			t.Fatalf("%s: args[0] prefix = %#v, want ident hmac", tc.name, asel.X)
+		}
+		if len(c.ResultTypes) != 1 || c.ResultTypes[0].NodeKind() != "NamedType" {
+			t.Fatalf("%s: ResultTypes = %#v, want [NamedType Hmac]", tc.name, c.ResultTypes)
+		}
+		if nt := c.ResultTypes[0].(*ir.NamedType); nt.Name != "Hmac" {
+			t.Fatalf("%s: result type name = %q, want Hmac", tc.name, nt.Name)
+		}
 	}
 }
 

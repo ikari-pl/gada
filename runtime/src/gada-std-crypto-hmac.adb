@@ -3,12 +3,15 @@
 --  opad = 0x5C per byte.
 
 with Gada.Std.Bytes; use Gada.Std.Bytes;
+with Interfaces;
 with Gada.Std.Crypto.Sha256;
 with Gada.Std.Crypto.Sha512;
 with Gada.Std.Crypto.Sha1;
 with Gada.Std.Crypto.Md5;
 
 package body Gada.Std.Crypto.Hmac is
+
+   use Interfaces;
 
    function Block_Of (Algo : Algorithm) return Natural is
    begin
@@ -54,8 +57,8 @@ package body Gada.Std.Crypto.Hmac is
       for I in 1 .. Natural (Byte_Vectors.Length (K)) loop
          Byte_Vectors.Append
            (R, Character'Val
-              (Character'Pos (Byte_Vectors.Element (K, I))
-               xor Character'Pos (Pad)));
+              (Unsigned_32 (Character'Pos (Byte_Vectors.Element (K, I)))
+               xor Unsigned_32 (Character'Pos (Pad))));
       end loop;
       return R;
    end Xor_Pad;
@@ -150,14 +153,16 @@ package body Gada.Std.Crypto.Hmac is
    function Equal (A, B : Byte_Slice) return Boolean is
       N    : constant Natural := Natural (Byte_Vectors.Length (A));
       M    : constant Natural := Natural (Byte_Vectors.Length (B));
-      Diff : Natural := N xor M;  --  non-zero if lengths differ
+      --  Unsigned_32 carries the diff: xor/or are only defined for
+      --  modular types in Ada, not for Integer/Natural.
+      Diff : Unsigned_32 := Unsigned_32 (N) xor Unsigned_32 (M);
    begin
       --  Accumulate instead of early-exit, like Go's
       --  subtle.ConstantTimeCompare (loop runs over the min length).
       for I in 1 .. Natural'Min (N, M) loop
          Diff := Diff
-           or (Character'Pos (Byte_Vectors.Element (A, I))
-               xor Character'Pos (Byte_Vectors.Element (B, I)));
+           or (Unsigned_32 (Character'Pos (Byte_Vectors.Element (A, I)))
+               xor Unsigned_32 (Character'Pos (Byte_Vectors.Element (B, I))));
       end loop;
       return Diff = 0;
    end Equal;

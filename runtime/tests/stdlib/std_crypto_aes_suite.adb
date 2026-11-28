@@ -299,7 +299,6 @@ package body Std_Crypto_Aes_Suite is
          pragma Unreferenced (R);
       begin
          Assert (False, "short block must raise");
-      end;
       exception
          when Constraint_Error => null;  --  expected
       end;
@@ -312,7 +311,6 @@ package body Std_Crypto_Aes_Suite is
          pragma Unreferenced (M);
       begin
          Assert (False, "short IV must raise");
-      end;
       exception
          when Constraint_Error => null;  --  expected
       end;
@@ -324,7 +322,6 @@ package body Std_Crypto_Aes_Suite is
          pragma Unreferenced (S);
       begin
          Assert (False, "short CTR IV must raise");
-      end;
       exception
          when Constraint_Error => null;  --  expected
       end;
@@ -339,7 +336,6 @@ package body Std_Crypto_Aes_Suite is
          Gada.Std.Crypto.Cipher.Crypt_Blocks (M, D, New_Bytes (17));
          pragma Unreferenced (D);
          Assert (False, "partial CBC block must raise");
-      end;
       exception
          when Constraint_Error => null;  --  expected
       end;
@@ -354,7 +350,6 @@ package body Std_Crypto_Aes_Suite is
          pragma Unreferenced (S);
       begin
          Assert (False, "short GCM nonce must raise");
-      end;
       exception
          when Constraint_Error => null;  --  expected
       end;

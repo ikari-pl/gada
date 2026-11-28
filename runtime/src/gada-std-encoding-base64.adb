@@ -15,10 +15,10 @@ package body Gada.Std.Encoding.Base64 is
    function Encode (Data : Byte_Slice; Alpha : String; Pad : Boolean)
       return String is
       N   : constant Natural := Natural (Byte_Vectors.Length (Data));
-      Out : constant Natural :=
+      Out_Len : constant Natural :=
         (if Pad then 4 * ((N + 2) / 3)
          else (N / 3) * 4 + (if N mod 3 = 0 then 0 elsif N mod 3 = 1 then 2 else 3));
-      R   : String (1 .. Out);
+      R   : String (1 .. Out_Len);
       P   : Positive := 1;
 
       procedure Put_Char (V6 : Natural) is

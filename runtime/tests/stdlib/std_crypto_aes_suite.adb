@@ -10,7 +10,7 @@ with Interfaces; use Interfaces;
 
 with Gada.Std.Bytes; use Gada.Std.Bytes;
 with Gada.Std.Crypto.Aes;
-with Gada.Std.Errors;
+with Gada.Std.Errors; use type Gada.Std.Errors.Error_Access;
 with Gada.Std.Crypto.Cipher;
 
 package body Std_Crypto_Aes_Suite is
@@ -423,6 +423,7 @@ package body Std_Crypto_Aes_Suite is
    procedure Test_Out_Call_Forms (T : in out AUnit.Test_Cases.Test_Case'Class) is
       pragma Unreferenced (T);
       Key   : constant Byte_Slice := To_Bytes ("0123456789abcdef");
+      Blk   : constant Byte_Slice := To_Bytes ("0123456789abcdef");
       Nonce : constant Byte_Slice := To_Bytes ("012345678901");
       Msg   : constant Byte_Slice := To_Bytes ("hello gada");
    begin
@@ -432,10 +433,10 @@ package body Std_Crypto_Aes_Suite is
       begin
          Gada.Std.Crypto.Aes.New_Cipher (Key, B, Err);
          Assert (Err = null, "New_Cipher proc: Err null on good key");
-         Assert (Gada.Std.Crypto.Aes.Encrypt (B, Msg (1 .. 16) & Msg (1 .. 0))
+         Assert (Gada.Std.Crypto.Aes.Encrypt (B, Blk)
                    = Gada.Std.Crypto.Aes.Encrypt
                      (Gada.Std.Crypto.Aes.New_Cipher (Key),
-                      Msg (1 .. 16) & Msg (1 .. 0)),
+                      Blk),
                  "New_Cipher proc: same block as function form");
       end;
       declare

@@ -92,10 +92,13 @@ package body Gada.Std.Encoding.Csv is
             end if;
             Done := True;
          elsif S (Pos) = CR then
+            --  Reachable only after a quoted field (unquoted fields
+            --  absorb CR). Go accepts CR only as part of CRLF here.
             if Pos + 1 <= S'Last and then S (Pos + 1) = LF then
                Pos := Pos + 2;
             else
-               Pos := Pos + 1;
+               raise Constraint_Error
+                 with "csv: extraneous '\r' after quoted field";
             end if;
             Done := True;
          end if;
